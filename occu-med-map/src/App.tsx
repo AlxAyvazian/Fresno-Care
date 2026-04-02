@@ -87,6 +87,151 @@ const PROVIDER_DIRS = [
   {name:'National Drug Screening',url:'https://ndsinc.com/',tag:'DRUG TEST'},
 ];
 
+// ── Price Finder: static data ────────────────────────────────────────────────
+const PF_SERVICE_LABELS: Record<string,string> = {
+  urgentCare:'Urgent Care', dental:'Dental', pharmacy:'Pharmacy',
+  physicalExam:'Physical Exam', faamedical:'FAA Medical Exam',
+  stressTest:'Stress Test', mammogram:'Mammogram',
+  dotExam:'DOT Physical', vaccinations:'Vaccinations',
+};
+const PF_TAXONOMY_MAP: Record<string,string[]> = {
+  urgentCare:  ['Clinic/Center, Urgent Care','Urgent Care'],
+  dental:      ['Dentist General Practice','Dentist'],
+  pharmacy:    ['Pharmacy'],
+  physicalExam:['Occupational Medicine','Preventive Medicine','Family Medicine'],
+  faamedical:  ['Aerospace Medicine','Occupational Medicine'],
+  stressTest:  ['Cardiovascular Disease','Cardiology'],
+  mammogram:   ['Diagnostic Radiology','Radiology'],
+  dotExam:     ['Occupational Medicine'],
+  vaccinations:['Public Health & General Preventive Medicine','Family Medicine'],
+};
+const PF_REF_PRICES: Record<string,{range:string;note:string}> = {
+  urgentCare:  {range:'$120 – $280', note:'Self-pay typical; Medicare avg ~$120; FQHCs $20–$40 sliding scale'},
+  dental:      {range:'$200 – $350', note:'Exam + cleaning; crown $1,000–$1,500; FQHCs ~$20–$80 sliding scale'},
+  pharmacy:    {range:'Varies widely', note:'Use GoodRx or Cost Plus Drugs for generics — may save 80%+'},
+  physicalExam:{range:'$100 – $200', note:'Medicare covers annual wellness visit free; occ-med physicals $100–$200'},
+  faamedical:  {range:'$75 – $250', note:'Class 3 (private pilot) ~$75–$150; Class 1 (ATP) ~$150–$250'},
+  stressTest:  {range:'$350 – $800', note:'Exercise stress test; echo stress test $800–$1,500; Medicare avg ~$350'},
+  mammogram:   {range:'$100 – $300', note:'Medicare covers annual screening free; ACS & CDC free programs available'},
+  dotExam:     {range:'$75 – $150', note:'FMCSA certified examiner required; Concentra/CareNow ~$75–$100'},
+  vaccinations:{range:'$0 – $300',  note:'Flu/COVID often free; travel vaccines $100–$300; see VaccineFinder.org'},
+};
+const PF_ZOCDOC_SPEC: Record<string,string> = {
+  urgentCare:'Urgent Care', dental:'Dentist', pharmacy:'General Practice',
+  physicalExam:'General Practice', faamedical:'Internal Medicine',
+  stressTest:'Cardiologist', mammogram:'OB-GYN',
+  dotExam:'Internal Medicine', vaccinations:'General Practice',
+};
+const PF_SESAME_SPEC: Record<string,string> = {
+  urgentCare:'urgent-care', dental:'dentist', pharmacy:'primary-care',
+  physicalExam:'physical-exam', faamedical:'primary-care',
+  stressTest:'cardiology', mammogram:'mammogram',
+  dotExam:'dot-physical-exam', vaccinations:'primary-care',
+};
+const PF_MDSAVE_SLUG: Record<string,string> = {
+  urgentCare:'urgent-care-visit', dental:'dental-exam-and-cleaning',
+  pharmacy:'', physicalExam:'annual-physical-exam',
+  faamedical:'faa-medical-exam', stressTest:'stress-test',
+  mammogram:'mammogram', dotExam:'dot-physical-exam', vaccinations:'',
+};
+const PF_NEWCHOICE_SLUG: Record<string,string> = {
+  urgentCare:'urgent-care', dental:'dental', pharmacy:'',
+  physicalExam:'physical-exam', faamedical:'', stressTest:'stress-test',
+  mammogram:'mammogram', dotExam:'', vaccinations:'',
+};
+function pfDeepLinks(city:string, state:string, svc:string) {
+  const loc = encodeURIComponent(`${city}${state?', '+state:''}`);
+  const links:Array<{name:string;url:string;tag:string;desc:string}> = [];
+  const zSpec = PF_ZOCDOC_SPEC[svc];
+  if (zSpec) links.push({name:'ZocDoc', tag:'BOOK ONLINE',
+    desc:'Book in-network appointments & compare accepted insurance',
+    url:`https://www.zocdoc.com/search?address=${loc}&dr_specialty=${encodeURIComponent(zSpec)}`});
+  const mSlug = PF_MDSAVE_SLUG[svc];
+  if (mSlug) links.push({name:'MDsave', tag:'PRE-PAY PRICE',
+    desc:'Pre-purchase procedures at listed prices — up to 60% off',
+    url:`https://www.mdsave.com/procedures/${mSlug}`});
+  const sSpec = PF_SESAME_SPEC[svc];
+  if (sSpec) links.push({name:'Sesame Care', tag:'CASH PAY',
+    desc:'Direct-pay appointments with upfront transparent pricing',
+    url:`https://sesamecare.com/search?specialty=${sSpec}&location=${loc}`});
+  const ncSlug = PF_NEWCHOICE_SLUG[svc];
+  if (ncSlug) links.push({name:'New Choice Health', tag:'COMPARE',
+    desc:'Side-by-side price comparison at nearby facilities',
+    url:`https://www.newchoicehealth.com/${ncSlug}?location=${loc}`});
+  links.push({name:'Healthcare Bluebook', tag:'FAIR PRICE',
+    desc:'Find the fair price for this service in your area',
+    url:'https://www.healthcarebluebook.com/'});
+  links.push({name:'FAIR Health Consumer', tag:'ESTIMATOR',
+    desc:'Estimate out-of-pocket costs by zip code and procedure',
+    url:'https://fairhealthconsumer.org/'});
+  return links;
+}
+const PF_NETWORKS: Record<string,Array<{name:string;desc:string;url:string;tag:string}>> = {
+  urgentCare:[
+    {name:'Sesame Care',desc:'Transparent cash-pay urgent care. Prices listed upfront.',url:'https://sesamecare.com/urgent-care',tag:'CASH PAY'},
+    {name:'GoodRx Care',desc:'Online urgent care with upfront pricing, starting at $20.',url:'https://www.goodrx.com/care/urgent-care',tag:'ONLINE'},
+    {name:'MinuteClinic (CVS)',desc:'Walk-in urgent care — prices posted online before your visit.',url:'https://www.cvs.com/minuteclinic/visit-types-and-costs',tag:'TRANSPARENT'},
+    {name:'Mira Health',desc:'Flat-fee urgent care membership — $45/mo includes visits & labs.',url:'https://www.talkmira.com/',tag:'FLAT FEE'},
+    {name:'MDsave',desc:'Prepay for urgent care at listed prices and save up to 60%.',url:'https://www.mdsave.com/',tag:'PREPAY'},
+    {name:'Solv Health',desc:'Book urgent care online — many locations list wait times and prices.',url:'https://www.solvhealth.com/',tag:'BOOKING'},
+  ],
+  dental:[
+    {name:'Affordable Care',desc:'600+ dental practices with transparent fee schedules.',url:'https://www.affordablecare.com/',tag:'FEE SCHEDULE'},
+    {name:'1-800-Dentist',desc:'Find local dentists and compare prices in your area.',url:'https://www.1800dentist.com/',tag:'COMPARE'},
+    {name:'Open Care',desc:'Compares dental practices by price, insurance, and location.',url:'https://www.opencare.com/',tag:'COMPARE'},
+    {name:'Dental Plans',desc:'Discount dental plans with listed savings on procedures.',url:'https://www.dentalplans.com/',tag:'DISCOUNT'},
+    {name:'CostHelper Health',desc:'Real user-reported dental costs with ranges for common procedures.',url:'https://health.costhelper.com/dentist.html',tag:'COST GUIDE'},
+  ],
+  pharmacy:[
+    {name:'GoodRx',desc:'Compare prescription prices at pharmacies near you.',url:'https://www.goodrx.com/',tag:'FREE COUPONS'},
+    {name:'RxSaver',desc:'Compare pharmacy prices and print discount coupons.',url:'https://www.rxsaver.com/',tag:'COMPARE'},
+    {name:'Mark Cuban Cost Plus Drugs',desc:'Transparent drug pricing — 1,000+ medications at cost + 15%.',url:'https://costplusdrugs.com/',tag:'COST + 15%'},
+    {name:'Blink Health',desc:'Prepay for prescriptions online and pick up at local pharmacies.',url:'https://www.blinkhealth.com/',tag:'PREPAY'},
+  ],
+  physicalExam:[
+    {name:'Sesame Care – Physical Exams',desc:'Book a physical exam with upfront transparent pricing.',url:'https://sesamecare.com/physical-exam',tag:'CASH PAY'},
+    {name:'Concentra',desc:'Occupational health physicals with pricing available by location.',url:'https://www.concentra.com/',tag:'OCC HEALTH'},
+    {name:'MinuteClinic – Annual Physical',desc:'CVS walk-in physical exams with published visit costs.',url:'https://www.cvs.com/minuteclinic/services/preventive-care/physical-exams',tag:'WALK-IN'},
+    {name:'FAIR Health Consumer',desc:'Look up fair prices for physical exam codes in your zip code.',url:'https://fairhealthconsumer.org/',tag:'PRICE GUIDE'},
+  ],
+  faamedical:[
+    {name:'FAA AME Locator',desc:'Official FAA tool to find certified Aviation Medical Examiners near you.',url:'https://designee.faa.gov/designeeLocator',tag:'OFFICIAL FAA'},
+    {name:'AOPA Medical Certification',desc:'AOPA guide to FAA medical exams with typical cost ranges.',url:'https://www.aopa.org/go-fly/medical-resources/a-guide-to-faa-medical-certification',tag:'COST GUIDE'},
+    {name:'AeroMD',desc:'Specialized FAA medical exam service with upfront online booking.',url:'https://aeromd.com/',tag:'SPECIALIST'},
+    {name:'MDsave – FAA Medical',desc:'Find and pre-purchase FAA exam packages where available.',url:'https://www.mdsave.com/',tag:'PREPAY'},
+  ],
+  stressTest:[
+    {name:'MDsave – Stress Test',desc:'Pre-purchase treadmill stress test at listed prices, up to 60% off.',url:'https://www.mdsave.com/procedures/stress-test',tag:'PREPAY'},
+    {name:'Healthcare Bluebook',desc:'Find fair prices for exercise stress tests in your area.',url:'https://www.healthcarebluebook.com/',tag:'FAIR PRICE'},
+    {name:'New Choice Health',desc:'Compare stress test prices at facilities near you.',url:'https://www.newchoicehealth.com/',tag:'COMPARE'},
+    {name:'Sesame Care – Cardiology',desc:'Book cardiology consultations with upfront transparent pricing.',url:'https://sesamecare.com/',tag:'CASH PAY'},
+  ],
+  mammogram:[
+    {name:'MDsave – Mammogram',desc:'Pre-purchase screening mammograms at listed prices.',url:'https://www.mdsave.com/procedures/mammogram',tag:'PREPAY'},
+    {name:'New Choice Health – Mammogram',desc:'Compare mammogram prices at imaging centers near you.',url:'https://www.newchoicehealth.com/mammogram',tag:'COMPARE'},
+    {name:'Susan G. Komen – Free Screening',desc:'Connects uninsured women to free or low-cost mammograms.',url:'https://www.komen.org/breast-health/screening/mammograms/free-low-cost-mammograms/',tag:'FREE/LOW COST'},
+    {name:'CDC NBCCEDP',desc:'National Breast & Cervical Cancer Early Detection — free mammograms for qualifying women.',url:'https://www.cdc.gov/cancer/nbccedp/',tag:'FREE PROGRAM'},
+  ],
+  dotExam:[
+    {name:'Concentra – DOT Physicals',desc:'DOT physical exams at 500+ locations. Prices typically $75–$150.',url:'https://www.concentra.com/occupational-health/dot-physicals/',tag:'CHAIN PRICING'},
+    {name:'CareNow – DOT Physicals',desc:'Urgent care chain offering DOT exams with online check-in.',url:'https://www.carenow.com/services/dot-physical/',tag:'WALK-IN'},
+    {name:'FMCSA Medical Examiner Locator',desc:'Official FMCSA tool to find certified DOT medical examiners near you.',url:'https://ai.fmcsa.dot.gov/mcs150/commonMESearchForm.aspx',tag:'OFFICIAL FMCSA'},
+    {name:'OHS Health',desc:'Occupational health clinics specializing in DOT exams with listed fees.',url:'https://ohshealth.com/',tag:'TRANSPARENT'},
+  ],
+  vaccinations:[
+    {name:'VaccineFinder (CDC)',desc:'Official CDC tool to find COVID, flu, and other vaccines near you.',url:'https://vaccinefinder.org/',tag:'FREE / CDC'},
+    {name:'CVS Pharmacy – Vaccines',desc:'Walk-in vaccinations with prices listed online.',url:'https://www.cvs.com/immunizations/in-store-immunizations',tag:'PRICE LIST'},
+    {name:'Walgreens – Vaccines',desc:'Walk-in vaccine clinic with published vaccine prices.',url:'https://www.walgreens.com/topic/pharmacy/walgreens-immunization-services.jsp',tag:'PRICE LIST'},
+    {name:'Vaccines.gov',desc:'Find flu shots, travel vaccines, and immunization clinics near you.',url:'https://www.vaccines.gov/',tag:'LOCATOR'},
+  ],
+};
+const PF_RESOURCES = [
+  {name:'Healthcare Bluebook',desc:'Fair price range for medical procedures in your area.',url:'https://www.healthcarebluebook.com/',tag:'FAIR PRICE'},
+  {name:'FAIR Health Consumer',desc:'Estimate out-of-pocket costs by procedure and zip code.',url:'https://fairhealthconsumer.org/',tag:'ESTIMATOR'},
+  {name:'ClearHealthCosts',desc:'Crowdsourced prices for medical procedures. Find what others paid.',url:'https://clearhealthcosts.com/',tag:'CROWDSOURCED'},
+  {name:'New Choice Health',desc:'Compare procedure prices at facilities near you.',url:'https://www.newchoicehealth.com/',tag:'COMPARE'},
+];
+
 // ── Utils ─────────────────────────────────────────────────────────────────────
 function haversine(lat1:number,lng1:number,lat2:number,lng2:number):number {
   const R=6371000,dL=(lat2-lat1)*Math.PI/180,dN=(lng2-lng1)*Math.PI/180;
@@ -456,35 +601,102 @@ export default function App() {
   const [pfServiceType, setPfServiceType] = useState<'urgentCare'|'dental'|'pharmacy'|'physicalExam'|'faamedical'|'stressTest'|'mammogram'|'dotExam'|'vaccinations'>('urgentCare');
   const [pfLoading, setPfLoading] = useState(false);
   const [pfClinics, setPfClinics] = useState<Array<{name:string;address:string;phone:string;taxonomy:string;isFqhc:boolean;npiUrl:string;searchUrl:string}>>([]);
-  const [pfNetworks, setPfNetworks] = useState<Array<{name:string;desc:string;url:string;tag:string}>>([]);
-  const [pfResources, setPfResources] = useState<Array<{name:string;desc:string;url:string;tag:string}>>([]);
   const [pfError, setPfError] = useState('');
   const [pfLocation, setPfLocation] = useState('');
   const [pfDone, setPfDone] = useState(false);
+  const [pfTab, setPfTab] = useState<'providers'|'compare'|'report'>('providers');
+  const [pfReports, setPfReports] = useState<Array<{provider:string;price:string;service:string;city:string;date:string}>>(() => {
+    try { return JSON.parse(localStorage.getItem('occumed_price_reports') || '[]'); } catch { return []; }
+  });
+  const [pfReportProvider, setPfReportProvider] = useState('');
+  const [pfReportPrice, setPfReportPrice] = useState('');
+  const [pfShareCopied, setPfShareCopied] = useState(false);
+
+  async function pfSearchNpi(city: string, state: string, taxonomyDesc: string) {
+    const params = new URLSearchParams({
+      version: '2.1', city: city.trim(),
+      state: state.trim().toUpperCase(),
+      taxonomy_description: taxonomyDesc,
+      enumeration_type: 'NPI-2', limit: '15',
+    });
+    const resp = await fetch(`https://npiregistry.cms.hhs.gov/api/?${params}`, {signal: AbortSignal.timeout(8000)});
+    if (!resp.ok) throw new Error(`NPI ${resp.status}`);
+    const data = await resp.json() as {results?: any[]};
+    return data.results || [];
+  }
 
   async function runPriceSearch() {
-    if(!pfCity.trim()) return;
+    if (!pfCity.trim()) return;
     setPfLoading(true);
     setPfError('');
     setPfClinics([]);
-    setPfNetworks([]);
-    setPfResources([]);
     setPfDone(false);
     try {
-      const params = new URLSearchParams({ city: pfCity.trim(), state: pfState.trim(), serviceType: pfServiceType });
-      const resp = await fetch(`/api/price-finder?${params}`);
-      if(!resp.ok) throw new Error(`Server error ${resp.status}`);
-      const data = await resp.json();
-      setPfClinics(data.clinics || []);
-      setPfNetworks(data.networks || []);
-      setPfResources(data.pricingResources || []);
-      setPfLocation(data.location || '');
+      const taxonomies = PF_TAXONOMY_MAP[pfServiceType] || ['Family Medicine'];
+      const searches = [
+        ...taxonomies.slice(0, 2).map(t => pfSearchNpi(pfCity, pfState, t).catch((): any[] => [])),
+        pfSearchNpi(pfCity, pfState, 'Federally Qualified Health Center').catch((): any[] => []),
+      ];
+      const allResults = await Promise.all(searches);
+      const seen = new Set<string>();
+      const clinics: typeof pfClinics = [];
+      for (const batch of allResults) {
+        for (const r of batch) {
+          const nm = r.basic?.organization_name || `${r.basic?.first_name||''} ${r.basic?.last_name||''}`.trim();
+          if (!nm || seen.has(nm.toLowerCase())) continue;
+          seen.add(nm.toLowerCase());
+          const addr = r.addresses?.[0];
+          const address = addr ? `${addr.address_1}, ${addr.city}, ${addr.state} ${(addr.postal_code||'').slice(0,5)}` : '';
+          const taxonomy = r.taxonomies?.find((t:any)=>t.primary)?.desc || r.taxonomies?.[0]?.desc || '';
+          const isFqhc = taxonomy.toLowerCase().includes('federally qualified');
+          clinics.push({
+            name: nm,
+            address,
+            phone: addr?.telephone_number || '',
+            taxonomy,
+            isFqhc,
+            npiUrl: `https://npiregistry.cms.hhs.gov/provider-view/${r.basic?.npi||''}`,
+            searchUrl: `https://www.google.com/search?q=${encodeURIComponent(nm+' '+(addr?.city||'')+' '+(addr?.state||'')+' price cost')}`,
+          });
+        }
+      }
+      clinics.sort((a, b) => (b.isFqhc ? 1 : 0) - (a.isFqhc ? 1 : 0));
+      setPfClinics(clinics.slice(0, 20));
+      setPfLocation(`${pfCity.trim()}${pfState.trim() ? ', '+pfState.trim().toUpperCase() : ''}`);
+      setPfTab('providers');
       setPfDone(true);
-    } catch(e:any) {
+    } catch (e: any) {
       setPfError(e.message || 'Search failed. Please try again.');
     } finally {
       setPfLoading(false);
     }
+  }
+
+  function pfAddReport() {
+    if (!pfReportProvider.trim() || !pfReportPrice.trim()) return;
+    const report = {
+      provider: pfReportProvider.trim(),
+      price: pfReportPrice.trim(),
+      service: PF_SERVICE_LABELS[pfServiceType] || pfServiceType,
+      city: pfLocation || pfCity,
+      date: new Date().toLocaleDateString(),
+    };
+    const next = [report, ...pfReports].slice(0, 50);
+    setPfReports(next);
+    localStorage.setItem('occumed_price_reports', JSON.stringify(next));
+    setPfReportProvider('');
+    setPfReportPrice('');
+  }
+
+  function pfShareReports() {
+    try {
+      const encoded = btoa(JSON.stringify(pfReports));
+      const url = `${window.location.origin}${window.location.pathname}?pf_reports=${encoded}`;
+      navigator.clipboard.writeText(url).then(() => {
+        setPfShareCopied(true);
+        setTimeout(() => setPfShareCopied(false), 2500);
+      });
+    } catch {}
   }
 
   // Stats
@@ -493,6 +705,26 @@ export default function App() {
   const criticalCount = LOCS.filter(l=>getVal(l,metric)>=4).length;
 
   const [mapReady, setMapReady] = useState(false);
+
+  // ── Import shared price reports from URL on first load ────────────────────
+  useEffect(()=>{
+    const params = new URLSearchParams(window.location.search);
+    const encoded = params.get('pf_reports');
+    if (!encoded) return;
+    try {
+      const imported = JSON.parse(atob(encoded));
+      if (!Array.isArray(imported)) return;
+      setPfReports(prev => {
+        const merged = [...imported, ...prev];
+        const unique = merged.filter((r, i, arr) =>
+          arr.findIndex(x => x.provider===r.provider && x.price===r.price && x.date===r.date) === i
+        ).slice(0, 50);
+        localStorage.setItem('occumed_price_reports', JSON.stringify(unique));
+        return unique;
+      });
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
 
   // ── Init Map ───────────────────────────────────────────────────────────────
   useEffect(()=>{
@@ -1313,47 +1545,33 @@ out center tags;`;
       {/* ── PRICE FINDER MODAL ── */}
       {showPriceFinder && (
         <div className="modal-backdrop open" onClick={()=>setShowPriceFinder(false)}>
-          <div className="modal-box" style={{width:720,maxHeight:'85vh',display:'flex',flexDirection:'column'}} onClick={e=>e.stopPropagation()}>
+          <div className="modal-box" style={{width:760,maxHeight:'88vh',display:'flex',flexDirection:'column'}} onClick={e=>e.stopPropagation()}>
             <div className="modal-header">
-              <span className="modal-title" style={{color:'#34d399'}}>💲 CLINIC PRICE FINDER</span>
+              <span className="modal-title" style={{color:'#34d399'}}>💲 PROVIDER PRICE FINDER</span>
               <button className="modal-close" onClick={()=>setShowPriceFinder(false)}>✕</button>
             </div>
             <div className="modal-body" style={{flex:1,overflowY:'auto',padding:'16px 20px'}}>
-              <p style={{fontSize:11,color:'#5d7a9e',marginBottom:14,lineHeight:1.5}}>
-                Searches the web for urgent care and dental clinics that publish transparent pricing online — no insurance required.
-              </p>
+
               {/* Search form */}
-              <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
+              <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
                 <div style={{flex:2,minWidth:140}}>
                   <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:4}}>CITY / ZIP</div>
-                  <input
-                    className="rp-input"
-                    style={{width:'100%',boxSizing:'border-box'}}
-                    placeholder="e.g. Birmingham"
-                    value={pfCity}
+                  <input className="rp-input" style={{width:'100%',boxSizing:'border-box'}}
+                    placeholder="e.g. Birmingham" value={pfCity}
                     onChange={e=>setPfCity(e.target.value)}
-                    onKeyDown={e=>e.key==='Enter'&&runPriceSearch()}
-                  />
+                    onKeyDown={e=>e.key==='Enter'&&runPriceSearch()} />
                 </div>
-                <div style={{flex:1,minWidth:80}}>
+                <div style={{flex:1,minWidth:70}}>
                   <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:4}}>STATE</div>
-                  <input
-                    className="rp-input"
-                    style={{width:'100%',boxSizing:'border-box'}}
-                    placeholder="e.g. AL"
-                    value={pfState}
+                  <input className="rp-input" style={{width:'100%',boxSizing:'border-box'}}
+                    placeholder="AL" value={pfState}
                     onChange={e=>setPfState(e.target.value.toUpperCase().slice(0,2))}
-                    onKeyDown={e=>e.key==='Enter'&&runPriceSearch()}
-                  />
+                    onKeyDown={e=>e.key==='Enter'&&runPriceSearch()} />
                 </div>
-                <div style={{flex:2,minWidth:140}}>
+                <div style={{flex:2,minWidth:160}}>
                   <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:4}}>SERVICE TYPE</div>
-                  <select
-                    className="rp-select"
-                    style={{width:'100%',boxSizing:'border-box'}}
-                    value={pfServiceType}
-                    onChange={e=>setPfServiceType(e.target.value as any)}
-                  >
+                  <select className="rp-select" style={{width:'100%',boxSizing:'border-box'}}
+                    value={pfServiceType} onChange={e=>setPfServiceType(e.target.value as any)}>
                     <option value="urgentCare">Urgent Care</option>
                     <option value="dental">Dental</option>
                     <option value="pharmacy">Pharmacy</option>
@@ -1366,23 +1584,45 @@ out center tags;`;
                   </select>
                 </div>
                 <div style={{display:'flex',alignItems:'flex-end'}}>
-                  <button
-                    className="rp-assess-btn"
-                    style={{padding:'8px 18px',minWidth:90,opacity:pfLoading?0.6:1}}
-                    onClick={runPriceSearch}
-                    disabled={pfLoading||!pfCity.trim()}
-                  >
+                  <button className="rp-assess-btn" style={{padding:'8px 18px',minWidth:90,opacity:pfLoading?0.6:1}}
+                    onClick={runPriceSearch} disabled={pfLoading||!pfCity.trim()}>
                     {pfLoading ? '⏳ SEARCHING...' : '🔍 SEARCH'}
                   </button>
                 </div>
               </div>
 
+              {/* Reference price anchor */}
+              {PF_REF_PRICES[pfServiceType] && (
+                <div style={{background:'rgba(52,211,153,0.06)',border:'1px solid rgba(52,211,153,0.18)',borderRadius:6,padding:'8px 14px',marginBottom:12,display:'flex',gap:14,alignItems:'center',flexWrap:'wrap'}}>
+                  <div>
+                    <div style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",color:'#34d399',letterSpacing:'0.1em',marginBottom:2}}>TYPICAL PRICE RANGE</div>
+                    <div style={{fontSize:15,fontWeight:700,color:'#a7f3d0',fontFamily:"'IBM Plex Mono',monospace"}}>{PF_REF_PRICES[pfServiceType].range}</div>
+                  </div>
+                  <div style={{flex:1,fontSize:9,color:'#4a7a66',lineHeight:1.5}}>{PF_REF_PRICES[pfServiceType].note}</div>
+                </div>
+              )}
+
+              {/* Tab bar */}
+              <div style={{display:'flex',gap:0,marginBottom:14,borderBottom:'1px solid rgba(20,50,100,0.5)'}}>
+                {([['providers','📋 PROVIDERS','#67e8f9'],['compare','💰 COMPARE PRICES','#34d399'],['report','⭐ REPORT A PRICE','#fbbf24']] as const).map(([tab,label,col])=>(
+                  <button key={tab} onClick={()=>setPfTab(tab)} style={{
+                    padding:'7px 16px',background:'transparent',border:'none',
+                    borderBottom:`2px solid ${pfTab===tab?col:'transparent'}`,
+                    color:pfTab===tab?col:'#3d5478',
+                    fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,
+                    letterSpacing:'0.08em',cursor:'pointer',transition:'color 0.15s,border-color 0.15s',
+                  }}>
+                    {label}{tab==='report'&&pfReports.length>0?` (${pfReports.length})`:''}
+                  </button>
+                ))}
+              </div>
+
               {/* Loading */}
               {pfLoading && (
                 <div style={{textAlign:'center',padding:'30px 0',color:'#3d5478',fontSize:11}}>
-                  <div style={{fontSize:20,marginBottom:8,animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</div>
-                  <div>Scanning the web for clinics with published pricing...</div>
-                  <div style={{marginTop:4,fontSize:10,color:'#2a3f5e'}}>This may take 5–10 seconds</div>
+                  <div style={{fontSize:20,marginBottom:8}}>⏳</div>
+                  <div>Querying NPI Registry for licensed providers...</div>
+                  <div style={{marginTop:4,fontSize:10,color:'#2a3f5e'}}>Searching primary taxonomy + FQHCs in parallel</div>
                 </div>
               )}
 
@@ -1393,51 +1633,95 @@ out center tags;`;
                 </div>
               )}
 
-              {/* Results */}
-              {!pfLoading && pfDone && (
-                <>
-                  {/* Section: Local Clinics from NPI Registry */}
-                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
-                    LICENSED PROVIDERS NEAR <span style={{color:'#06b6d4'}}>{pfLocation.toUpperCase()}</span>
-                    <span style={{marginLeft:8,color:'#2a3f5e'}}>({pfClinics.length} found via NPI Registry)</span>
-                  </div>
-                  {pfClinics.length === 0 && (
-                    <div style={{fontSize:10,color:'#2a3f5e',marginBottom:12,padding:'8px 12px',background:'rgba(10,24,48,0.4)',borderRadius:6}}>
-                      No licensed providers found in the NPI Registry for this city. Try a nearby major city.
+              {/* ── PROVIDERS TAB ── */}
+              {!pfLoading && pfTab==='providers' && (
+                pfDone ? (
+                  <>
+                    <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
+                      LICENSED PROVIDERS NEAR <span style={{color:'#06b6d4'}}>{pfLocation.toUpperCase()}</span>
+                      <span style={{marginLeft:8,color:'#2a3f5e'}}>({pfClinics.length} found · NPI Registry)</span>
                     </div>
-                  )}
-                  <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:18}}>
-                    {pfClinics.map((c,i)=>(
-                      <div key={i} style={{
-                        background: c.isFqhc ? 'rgba(52,211,153,0.07)' : 'rgba(6,10,24,0.5)',
-                        border: c.isFqhc ? '1px solid rgba(52,211,153,0.25)' : '1px solid rgba(20,40,80,0.6)',
-                        borderRadius:6,padding:'9px 12px',
-                      }}>
-                        <div style={{display:'flex',alignItems:'flex-start',gap:8}}>
-                          {c.isFqhc && (
-                            <span style={{fontSize:7,fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,color:'#34d399',border:'1px solid rgba(52,211,153,0.4)',borderRadius:3,padding:'2px 5px',whiteSpace:'nowrap',marginTop:2,flexShrink:0}}>
-                              ✓ SLIDING SCALE FEE
-                            </span>
-                          )}
-                          <div style={{flex:1}}>
-                            <div style={{fontSize:11,fontWeight:600,color:'#eef4ff',marginBottom:2}}>{c.name}</div>
-                            {c.address && <div style={{fontSize:9,color:'#5d7a9e'}}>{c.address}</div>}
-                            {c.phone && <div style={{fontSize:9,color:'#3d8bcd',fontFamily:"'IBM Plex Mono',monospace",marginTop:1}}>{c.phone}</div>}
-                          </div>
-                          <div style={{display:'flex',gap:5,flexShrink:0}}>
-                            <a href={c.searchUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'3px 7px',background:'rgba(6,182,212,0.1)',border:'1px solid rgba(6,182,212,0.25)',borderRadius:3,color:'#06b6d4',textDecoration:'none'}}>FIND PRICING →</a>
+                    {pfClinics.length===0 && (
+                      <div style={{fontSize:10,color:'#2a3f5e',marginBottom:12,padding:'8px 12px',background:'rgba(10,24,48,0.4)',borderRadius:6}}>
+                        No licensed providers found for this city. Try a nearby major city, or use the <strong style={{color:'#34d399'}}>Compare Prices</strong> tab to book directly on ZocDoc, MDsave, or Sesame.
+                      </div>
+                    )}
+                    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                      {pfClinics.map((c,i)=>(
+                        <div key={i} style={{
+                          background:c.isFqhc?'rgba(52,211,153,0.07)':'rgba(6,10,24,0.5)',
+                          border:c.isFqhc?'1px solid rgba(52,211,153,0.25)':'1px solid rgba(20,40,80,0.6)',
+                          borderRadius:6,padding:'9px 12px',
+                        }}>
+                          <div style={{display:'flex',alignItems:'flex-start',gap:8}}>
+                            {c.isFqhc && (
+                              <span style={{fontSize:7,fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,color:'#34d399',border:'1px solid rgba(52,211,153,0.4)',borderRadius:3,padding:'2px 5px',whiteSpace:'nowrap',marginTop:2,flexShrink:0}}>
+                                ✓ SLIDING SCALE
+                              </span>
+                            )}
+                            <div style={{flex:1}}>
+                              <div style={{fontSize:11,fontWeight:600,color:'#eef4ff',marginBottom:1}}>{c.name}</div>
+                              <div style={{fontSize:8.5,color:'#4a5a7a',fontFamily:"'IBM Plex Mono',monospace",marginBottom:2}}>{c.taxonomy}</div>
+                              {c.address && <div style={{fontSize:9,color:'#5d7a9e'}}>📍 {c.address}</div>}
+                              {c.phone && <div style={{fontSize:9,color:'#3d8bcd',fontFamily:"'IBM Plex Mono',monospace",marginTop:1}}>
+                                📞 <a href={`tel:${c.phone}`} style={{color:'#67e8f9',textDecoration:'none'}}>{c.phone}</a>
+                              </div>}
+                            </div>
+                            <div style={{display:'flex',flexDirection:'column',gap:4,flexShrink:0}}>
+                              <a href={c.searchUrl} target="_blank" rel="noopener noreferrer"
+                                style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'3px 7px',background:'rgba(6,182,212,0.1)',border:'1px solid rgba(6,182,212,0.25)',borderRadius:3,color:'#06b6d4',textDecoration:'none',textAlign:'center'}}>
+                                FIND PRICE →
+                              </a>
+                              <button onClick={()=>{setPfReportProvider(c.name);setPfTab('report');}}
+                                style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'3px 7px',background:'rgba(251,191,36,0.08)',border:'1px solid rgba(251,191,36,0.2)',borderRadius:3,color:'#fbbf24',cursor:'pointer'}}>
+                                REPORT PRICE
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{textAlign:'center',padding:'24px 0',color:'#2a3f5e',fontSize:11,lineHeight:1.8}}>
+                    <div style={{fontSize:28,marginBottom:10}}>💲</div>
+                    <div style={{color:'#3d5478',marginBottom:6}}>Enter a city above to find:</div>
+                    <div style={{fontSize:10,color:'#2a3f5e'}}>
+                      • Licensed providers from the federal NPI Registry<br/>
+                      • FQHCs with income-based sliding scale fees<br/>
+                      • Clickable phone numbers and address lookup<br/>
+                      • One-click "Report Price" for any provider
+                    </div>
+                  </div>
+                )
+              )}
+
+              {/* ── COMPARE PRICES TAB ── */}
+              {!pfLoading && pfTab==='compare' && (
+                <>
+                  {/* Deep links: Book & compare */}
+                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
+                    BOOK & COMPARE{pfCity.trim()&&<> NEAR <span style={{color:'#06b6d4'}}>{(pfLocation||pfCity).toUpperCase()}{pfState?' · '+pfState.toUpperCase():''}</span></>}
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:18}}>
+                    {pfDeepLinks(pfCity||'your city', pfState, pfServiceType).map((lk,i)=>(
+                      <a key={i} href={lk.url} target="_blank" rel="noopener noreferrer" style={{
+                        background:'rgba(10,24,48,0.5)',border:'1px solid rgba(20,50,100,0.5)',
+                        borderRadius:6,padding:'10px 12px',textDecoration:'none',display:'block',
+                      }}>
+                        <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+                          <span style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,color:'#34d399',border:'1px solid rgba(52,211,153,0.3)',borderRadius:3,padding:'1px 5px'}}>{lk.tag}</span>
+                          <span style={{fontSize:10,fontWeight:700,color:'#c8ddf0'}}>{lk.name}</span>
+                        </div>
+                        <div style={{fontSize:9,color:'#4a6080',lineHeight:1.4}}>{lk.desc}</div>
+                      </a>
                     ))}
                   </div>
 
-                  {/* Section: Transparent-Pricing Networks */}
-                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
-                    TRANSPARENT-PRICING NETWORKS
-                  </div>
+                  {/* Transparent pricing networks */}
+                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>TRANSPARENT-PRICING NETWORKS</div>
                   <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:18}}>
-                    {pfNetworks.map((n,i)=>(
+                    {(PF_NETWORKS[pfServiceType]||PF_NETWORKS.urgentCare).map((n,i)=>(
                       <a key={i} href={n.url} target="_blank" rel="noopener noreferrer" style={{
                         background:'rgba(10,24,48,0.5)',border:'1px solid rgba(20,50,100,0.5)',
                         borderRadius:6,padding:'9px 11px',textDecoration:'none',display:'block',
@@ -1451,10 +1735,10 @@ out center tags;`;
                     ))}
                   </div>
 
-                  {/* Section: Pricing Research Tools */}
+                  {/* Research tools */}
                   <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>PRICING RESEARCH TOOLS</div>
                   <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                    {pfResources.map((r,i)=>(
+                    {PF_RESOURCES.map((r,i)=>(
                       <a key={i} href={r.url} target="_blank" rel="noopener noreferrer" style={{
                         flex:'1 1 180px',background:'rgba(6,182,212,0.05)',border:'1px solid rgba(6,182,212,0.15)',
                         borderRadius:6,padding:'8px 11px',textDecoration:'none',display:'block',
@@ -1468,19 +1752,74 @@ out center tags;`;
                 </>
               )}
 
-              {/* Empty state */}
-              {!pfLoading && !pfError && !pfDone && (
-                <div style={{textAlign:'center',padding:'20px 0',color:'#2a3f5e',fontSize:11,lineHeight:1.7}}>
-                  <div style={{fontSize:28,marginBottom:10}}>💲</div>
-                  <div style={{color:'#3d5478',marginBottom:6}}>Enter a city to find:</div>
-                  <div style={{fontSize:10,color:'#2a3f5e',lineHeight:1.8}}>
-                    • Licensed clinics in the NPI Registry<br/>
-                    • Federally-qualified health centers (sliding scale fees)<br/>
-                    • National networks with transparent pricing<br/>
-                    • Tools to compare costs before your visit
+              {/* ── REPORT A PRICE TAB ── */}
+              {!pfLoading && pfTab==='report' && (
+                <>
+                  <div style={{background:'rgba(10,24,48,0.5)',border:'1px solid rgba(251,191,36,0.2)',borderRadius:8,padding:'14px',marginBottom:16}}>
+                    <div style={{fontSize:9,color:'#fbbf24',letterSpacing:'0.08em',marginBottom:10}}>⭐ SUBMIT A PRICE YOU FOUND</div>
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:8}}>
+                      <div style={{flex:2,minWidth:160}}>
+                        <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>PROVIDER NAME</div>
+                        <input className="rp-input" style={{width:'100%',boxSizing:'border-box'}}
+                          placeholder="e.g. Concentra Urgent Care" value={pfReportProvider}
+                          onChange={e=>setPfReportProvider(e.target.value)} />
+                      </div>
+                      <div style={{flex:1,minWidth:100}}>
+                        <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>PRICE PAID</div>
+                        <input className="rp-input" style={{width:'100%',boxSizing:'border-box'}}
+                          placeholder="e.g. $95" value={pfReportPrice}
+                          onChange={e=>setPfReportPrice(e.target.value)} />
+                      </div>
+                      <div style={{display:'flex',alignItems:'flex-end'}}>
+                        <button className="rp-assess-btn"
+                          style={{padding:'8px 14px',background:'rgba(251,191,36,0.12)',borderColor:'rgba(251,191,36,0.3)',color:'#fbbf24'}}
+                          onClick={pfAddReport} disabled={!pfReportProvider.trim()||!pfReportPrice.trim()}>
+                          + ADD
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{fontSize:8.5,color:'#2a3f5e',lineHeight:1.5}}>
+                      Service: <span style={{color:'#67e8f9'}}>{PF_SERVICE_LABELS[pfServiceType]}</span>
+                      {pfLocation && <> · <span style={{color:'#67e8f9'}}>{pfLocation}</span></>}
+                      {' · '}Saved to your browser — use Share to send to colleagues
+                    </div>
                   </div>
-                </div>
+
+                  {pfReports.length===0 ? (
+                    <div style={{textAlign:'center',padding:'20px 0',color:'#2a3f5e',fontSize:10,lineHeight:1.7}}>
+                      No prices reported yet.<br/>
+                      Search for a provider above, then click <strong style={{color:'#fbbf24'}}>REPORT PRICE</strong> on any result,<br/>or fill in the form manually.
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                        <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em'}}>{pfReports.length} PRICE REPORTS</div>
+                        <button onClick={pfShareReports} style={{
+                          fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'4px 10px',
+                          background:'rgba(6,182,212,0.08)',border:'1px solid rgba(6,182,212,0.25)',
+                          borderRadius:3,color:pfShareCopied?'#34d399':'#06b6d4',cursor:'pointer',
+                        }}>
+                          {pfShareCopied ? '✓ LINK COPIED' : '🔗 SHARE REPORTS'}
+                        </button>
+                      </div>
+                      <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                        {pfReports.map((r,i)=>(
+                          <div key={i} style={{background:'rgba(6,10,24,0.5)',border:'1px solid rgba(20,40,80,0.6)',borderRadius:6,padding:'8px 12px',display:'flex',gap:10,alignItems:'center'}}>
+                            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:14,fontWeight:700,color:'#34d399',minWidth:70}}>{r.price}</div>
+                            <div style={{flex:1}}>
+                              <div style={{fontSize:10,fontWeight:600,color:'#eef4ff'}}>{r.provider}</div>
+                              <div style={{fontSize:8.5,color:'#3d5478',fontFamily:"'IBM Plex Mono',monospace"}}>{r.service} · {r.city} · {r.date}</div>
+                            </div>
+                            <button onClick={()=>{const n=pfReports.filter((_,j)=>j!==i);setPfReports(n);localStorage.setItem('occumed_price_reports',JSON.stringify(n));}}
+                              style={{background:'transparent',border:'1px solid rgba(255,255,255,0.06)',borderRadius:3,color:'#3d5478',fontSize:9,padding:'2px 7px',cursor:'pointer'}}>✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </>
               )}
+
             </div>
           </div>
         </div>
