@@ -1,9 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import * as topojson from 'topojson-client';
+import * as XLSX from 'xlsx';
 import {
   SD, LOCS, MKEYS, MICONS, MLBL, DCOL, DLBL, ALL_METRICS, getVal, STATE_CTR, EXTRA_COORDS
 } from './lib/data';
+import { STATE_POP, densityColor, densityLabel } from './lib/populationData';
+import {
+  PROCEDURE_RATES, STATE_COST_INDEX, STATE_COST_TIER,
+  adjustedPrice, tierColor,
+} from './lib/procedurePrices';
 
 // ── FIPS → state abbreviation lookup ────────────────────────────────────────
 const FIPS2CODE: Record<string,string> = {
@@ -365,6 +371,9 @@ function geocodeQuery(q:string):{lat:number;lng:number;display:string;city:strin
 function buildStatePopup(postal:string):string {
   const d=SD[postal];
   if(!d) return `<div class="pi"><div class="pt">${postal}</div></div>`;
+  const pop=STATE_POP[postal];
+  const tier=STATE_COST_TIER[postal]||'Average';
+  const costIdx=STATE_COST_INDEX[postal]??1.0;
   const metrics=ALL_METRICS;
   const rows=metrics.map(m=>{
     const v=getVal(d,m);
@@ -375,6 +384,20 @@ function buildStatePopup(postal:string):string {
       <span class="pcs" style="color:${DCOL[v]}">${DLBL[v]}</span>
     </div>`;
   }).join('');
+  const popBlock=pop?`
+    <div class="pdiv"></div>
+    <div class="pcl">POPULATION (2020 CENSUS)</div>
+    <div class="pg">
+      <div><div class="psl">Population</div><div class="psv">${pop.pop.toLocaleString()}</div></div>
+      <div><div class="psl">Density</div><div class="psv">${pop.density>=1000?(pop.density/1000).toFixed(1)+'k':Math.round(pop.density)}/mi²</div></div>
+      <div><div class="psl">Land Area</div><div class="psv">${pop.area.toLocaleString()} mi²</div></div>
+    </div>
+    <div class="pdiv"></div>
+    <div class="pcl">HEALTHCARE COST INDEX</div>
+    <div class="pg">
+      <div><div class="psl">Cost Tier</div><div class="psv" style="color:${tierColor(tier)}">${tier}</div></div>
+      <div><div class="psl">vs. National</div><div class="psv" style="color:${costIdx>1.05?'#f97316':costIdx<0.95?'#22c55e':'#67e8f9'}">${costIdx>=1?'+':''}${((costIdx-1)*100).toFixed(0)}%</div></div>
+    </div>`:'';
   return `<div class="pi">
     <div class="pt">${d.n}</div>
     <div class="ps">${postal} · ${d.rur}% Rural</div>
@@ -382,6 +405,7 @@ function buildStatePopup(postal:string):string {
       <div><div class="psl">Providers/100k</div><div class="psv">${d.prov}</div></div>
       <div><div class="psl">Avg Wait</div><div class="psv">${d.wait}d</div></div>
     </div>
+    ${popBlock}
     <div class="pdiv"></div>
     <div class="pcl">SERVICE METRICS</div>
     ${rows}
@@ -553,13 +577,32 @@ export default function App() {
   const liveGrpRef = useRef<L.LayerGroup|null>(null);
   const liveCircleRef = useRef<L.Circle|null>(null);
   const livePinRef = useRef<L.Marker|null>(null);
+  const popDensityLayerRef = useRef<L.LayerGroup|null>(null);
+  const clinicLayerRef = useRef<L.LayerGroup|null>(null);
+  const rawStateFeaturesRef = useRef<any[]>([]);
+  const clinicFileInputRef = useRef<HTMLInputElement>(null);
 
   // UI State
   const [metric, setMetric] = useState('primaryCare');
   const [showLabels, setShowLabels] = useState(true);
   const [showTZ, setShowTZ] = useState(false);
   const [showRadius, setShowRadius] = useState(true);
+  const [showPopDensity, setShowPopDensity] = useState(false);
   const [filterDiff, setFilterDiff] = useState<number|null>(null);
+  // Clinic upload
+  const [uploadedClinics, setUploadedClinics] = useState<Array<{
+    name:string; address:string; city:string; state:string; zip:string;
+    phone:string; notes:string; lat:number|null; lng:number|null; color:string;
+  }>>(() => { try { return JSON.parse(localStorage.getItem('uploaded_clinics')||'[]'); } catch { return []; } });
+  const [showUploadedClinics, setShowUploadedClinics] = useState(true);
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState('');
+  const [uploadColor, setUploadColor] = useState('#f472b6');
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  // Area prices
+  const [showAreaPrices, setShowAreaPrices] = useState(false);
+  const [apState, setApState] = useState('');
+  const [apProcedure, setApProcedure] = useState('urgentCareL3');
   const [view, setView] = useState<'us'|'east'|'central'|'west'>('us');
   const [rpOpen, setRpOpen] = useState(true);
   const [liveOpen, setLiveOpen] = useState(false);
@@ -604,7 +647,7 @@ export default function App() {
   const [pfError, setPfError] = useState('');
   const [pfLocation, setPfLocation] = useState('');
   const [pfDone, setPfDone] = useState(false);
-  const [pfTab, setPfTab] = useState<'providers'|'compare'|'report'>('providers');
+  const [pfTab, setPfTab] = useState<'providers'|'compare'|'areaPrices'|'report'>('providers');
   const [pfReports, setPfReports] = useState<Array<{provider:string;price:string;service:string;city:string;date:string}>>(() => {
     try { return JSON.parse(localStorage.getItem('occumed_price_reports') || '[]'); } catch { return []; }
   });
@@ -812,6 +855,7 @@ export default function App() {
           }
         }).addTo(map);
         stateGeoRef.current = stateGeo;
+        rawStateFeaturesRef.current = gj.features;
         buildStateLabels(map, stateGeo);
         break;
       } catch(e) { console.warn('GeoJSON load error',e); }
@@ -849,6 +893,140 @@ export default function App() {
     labelLayerRef.current = labelGrp;
     if(showLabelsRef.current) labelGrp.addTo(map);
     return labelGrp;
+  }
+
+  // ── Population density overlay ─────────────────────────────────────────────
+  const showPopDensityRef = useRef(showPopDensity);
+  useEffect(()=>{ showPopDensityRef.current = showPopDensity; },[showPopDensity]);
+  useEffect(()=>{
+    const map = mapRef.current;
+    if (!map) return;
+    if (!showPopDensity) {
+      if (popDensityLayerRef.current) { map.removeLayer(popDensityLayerRef.current); popDensityLayerRef.current = null; }
+      return;
+    }
+    const features = rawStateFeaturesRef.current;
+    if (!features.length) return;
+    const layers: L.Layer[] = [];
+    features.forEach((f: any) => {
+      const postal = f.properties?.postal;
+      const pop = STATE_POP[postal];
+      if (!pop) return;
+      const color = densityColor(pop.density);
+      const lyr = L.geoJSON(f, {
+        style: { fillColor: color, fillOpacity: 0.55, weight: 1, color: color, opacity: 0.6 },
+      });
+      lyr.bindTooltip(()=>{
+        return `<div style="padding:5px 8px;font-family:'IBM Plex Mono',monospace;font-size:10px">
+          <span style="font-weight:700;color:#eef4ff">${postal}</span>
+          <span style="color:${color};margin-left:6px;font-weight:700">${densityLabel(pop.density)}</span><br/>
+          <span style="color:#67e8f9">${Math.round(pop.density).toLocaleString()}/mi²</span>
+          <span style="color:#3d5478;margin-left:6px">${pop.pop.toLocaleString()}</span>
+        </div>`;
+      },{sticky:true,direction:'top'});
+      layers.push(lyr);
+    });
+    const grp = L.layerGroup(layers).addTo(map);
+    popDensityLayerRef.current = grp;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[showPopDensity]);
+
+  // ── Uploaded clinic pins ───────────────────────────────────────────────────
+  useEffect(()=>{
+    const map = mapRef.current;
+    if (!map) return;
+    if (clinicLayerRef.current) { map.removeLayer(clinicLayerRef.current); clinicLayerRef.current = null; }
+    if (!showUploadedClinics || uploadedClinics.length===0) return;
+    const grp = L.layerGroup();
+    uploadedClinics.forEach((c,i)=>{
+      if (c.lat===null || c.lng===null) return;
+      const col = c.color || uploadColor;
+      const mk = L.marker([c.lat, c.lng], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="width:18px;height:18px;border-radius:50%;background:${col};box-shadow:0 0 10px ${col},0 0 20px ${col}66,0 0 4px rgba(0,0,0,0.6);animation:clinic-pulse 2s ease-in-out ${(i*0.15).toFixed(1)}s infinite;cursor:pointer;"></div>`,
+          iconSize: [18,18], iconAnchor: [9,9],
+        }),
+        zIndexOffset: 2000,
+      });
+      mk.bindPopup(`<div style="font-family:Inter,sans-serif;padding:10px 12px;min-width:170px;">
+        <div style="font-size:12px;font-weight:700;color:#e2f0ff;margin-bottom:4px">${c.name}</div>
+        ${c.address?`<div style="font-size:9.5px;color:#4a6888">📍 ${c.address}${c.city?', '+c.city:''}${c.state?' '+c.state:''}${c.zip?' '+c.zip:''}</div>`:''}
+        ${c.phone?`<div style="font-size:9.5px;color:#67e8f9;margin-top:2px">📞 <a href="tel:${c.phone}" style="color:#67e8f9;text-decoration:none">${c.phone}</a></div>`:''}
+        ${c.notes?`<div style="font-size:9px;color:#3d5478;margin-top:3px">${c.notes}</div>`:''}
+        <div style="margin-top:6px;display:flex;gap:5px">
+          <div style="width:8px;height:8px;border-radius:50%;background:${col};box-shadow:0 0 6px ${col};flex-shrink:0;margin-top:2px"></div>
+          <span style="font-size:8.5px;color:#3d5478;font-family:'IBM Plex Mono',monospace">UPLOADED CLINIC</span>
+        </div>
+      </div>`);
+      grp.addLayer(mk);
+    });
+    grp.addTo(map);
+    clinicLayerRef.current = grp;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[uploadedClinics, showUploadedClinics, uploadColor]);
+
+  async function handleClinicUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setUploadLoading(true);
+    setUploadProgress('Parsing file…');
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows: any[] = XLSX.utils.sheet_to_json(ws, {defval:''});
+      if (!rows.length) { setUploadProgress('No data found in file.'); setUploadLoading(false); return; }
+
+      // Flexible column detection (case-insensitive)
+      function col(row:any, ...keys:string[]):string {
+        for (const k of keys) {
+          const found = Object.keys(row).find(r=>r.toLowerCase().replace(/[\s_-]/g,'')===k.toLowerCase().replace(/[\s_-]/g,''));
+          if (found && row[found]!=='' && row[found]!==undefined) return String(row[found]).trim();
+        }
+        return '';
+      }
+
+      const parsed = rows.map(r=>({
+        name:    col(r,'name','providername','clinicname','practicename','facility') || 'Unnamed',
+        address: col(r,'address','streetaddress','street','addr'),
+        city:    col(r,'city','town'),
+        state:   col(r,'state','st').toUpperCase().slice(0,2),
+        zip:     col(r,'zip','zipcode','postalcode','postal'),
+        phone:   col(r,'phone','telephone','tel'),
+        notes:   col(r,'notes','note','description','desc'),
+        lat:     parseFloat(col(r,'lat','latitude')) || null,
+        lng:     parseFloat(col(r,'lng','lon','long','longitude')) || null,
+        color:   uploadColor,
+      }));
+
+      // Geocode rows missing coordinates
+      const toGeocode = parsed.filter(p=>p.lat===null||isNaN(p.lat as any));
+      let geocoded = 0;
+      for (const p of toGeocode) {
+        const q = [p.address, p.city, p.state, p.zip].filter(Boolean).join(', ');
+        if (!q) continue;
+        setUploadProgress(`Geocoding ${++geocoded}/${toGeocode.length}: ${p.name}`);
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`,{headers:{'Accept-Language':'en'}});
+          const data = await res.json();
+          if (data?.[0]) { p.lat = parseFloat(data[0].lat); p.lng = parseFloat(data[0].lon); }
+        } catch {}
+        await new Promise(r=>setTimeout(r, 1100)); // Nominatim rate limit: 1 req/sec
+      }
+
+      const final = parsed.filter(p=>p.lat!==null&&!isNaN(p.lat as any));
+      const skipped = parsed.length - final.length;
+      const merged = [...final, ...uploadedClinics].slice(0, 500);
+      setUploadedClinics(merged);
+      localStorage.setItem('uploaded_clinics', JSON.stringify(merged));
+      setUploadProgress(`✓ Added ${final.length} clinics${skipped>0?` (${skipped} skipped — no address/coordinates)`:''}. Toggle with the MY CLINICS button.`);
+    } catch(err:any) {
+      setUploadProgress(`Error: ${err.message||'Could not parse file'}`);
+    } finally {
+      setUploadLoading(false);
+    }
   }
 
   const showLabelsRef = useRef(showLabels);
@@ -1321,6 +1499,9 @@ out center tags;`;
           <button className={`hdr-btn${liveOpen?' active':''}`} onClick={()=>setLiveOpen(o=>!o)}>📡 LIVE FINDER</button>
           <button className="hdr-btn" onClick={()=>setShowDir(true)}>📁 DIRECTORIES</button>
           <button className={`hdr-btn${showPriceFinder?' active':''}`} style={{color:'#34d399'}} onClick={()=>setShowPriceFinder(o=>!o)}>💲 PRICE FINDER</button>
+          <button className="hdr-btn" style={{color:'#f472b6'}} onClick={()=>setShowUploadModal(true)}>
+            📤 MY CLINICS{uploadedClinics.length>0&&<span className="badge" style={{background:'rgba(244,114,182,0.25)',color:'#f472b6'}}>{uploadedClinics.length}</span>}
+          </button>
           <button className={`hdr-btn green`} onClick={()=>setShowCompare(true)}>
             ⊞ COMPARE{pinnedCities.length>0&&<span className="badge">{pinnedCities.length}</span>}
           </button>
@@ -1360,9 +1541,17 @@ out center tags;`;
               <label className="tog-switch"><input type="checkbox" checked={showTZ} onChange={e=>setShowTZ(e.target.checked)}/><span className="tog-slider"/></label>
             </div>
             <div className="tog-row">
+              <span className="tog-lbl">Population density</span>
+              <label className="tog-switch"><input type="checkbox" checked={showPopDensity} onChange={e=>setShowPopDensity(e.target.checked)}/><span className="tog-slider"/></label>
+            </div>
+            <div className="tog-row">
               <span className="tog-lbl">70mi radius ring</span>
               <label className="tog-switch"><input type="checkbox" checked={showRadius} onChange={e=>setShowRadius(e.target.checked)}/><span className="tog-slider"/></label>
             </div>
+            {uploadedClinics.length>0&&<div className="tog-row">
+              <span className="tog-lbl" style={{color:'#f472b6'}}>My clinics ({uploadedClinics.length})</span>
+              <label className="tog-switch"><input type="checkbox" checked={showUploadedClinics} onChange={e=>setShowUploadedClinics(e.target.checked)}/><span className="tog-slider"/></label>
+            </div>}
           </div>
           <div className="sb-divider"/>
           <div className="sb-section">
@@ -1604,7 +1793,7 @@ out center tags;`;
 
               {/* Tab bar */}
               <div style={{display:'flex',gap:0,marginBottom:14,borderBottom:'1px solid rgba(20,50,100,0.5)'}}>
-                {([['providers','📋 PROVIDERS','#67e8f9'],['compare','💰 COMPARE PRICES','#34d399'],['report','⭐ REPORT A PRICE','#fbbf24']] as const).map(([tab,label,col])=>(
+                {([['providers','📋 PROVIDERS','#67e8f9'],['compare','💰 COMPARE PRICES','#34d399'],['areaPrices','📊 AREA PRICES','#a78bfa'],['report','⭐ REPORT A PRICE','#fbbf24']] as const).map(([tab,label,col])=>(
                   <button key={tab} onClick={()=>setPfTab(tab)} style={{
                     padding:'7px 16px',background:'transparent',border:'none',
                     borderBottom:`2px solid ${pfTab===tab?col:'transparent'}`,
@@ -1752,6 +1941,111 @@ out center tags;`;
                 </>
               )}
 
+              {/* ── AREA PRICES TAB ── */}
+              {!pfLoading && pfTab==='areaPrices' && (()=>{
+                const proc = PROCEDURE_RATES[apProcedure];
+                const adjLow  = apState ? adjustedPrice(proc?.selfPayLow||0, apState) : proc?.selfPayLow||0;
+                const adjHigh = apState ? adjustedPrice(proc?.selfPayLow||0, apState) : proc?.selfPayHigh||0;
+                const adjMed  = apState ? adjustedPrice(proc?.medicareAvg||0, apState) : proc?.medicareAvg||0;
+                const tier    = apState ? (STATE_COST_TIER[apState]||'Average') : 'Average';
+                const costIdx = apState ? (STATE_COST_INDEX[apState]??1.0) : 1.0;
+                const allStates = Object.entries(STATE_COST_INDEX)
+                  .map(([st,idx])=>({st, cost: Math.round((proc?.selfPayLow||100)*idx)}))
+                  .sort((a,b)=>a.cost-b.cost);
+                const cheapest = allStates.slice(0,5);
+                const priciest = allStates.slice(-5).reverse();
+                return <>
+                  <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
+                    <div style={{flex:2,minWidth:200}}>
+                      <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:4}}>PROCEDURE</div>
+                      <select className="rp-select" style={{width:'100%',boxSizing:'border-box'}}
+                        value={apProcedure} onChange={e=>setApProcedure(e.target.value)}>
+                        {Object.entries(PROCEDURE_RATES).map(([k,v])=>(
+                          <option key={k} value={k}>{v.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{flex:1,minWidth:70}}>
+                      <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:4}}>STATE</div>
+                      <input className="rp-input" style={{width:'100%',boxSizing:'border-box'}}
+                        placeholder="e.g. AL" value={apState}
+                        onChange={e=>setApState(e.target.value.toUpperCase().slice(0,2))} />
+                    </div>
+                  </div>
+
+                  {proc && <>
+                    {/* Reference card */}
+                    <div style={{background:'rgba(167,139,250,0.07)',border:'1px solid rgba(167,139,250,0.2)',borderRadius:8,padding:'14px',marginBottom:14}}>
+                      <div style={{fontSize:9,color:'#a78bfa',letterSpacing:'0.1em',marginBottom:8}}>{proc.cpt} · {proc.description}</div>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:8}}>
+                        <div>
+                          <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>MEDICARE ALLOWED</div>
+                          <div style={{fontSize:16,fontWeight:700,color:'#67e8f9',fontFamily:"'IBM Plex Mono',monospace"}}>
+                            {adjMed>0?`$${adjMed.toLocaleString()}`:'Not covered'}
+                          </div>
+                          {apState&&<div style={{fontSize:8,color:'#2a3f5e',marginTop:1}}>Adjusted for {apState}</div>}
+                        </div>
+                        <div>
+                          <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>SELF-PAY LOW</div>
+                          <div style={{fontSize:16,fontWeight:700,color:'#34d399',fontFamily:"'IBM Plex Mono',monospace"}}>
+                            ${adjLow.toLocaleString()}
+                          </div>
+                          <div style={{fontSize:8,color:'#2a3f5e',marginTop:1}}>Cash / uninsured</div>
+                        </div>
+                        <div>
+                          <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>SELF-PAY HIGH</div>
+                          <div style={{fontSize:16,fontWeight:700,color:'#f97316',fontFamily:"'IBM Plex Mono',monospace"}}>
+                            ${apState?adjustedPrice(proc.selfPayHigh,apState):proc.selfPayHigh}
+                          </div>
+                          <div style={{fontSize:8,color:'#2a3f5e',marginTop:1}}>Without negotiation</div>
+                        </div>
+                      </div>
+                      {apState && <>
+                        <div style={{fontSize:8,color:'#3d5478',marginBottom:4}}>GEOGRAPHIC COST TIER · {apState}</div>
+                        <div style={{display:'flex',alignItems:'center',gap:10}}>
+                          <span style={{fontSize:11,fontWeight:700,color:tierColor(tier),fontFamily:"'IBM Plex Mono',monospace"}}>{tier}</span>
+                          <div style={{flex:1,height:6,borderRadius:3,background:'rgba(20,50,100,0.5)',overflow:'hidden'}}>
+                            <div style={{height:'100%',borderRadius:3,background:tierColor(tier),width:`${Math.min(100,Math.max(5,((costIdx-0.8)/0.6)*100))}%`,transition:'width 0.3s'}}/>
+                          </div>
+                          <span style={{fontSize:10,fontFamily:"'IBM Plex Mono',monospace",color:costIdx>1.05?'#f97316':costIdx<0.95?'#22c55e':'#67e8f9'}}>
+                            {costIdx>=1?'+':''}{ ((costIdx-1)*100).toFixed(0)}%
+                          </span>
+                        </div>
+                      </>}
+                    </div>
+
+                    {/* Cheapest / most expensive states comparison */}
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
+                      <div>
+                        <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:6}}>💚 LOWEST COST STATES</div>
+                        {cheapest.map((s,i)=>(
+                          <div key={s.st} style={{display:'flex',alignItems:'center',gap:6,marginBottom:4,padding:'4px 8px',background:'rgba(34,197,94,0.06)',borderRadius:4,border:'1px solid rgba(34,197,94,0.15)'}}>
+                            <span style={{fontSize:8,color:'#3d5478',fontFamily:"'IBM Plex Mono',monospace",width:14}}>{i+1}</span>
+                            <span style={{fontSize:10,fontWeight:600,color:'#eef4ff',flex:1}}>{s.st}</span>
+                            <span style={{fontSize:10,fontWeight:700,color:'#22c55e',fontFamily:"'IBM Plex Mono',monospace"}}>${s.cost}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div>
+                        <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:6}}>🔴 HIGHEST COST STATES</div>
+                        {priciest.map((s,i)=>(
+                          <div key={s.st} style={{display:'flex',alignItems:'center',gap:6,marginBottom:4,padding:'4px 8px',background:'rgba(239,68,68,0.06)',borderRadius:4,border:'1px solid rgba(239,68,68,0.15)'}}>
+                            <span style={{fontSize:8,color:'#3d5478',fontFamily:"'IBM Plex Mono',monospace",width:14}}>{i+1}</span>
+                            <span style={{fontSize:10,fontWeight:600,color:'#eef4ff',flex:1}}>{s.st}</span>
+                            <span style={{fontSize:10,fontWeight:700,color:'#ef4444',fontFamily:"'IBM Plex Mono',monospace"}}>${s.cost}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div style={{fontSize:8.5,color:'#2a3f5e',lineHeight:1.5,padding:'8px 10px',background:'rgba(10,24,48,0.4)',borderRadius:6}}>
+                      Prices are estimates based on 2024 Medicare Physician Fee Schedule and CMS Geographic Practice Cost Index.
+                      Self-pay rates vary by facility. Use ZocDoc, MDsave, or Sesame Care for actual quoted prices.
+                    </div>
+                  </>}
+                </>;
+              })()}
+
               {/* ── REPORT A PRICE TAB ── */}
               {!pfLoading && pfTab==='report' && (
                 <>
@@ -1820,6 +2114,93 @@ out center tags;`;
                 </>
               )}
 
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MY CLINICS / UPLOAD MODAL ── */}
+      {showUploadModal && (
+        <div className="modal-backdrop open" onClick={()=>setShowUploadModal(false)}>
+          <div className="modal-box" style={{width:680,maxHeight:'85vh',display:'flex',flexDirection:'column'}} onClick={e=>e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title" style={{color:'#f472b6'}}>📤 MY CLINICS</span>
+              <button className="modal-close" onClick={()=>setShowUploadModal(false)}>✕</button>
+            </div>
+            <div className="modal-body" style={{flex:1,overflowY:'auto',padding:'16px 20px'}}>
+
+              {/* Upload section */}
+              <div style={{background:'rgba(244,114,182,0.06)',border:'1px solid rgba(244,114,182,0.2)',borderRadius:8,padding:'14px',marginBottom:16}}>
+                <div style={{fontSize:9,color:'#f472b6',letterSpacing:'0.08em',marginBottom:8}}>UPLOAD SPREADSHEET</div>
+                <p style={{fontSize:10,color:'#4a6888',lineHeight:1.6,marginBottom:10}}>
+                  Upload an Excel (.xlsx) or CSV file with your clinic locations. Columns detected automatically.
+                  Supported: <span style={{color:'#c8ddf0'}}>Name, Address, City, State, Zip, Phone, Notes, Lat, Lng</span>.
+                  Addresses without coordinates will be geocoded automatically.
+                </p>
+                <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap',marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>PIN COLOR</div>
+                    <input type="color" value={uploadColor} onChange={e=>setUploadColor(e.target.value)}
+                      style={{width:40,height:32,border:'1px solid rgba(244,114,182,0.3)',borderRadius:4,background:'transparent',cursor:'pointer',padding:2}} />
+                  </div>
+                  <button className="rp-assess-btn"
+                    style={{padding:'8px 18px',background:'rgba(244,114,182,0.12)',borderColor:'rgba(244,114,182,0.3)',color:'#f472b6',opacity:uploadLoading?0.6:1}}
+                    disabled={uploadLoading}
+                    onClick={()=>clinicFileInputRef.current?.click()}>
+                    {uploadLoading ? '⏳ PROCESSING...' : '📁 CHOOSE FILE (.xlsx / .csv)'}
+                  </button>
+                  <input ref={clinicFileInputRef} type="file" accept=".xlsx,.xls,.csv" style={{display:'none'}}
+                    onChange={handleClinicUpload} />
+                </div>
+                {uploadProgress && (
+                  <div style={{fontSize:9,color:uploadProgress.startsWith('✓')?'#34d399':uploadProgress.startsWith('Error')?'#fca5a5':'#67e8f9',fontFamily:"'IBM Plex Mono',monospace",lineHeight:1.5}}>
+                    {uploadProgress}
+                  </div>
+                )}
+              </div>
+
+              {/* Controls */}
+              {uploadedClinics.length>0 && (
+                <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:12,flexWrap:'wrap'}}>
+                  <div style={{fontSize:9,color:'#f472b6',letterSpacing:'0.08em',flex:1}}>
+                    {uploadedClinics.filter(c=>c.lat!==null).length} / {uploadedClinics.length} CLINICS MAPPED
+                  </div>
+                  <label style={{display:'flex',alignItems:'center',gap:5,cursor:'pointer',fontSize:9,color:'#3d5478'}}>
+                    <input type="checkbox" checked={showUploadedClinics} onChange={e=>setShowUploadedClinics(e.target.checked)}/>
+                    Show on map
+                  </label>
+                  <button onClick={()=>{setUploadedClinics([]);localStorage.removeItem('uploaded_clinics');setUploadProgress('');}}
+                    style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'3px 8px',background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:3,color:'#fca5a5',cursor:'pointer'}}>
+                    CLEAR ALL
+                  </button>
+                </div>
+              )}
+
+              {/* Clinic list */}
+              {uploadedClinics.length===0 ? (
+                <div style={{textAlign:'center',padding:'24px 0',color:'#2a3f5e',fontSize:10,lineHeight:1.8}}>
+                  <div style={{fontSize:28,marginBottom:10}}>📍</div>
+                  No clinics uploaded yet.<br/>
+                  Upload a spreadsheet to see glowing pins on the map.
+                </div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                  {uploadedClinics.map((c,i)=>(
+                    <div key={i} style={{background:'rgba(6,10,24,0.5)',border:`1px solid ${c.lat!==null?'rgba(244,114,182,0.2)':'rgba(30,50,80,0.5)'}`,borderRadius:6,padding:'8px 12px',display:'flex',gap:10,alignItems:'center'}}>
+                      <div style={{width:10,height:10,borderRadius:'50%',background:c.color||uploadColor,boxShadow:`0 0 6px ${c.color||uploadColor}`,flexShrink:0}} />
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:'#eef4ff'}}>{c.name}</div>
+                        <div style={{fontSize:8.5,color:'#3d5478',fontFamily:"'IBM Plex Mono',monospace"}}>
+                          {[c.address,c.city,c.state,c.zip].filter(Boolean).join(', ')||'No address'}
+                          {c.lat!==null?<span style={{color:'#34d399',marginLeft:6}}>✓ {c.lat?.toFixed(3)},{c.lng?.toFixed(3)}</span>:<span style={{color:'#f97316',marginLeft:6}}>⚠ Not geocoded</span>}
+                        </div>
+                      </div>
+                      <button onClick={()=>{const n=uploadedClinics.filter((_,j)=>j!==i);setUploadedClinics(n);localStorage.setItem('uploaded_clinics',JSON.stringify(n));}}
+                        style={{background:'transparent',border:'1px solid rgba(255,255,255,0.06)',borderRadius:3,color:'#3d5478',fontSize:9,padding:'2px 7px',cursor:'pointer',flexShrink:0}}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

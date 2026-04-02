@@ -297,6 +297,10 @@ html, body, #root {
 .lp-empty { display: none; }
 .lp-empty.show { display: block; text-align: center; padding: 20px 14px; font-size: 10.5px; color: #3d5478; }
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes clinic-pulse {
+  0%, 100% { box-shadow: 0 0 8px var(--cp,#f472b6), 0 0 16px var(--cp,#f472b6)66, 0 0 3px rgba(0,0,0,0.5); transform: scale(1); }
+  50% { box-shadow: 0 0 14px var(--cp,#f472b6), 0 0 28px var(--cp,#f472b6)88, 0 0 3px rgba(0,0,0,0.5); transform: scale(1.18); }
+}
 
 /* ── HEADER ─────────────────────────────────────────── */
 .hdr-brand { font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 13px; color: var(--text); display: flex; align-items: center; gap: 7px; flex-shrink: 0; white-space: nowrap; }
