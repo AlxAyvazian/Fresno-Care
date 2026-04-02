@@ -1,0 +1,1701 @@
+import React, { useEffect, useRef, useState } from 'react';
+import L from 'leaflet';
+import * as topojson from 'topojson-client';
+import {
+  SD, LOCS, MKEYS, MICONS, MLBL, DCOL, DLBL, ALL_METRICS, getVal, STATE_CTR, EXTRA_COORDS
+} from './lib/data';
+
+// ── FIPS → state abbreviation lookup ────────────────────────────────────────
+const FIPS2CODE: Record<string,string> = {
+  "01":"AL","02":"AK","04":"AZ","05":"AR","06":"CA","08":"CO","09":"CT","10":"DE",
+  "11":"DC","12":"FL","13":"GA","15":"HI","16":"ID","17":"IL","18":"IN","19":"IA",
+  "20":"KS","21":"KY","22":"LA","23":"ME","24":"MD","25":"MA","26":"MI","27":"MN",
+  "28":"MS","29":"MO","30":"MT","31":"NE","32":"NV","33":"NH","34":"NJ","35":"NM",
+  "36":"NY","37":"NC","38":"ND","39":"OH","40":"OK","41":"OR","42":"PA","44":"RI",
+  "45":"SC","46":"SD","47":"TN","48":"TX","49":"UT","50":"VT","51":"VA","53":"WA",
+  "54":"WV","55":"WI","56":"WY"
+};
+const NAME2CODE: Record<string,string> = {
+  "alabama":"AL","alaska":"AK","arizona":"AZ","arkansas":"AR","california":"CA",
+  "colorado":"CO","connecticut":"CT","delaware":"DE","district of columbia":"DC",
+  "florida":"FL","georgia":"GA","hawaii":"HI","idaho":"ID","illinois":"IL","indiana":"IN",
+  "iowa":"IA","kansas":"KS","kentucky":"KY","louisiana":"LA","maine":"ME","maryland":"MD",
+  "massachusetts":"MA","michigan":"MI","minnesota":"MN","mississippi":"MS","missouri":"MO",
+  "montana":"MT","nebraska":"NE","nevada":"NV","new hampshire":"NH","new jersey":"NJ",
+  "new mexico":"NM","new york":"NY","north carolina":"NC","north dakota":"ND","ohio":"OH",
+  "oklahoma":"OK","oregon":"OR","pennsylvania":"PA","rhode island":"RI","south carolina":"SC",
+  "south dakota":"SD","tennessee":"TN","texas":"TX","utah":"UT","vermont":"VT",
+  "virginia":"VA","washington":"WA","west virginia":"WV","wisconsin":"WI","wyoming":"WY"
+};
+
+const STATE_TZ: Record<string,number> = {
+  ME:0,NH:0,VT:0,MA:0,RI:0,CT:0,NY:0,NJ:0,PA:0,DE:0,MD:0,VA:0,WV:0,NC:0,SC:0,GA:0,FL:0,
+  OH:0,MI:0,IN:0,KY:0,TN:0,MS:1,WI:1,IL:1,MN:1,IA:1,MO:1,AR:1,LA:1,TX:1,OK:1,KS:1,NE:1,
+  SD:1,ND:1,AL:1,MT:2,WY:2,CO:2,NM:2,ID:2,UT:2,AZ:2,NV:3,CA:3,OR:3,WA:3,AK:4,HI:5
+};
+const TZ_INFO = [
+  {color:'#7c3aed',abbr:'ET',name:'Eastern',utc:'UTC-5/-4',labelLat:38.5,labelLng:-79.5},
+  {color:'#1d4ed8',abbr:'CT',name:'Central',utc:'UTC-6/-5',labelLat:38.5,labelLng:-92.0},
+  {color:'#0891b2',abbr:'MT',name:'Mountain',utc:'UTC-7/-6',labelLat:40.5,labelLng:-110.5},
+  {color:'#c7c000',abbr:'PT',name:'Pacific',utc:'UTC-8/-7',labelLat:40.5,labelLng:-121.5},
+  {color:'#be185d',abbr:'AK',name:'Alaska',utc:'UTC-9/-8',labelLat:64.0,labelLng:-153.0},
+  {color:'#0f766e',abbr:'HI',name:'Hawaii',utc:'UTC-10',labelLat:20.5,labelLng:-157.3}
+];
+
+// ── Overpass mirrors ─────────────────────────────────────────────────────────
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  'https://overpass.openstreetmap.ru/api/interpreter',
+  'https://corsproxy.io/?https://overpass-api.de/api/interpreter',
+  'https://corsproxy.io/?https://overpass.kumi.systems/api/interpreter'
+];
+
+const CATS: Record<string,{ico:string;col:string;lbl:string}> = {
+  hospital:{ico:'🏥',col:'#ef4444',lbl:'Hospital'},
+  clinic:  {ico:'🏨',col:'#f97316',lbl:'Clinic'},
+  urgent:  {ico:'⚡',col:'#f59e0b',lbl:'Urgent Care'},
+  doctor:  {ico:'👨‍⚕️',col:'#84cc16',lbl:'Doctor / GP'},
+  pharmacy:{ico:'💊',col:'#10b981',lbl:'Pharmacy'},
+  dentist: {ico:'🦷',col:'#06b6d4',lbl:'Dentist'},
+  eye:     {ico:'👁️',col:'#3b82f6',lbl:'Eye Care'},
+  physio:  {ico:'🦴',col:'#8b5cf6',lbl:'Physical Therapy'},
+  lab:     {ico:'🧪',col:'#ec4899',lbl:'Lab / Diagnostics'},
+  blood:   {ico:'🩸',col:'#dc2626',lbl:'Blood Bank'},
+  nursing: {ico:'🏠',col:'#a78bfa',lbl:'Nursing Home'},
+};
+
+const PROVIDER_DIRS = [
+  {name:'NAOHP Directory',url:'https://naohp.com/',tag:'OCC MED'},
+  {name:'ACOEM Provider Search',url:'https://www.acoem.org/',tag:'OCC MED'},
+  {name:'AAMRO MRO Locator',url:'https://www.aamro.com/',tag:'DRUG TEST'},
+  {name:'DATIA Collector Network',url:'https://www.datia.org/',tag:'DRUG TEST'},
+  {name:'CAOHC Au Program',url:'https://caohc.org/',tag:'AUDIOMETRY'},
+  {name:'NIOSH OEM Residencies',url:'https://www.cdc.gov/niosh/',tag:'OCC MED'},
+  {name:'AAOHN Nurse Locator',url:'https://www.aaohn.org/',tag:'OCC HEALTH'},
+  {name:'NPI Registry',url:'https://npiregistry.cms.hhs.gov/',tag:'ANY'},
+  {name:'HealthGrades',url:'https://www.healthgrades.com/',tag:'ANY'},
+  {name:'Zocdoc',url:'https://www.zocdoc.com/',tag:'ANY'},
+  {name:'CVS MinuteClinic',url:'https://www.cvs.com/minuteclinic/',tag:'URGENT'},
+  {name:'Concentra',url:'https://www.concentra.com/',tag:'OCC MED'},
+  {name:'AFC Urgent Care',url:'https://www.afcurgentcare.com/',tag:'URGENT'},
+  {name:'Quest Diagnostics',url:'https://www.questdiagnostics.com/',tag:'DRUG TEST'},
+  {name:'LabCorp',url:'https://www.labcorp.com/',tag:'DRUG TEST'},
+  {name:'SpecFit360',url:'https://specfit360.com/',tag:'OCC MED'},
+  {name:'US HealthWorks',url:'https://www.ushealthworks.com/',tag:'OCC MED'},
+  {name:'National Drug Screening',url:'https://ndsinc.com/',tag:'DRUG TEST'},
+];
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
+function haversine(lat1:number,lng1:number,lat2:number,lng2:number):number {
+  const R=6371000,dL=(lat2-lat1)*Math.PI/180,dN=(lng2-lng1)*Math.PI/180;
+  const a=Math.sin(dL/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dN/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function fmtDist(m:number):string { return m<1000?Math.round(m)+'m':((m/1609.34).toFixed(1)+' mi'); }
+
+function calcDrive(lat1:number,lng1:number,lat2:number,lng2:number) {
+  const R=3958.8,dL=(lat2-lat1)*Math.PI/180,dN=(lng2-lng1)*Math.PI/180;
+  const a=Math.sin(dL/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dN/2)**2;
+  const dist=R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+  const hrs=(dist/55)*1.15;
+  const h=Math.floor(hrs),m=Math.round((hrs-h)*60);
+  return {miles:Math.round(dist),timeStr:h>0?`${h}h ${m}m`:`${m}m`,hours:hrs};
+}
+
+function approxMiles(lat1:number,lng1:number,lat2:number,lng2:number):number {
+  const dlat=lat2-lat1,dlng=lng2-lng1;
+  return Math.round(Math.sqrt(dlat*dlat+dlng*dlng)*69);
+}
+
+function localSearch(q:string,limit=8):typeof LOCS {
+  const ql=q.toLowerCase().replace(/,/g,' ').replace(/\s+/g,' ').trim();
+  const results:typeof LOCS=[];
+  for(const l of LOCS) {
+    const name=l[0].toLowerCase(),state=l[1].toLowerCase();
+    if(name===ql||`${name} ${state}`===ql||name.startsWith(ql)||`${name} ${state}`.includes(ql)) {
+      results.push(l);
+      if(results.length>=limit) break;
+    }
+  }
+  if(results.length<limit) {
+    for(const l of LOCS) {
+      if(results.includes(l)) continue;
+      if(l[0].toLowerCase().includes(ql)||l[1].toLowerCase()===ql) {
+        results.push(l);
+        if(results.length>=limit) break;
+      }
+    }
+  }
+  return results;
+}
+
+function estimateDifficultyFromNeighbors(lat:number,lng:number,examKey:string):number {
+  const candidates=LOCS.map(l=>{
+    const dist=approxMiles(l[2],l[3],lat,lng);
+    return{l,dist};
+  }).sort((a,b)=>a.dist-b.dist).slice(0,5);
+  if(!candidates.length) return 3;
+  let totalW=0,weightedV=0;
+  for(const {l,dist} of candidates) {
+    const w=1/(dist+1);
+    weightedV+=getVal(l,examKey)*w;
+    totalW+=w;
+  }
+  return Math.round(weightedV/totalW);
+}
+
+function findNearby(lat:number,lng:number,excludeLoc:any,examKey:string) {
+  return LOCS.filter(l=>l!==excludeLoc&&l[4]<=3)
+    .map(l=>{const dist=approxMiles(l[2],l[3],lat,lng);return{name:l[0],state:l[1],dist,v:getVal(l,examKey),tier:l[4]};})
+    .filter(l=>l.dist>2&&l.dist<300)
+    .sort((a,b)=>a.dist-b.dist).slice(0,4);
+}
+
+function findNearestEasier(lat:number,lng:number,currentScore:number,examKey:string,excludeName:string) {
+  return LOCS.filter(l=>l[0]!==excludeName)
+    .map(l=>{
+      const dist=approxMiles(l[2],l[3],lat,lng);
+      const v=getVal(l,examKey);
+      return{name:l[0],state:l[1],lat:l[2],lng:l[3],tier:l[4],dist,v};
+    })
+    .filter(r=>r.dist>5&&r.dist<500&&r.v<currentScore)
+    .sort((a,b)=>a.dist-b.dist).slice(0,5);
+}
+
+function countProvidersInRadius(lat:number,lng:number,examKey:string) {
+  const POP_BY_TIER:{[k:number]:number}={1:800000,2:180000,3:55000,4:18000};
+  const nearby=LOCS.filter(l=>approxMiles(l[2],l[3],lat,lng)<=70);
+  let estProviders=0;
+  for(const l of nearby) {
+    const tier=l[4];
+    const provPer100k=l[16]||100;
+    const pop=POP_BY_TIER[tier]||20000;
+    const score=getVal(l,examKey);
+    const scale=[1,0.85,0.65,0.4,0.18][score-1]||0.5;
+    estProviders+=Math.round((provPer100k/100000)*pop*scale);
+  }
+  const avgDiff=nearby.length?(nearby.reduce((s,l)=>s+getVal(l,examKey),0)/nearby.length).toFixed(1):'—';
+  return{citiesInRadius:nearby.length,estProviders:Math.max(1,estProviders),avgDifficulty:avgDiff};
+}
+
+function classifyFacility(tags:any):string {
+  const a=(tags.amenity||'').toLowerCase(),h=(tags.healthcare||'').toLowerCase(),
+    n=(tags.name||'').toLowerCase(),o=(tags.office||'').toLowerCase(),
+    b=(tags.building||'').toLowerCase(),s=(tags.shop||'').toLowerCase();
+  if(n.includes('urgent care')||a==='urgent_care'||h==='urgent_care') return 'urgent';
+  if(a==='hospital'||h==='hospital'||b==='hospital'||n.includes('hospital')) return 'hospital';
+  if(a==='clinic'||h==='clinic'||n.includes('clinic')) return 'clinic';
+  if(a==='doctors'||h==='doctor'||o==='physician'||o==='medical') return 'doctor';
+  if(a==='pharmacy'||h==='pharmacy'||s==='chemist'||n.includes('pharmacy')) return 'pharmacy';
+  if(a==='dentist'||h==='dentist'||n.includes('dental')) return 'dentist';
+  if(a==='optometrist'||h==='optometrist'||s==='optician') return 'eye';
+  if(h==='physiotherapist') return 'physio';
+  if(a==='laboratory'||h==='laboratory'||h==='sample_collection') return 'lab';
+  if(a==='blood_bank'||h==='blood_bank') return 'blood';
+  if(a==='nursing_home'||h==='nursing_home') return 'nursing';
+  if(h) return 'clinic';
+  return 'clinic';
+}
+
+function geocodeQuery(q:string):{lat:number;lng:number;display:string;city:string;state:string;zip:string}|null {
+  const qNorm=q.replace(/,/g,' ').replace(/\s+/g,' ').trim();
+  const results=localSearch(qNorm,1);
+  if(results.length) {
+    const l=results[0];
+    return{lat:l[2],lng:l[3],display:`${l[0]}, ${l[1]}`,city:l[0],state:l[1],zip:''};
+  }
+  const ql=qNorm.toLowerCase();
+  if(EXTRA_COORDS[ql]) {
+    const [lat,lng]=EXTRA_COORDS[ql];
+    const parts=ql.split(' ');
+    const city=parts.join(' ').replace(/ [a-z]{2}$/,'').replace(/^./,s=>s.toUpperCase());
+    return{lat,lng,display:city,city,state:'',zip:''};
+  }
+  return null;
+}
+
+// ── Build popup HTML ──────────────────────────────────────────────────────────
+function buildStatePopup(postal:string):string {
+  const d=SD[postal];
+  if(!d) return `<div class="pi"><div class="pt">${postal}</div></div>`;
+  const metrics=ALL_METRICS;
+  const rows=metrics.map(m=>{
+    const v=getVal(d,m);
+    return `<div class="pcrow">
+      <span class="pcico">${MICONS[m]}</span>
+      <span class="pcn">${MLBL[m]}</span>
+      <div class="pct"><div class="pcf" style="width:${v*20}%;background:${DCOL[v]}"></div></div>
+      <span class="pcs" style="color:${DCOL[v]}">${DLBL[v]}</span>
+    </div>`;
+  }).join('');
+  return `<div class="pi">
+    <div class="pt">${d.n}</div>
+    <div class="ps">${postal} · ${d.rur}% Rural</div>
+    <div class="pg">
+      <div><div class="psl">Providers/100k</div><div class="psv">${d.prov}</div></div>
+      <div><div class="psl">Avg Wait</div><div class="psv">${d.wait}d</div></div>
+    </div>
+    <div class="pdiv"></div>
+    <div class="pcl">SERVICE METRICS</div>
+    ${rows}
+  </div>`;
+}
+
+function buildCityPopup(loc:any,examKey:string):string {
+  const [name,state,,,,,,,,,,,,,,,,prov,wait]=loc;
+  const tier=loc[4];
+  const v=getVal(loc,examKey);
+  const col=DCOL[v];
+  const tierLabel=tier===1?'Major Metro':tier===2?'Mid-Size City':tier===3?'Small City':'Rural';
+  const metrics=ALL_METRICS;
+  const rows=metrics.map(m=>{
+    const mv=getVal(loc,m);
+    const isHL=m===examKey;
+    return `<div class="pcrow" style="${isHL?'background:rgba(59,130,246,0.06);padding:1px 3px;border-radius:3px':''}">
+      <span class="pcico">${MICONS[m]}</span>
+      <span class="pcn" style="${isHL?'color:#cdd9f0;font-weight:600':''}">${MLBL[m]}</span>
+      <div class="pct"><div class="pcf" style="width:${mv*20}%;background:${DCOL[mv]}"></div></div>
+      <span class="pcs" style="color:${DCOL[mv]}">${DLBL[mv]}</span>
+    </div>`;
+  }).join('');
+  return `<div class="pi">
+    <div class="pt">${name}</div>
+    <div class="ps">${state} · ${tierLabel.toUpperCase()} · ${prov} prov/100k · ~${wait}d wait</div>
+    <div class="pb" style="background:${col}12;border:1px solid ${col}30;color:${col}">
+      <span style="width:8px;height:8px;border-radius:50%;background:${col};display:inline-block;box-shadow:0 0 6px ${col}"></span>
+      ${MLBL[examKey]}: <strong>${DLBL[v]}</strong> (${v}/5)
+    </div>
+    <div class="pdiv"></div>
+    <div class="pcl">ALL METRICS</div>
+    ${rows}
+  </div>`;
+}
+
+// ── Report generator ─────────────────────────────────────────────────────────
+interface ReportData {
+  locName:string;stateCode:string;examKey:string;
+  scores:{key:string;v:number}[];
+  nearby:{name:string;state:string;dist:number;v:number}[];
+  recommendation:number;isGeo:boolean;
+  prov:number|null;wait:number|null;tier:number|null;
+}
+
+function generateReportHtml(data:ReportData):string {
+  const {locName,stateCode,examKey,scores,nearby,recommendation,isGeo,prov,wait,tier}=data;
+  const today=new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+  const examLabel=MLBL[examKey]||'All Services';
+  const ps=scores.find(s=>s.key===examKey)||scores[0];
+  const col=DCOL[ps.v];
+  const urgency=ps.v>=5?'CRITICAL':ps.v>=4?'HIGH PRIORITY':ps.v>=3?'PLAN AHEAD':ps.v>=2?'STANDARD':'ROUTINE';
+  const urgencyColor=ps.v>=5?'#ef4444':ps.v>=4?'#f97316':ps.v>=3?'#f59e0b':ps.v>=2?'#84cc16':'#10b981';
+  const recText:{[k:number]:string}={
+    1:'Standard outreach. Results expected within 24–48 hours using direct network list.',
+    2:'Moderate effort required. Allow 2–5 day turnaround. Check contracted providers first, then expand to credentialed network.',
+    3:'Plan ahead. Allow 5–10 business days. May require contacting 3–5 providers. Recommend scheduling buffer for contractor.',
+    4:'Difficult market. Begin outreach immediately. Expect 1–2 week search window. Prepare contractor for possible drive to adjacent metro area.',
+    5:'Critical coverage gap. No reliable local providers. Recommended actions: (1) expand search radius to nearest accessible metro, (2) evaluate telehealth pre-screening options, (3) consider mobile occupational health unit if request volume justifies.'
+  };
+  const scoreBars=scores.map(s=>`<tr>
+    <td style="padding:5px 10px 5px 0;font-size:11px;color:#334155;width:160px;white-space:nowrap">${MLBL[s.key]}</td>
+    <td style="padding:5px 8px 5px 0;width:120px;">
+      <div style="height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;"><div style="height:100%;width:${s.v*20}%;background:${DCOL[s.v]};border-radius:3px;"></div></div>
+    </td>
+    <td style="padding:5px 0;font-size:11px;font-weight:700;color:${DCOL[s.v]};font-family:monospace;white-space:nowrap">${DLBL[s.v]} (${s.v}/5)</td>
+  </tr>`).join('');
+  const nearbyRows=nearby.map(n=>`<tr>
+    <td style="padding:5px 10px 5px 0;font-size:11px;color:#334155">${n.name}, ${n.state}</td>
+    <td style="padding:5px 10px 5px 0;font-size:11px;color:${DCOL[n.v]};font-weight:700">${DLBL[n.v]}</td>
+    <td style="padding:5px 0;font-size:11px;color:#64748b;font-family:monospace">~${n.dist} mi</td>
+  </tr>`).join('');
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Coverage Assessment — ${locName}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Inter',sans-serif;background:#f8fafc;color:#1e293b;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .page{width:780px;margin:0 auto;background:white;min-height:100vh;}
+  .header{background:#040c1a;padding:22px 36px;display:flex;justify-content:space-between;align-items:center;}
+  .org-name{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#3b82f6;letter-spacing:3px;text-transform:uppercase;margin-bottom:5px;}
+  .doc-title{font-size:18px;font-weight:700;color:#f0f6ff;}
+  .doc-subtitle{font-size:11px;color:#4a6888;margin-top:3px;font-family:'IBM Plex Mono',monospace;}
+  .doc-date{font-size:10px;color:#3d5478;font-family:'IBM Plex Mono',monospace;letter-spacing:0.5px;text-align:right;}
+  .doc-id{font-size:9px;color:#2d4060;font-family:'IBM Plex Mono',monospace;margin-top:3px;text-align:right;}
+  .location-hero{padding:24px 36px 20px;border-bottom:1px solid #e2e8f0;background:linear-gradient(135deg,#f8fafc 0%,#f0f7ff 100%);}
+  .loc-badge{display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:2px;text-transform:uppercase;padding:3px 10px;border-radius:2px;margin-bottom:10px;font-weight:600;}
+  .loc-name{font-size:28px;font-weight:700;color:#0f172a;letter-spacing:-0.5px;margin-bottom:4px;}
+  .loc-meta{font-size:12px;color:#64748b;font-family:'IBM Plex Mono',monospace;}
+  .priority-flag{display:inline-flex;align-items:center;gap:7px;padding:6px 14px;border-radius:3px;margin-top:12px;font-size:11px;font-weight:700;font-family:'IBM Plex Mono',monospace;letter-spacing:1px;}
+  .score-hero{padding:20px 36px;display:flex;gap:24px;align-items:stretch;border-bottom:1px solid #e2e8f0;}
+  .score-primary{flex:0 0 180px;padding:18px;border-radius:6px;text-align:center;border:1px solid;}
+  .score-primary-label{font-size:9px;color:#64748b;letter-spacing:1.5px;text-transform:uppercase;font-family:'IBM Plex Mono',monospace;margin-bottom:8px;}
+  .score-primary-num{font-size:52px;font-weight:700;font-family:'IBM Plex Mono',monospace;line-height:1;}
+  .score-primary-max{font-size:14px;color:#94a3b8;margin-top:2px;}
+  .score-primary-lbl{font-size:13px;font-weight:700;margin-top:6px;}
+  .score-meta{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .score-meta-item{padding:12px 14px;background:#f8fafc;border-radius:5px;border:1px solid #e2e8f0;}
+  .score-meta-label{font-size:8.5px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;font-family:'IBM Plex Mono',monospace;margin-bottom:4px;}
+  .score-meta-value{font-size:18px;font-weight:700;font-family:'IBM Plex Mono',monospace;color:#1e293b;}
+  .section{padding:20px 36px;border-bottom:1px solid #f1f5f9;}
+  .section-title{font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#94a3b8;font-family:'IBM Plex Mono',monospace;margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+  .section-title::after{content:'';flex:1;height:1px;background:#e2e8f0;}
+  .rec-box{padding:14px 16px;border-radius:5px;border-left:3px solid;font-size:12px;line-height:1.7;color:#334155;}
+  table{width:100%;border-collapse:collapse;}
+  th{text-align:left;font-size:8.5px;letter-spacing:1px;text-transform:uppercase;color:#94a3b8;font-family:'IBM Plex Mono',monospace;padding:0 10px 8px 0;border-bottom:1px solid #e2e8f0;}
+  .footer{padding:16px 36px;background:#f8fafc;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;}
+  .footer-brand{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#94a3b8;letter-spacing:1.5px;}
+  .footer-note{font-size:9px;color:#cbd5e1;font-style:italic;}
+  .geo-note{font-size:10px;color:#64748b;padding:8px 12px;background:#f8fafc;border-radius:4px;border:1px solid #e2e8f0;margin-top:8px;font-family:'IBM Plex Mono',monospace;}
+  @media print{body{background:white;}.page{width:100%;box-shadow:none;}.no-print{display:none;}}
+</style></head><body><div class="page">
+  <div class="header">
+    <div><div class="org-name">Occu-Med · Network Management</div><div class="doc-title">Provider Coverage Assessment</div><div class="doc-subtitle">CONTRACTOR LOCATION ANALYSIS REPORT</div></div>
+    <div><div class="doc-date">${today}</div><div class="doc-id">REF: CLA-${Math.random().toString(36).substr(2,8).toUpperCase()}</div></div>
+  </div>
+  <div class="location-hero">
+    <div class="loc-badge" style="background:${col}18;color:${col};border:1px solid ${col}44">${isGeo?'◈ GEOCODED ESTIMATE':'● VERIFIED DATASET'}</div>
+    <div class="loc-name">${locName}</div>
+    <div class="loc-meta">${stateCode}${tier?' · '+(tier===1?'MAJOR METRO':tier===2?'MID-SIZE CITY':tier===3?'SMALL CITY':'RURAL / REMOTE'):''} · EXAM: ${examLabel.toUpperCase()}</div>
+    <div class="priority-flag" style="background:${urgencyColor}12;color:${urgencyColor};border:1px solid ${urgencyColor}33">
+      <span style="width:7px;height:7px;border-radius:50%;background:${urgencyColor};display:inline-block"></span>${urgency}
+    </div>
+  </div>
+  <div class="score-hero">
+    <div class="score-primary" style="background:${col}08;border-color:${col}30;">
+      <div class="score-primary-label">Difficulty Score</div>
+      <div class="score-primary-num" style="color:${col}">${ps.v}</div>
+      <div class="score-primary-max" style="color:${col}88">/ 5</div>
+      <div class="score-primary-lbl" style="color:${col}">${DLBL[ps.v]}</div>
+    </div>
+    <div class="score-meta">
+      <div class="score-meta-item"><div class="score-meta-label">Est. Providers / 100k</div><div class="score-meta-value">${prov||'—'}</div></div>
+      <div class="score-meta-item"><div class="score-meta-label">Avg. Wait Days</div><div class="score-meta-value">${wait||'—'}</div></div>
+      <div class="score-meta-item"><div class="score-meta-label">Primary Exam Type</div><div class="score-meta-value" style="font-size:12px;color:#475569">${examLabel}</div></div>
+      <div class="score-meta-item"><div class="score-meta-label">Assessment Date</div><div class="score-meta-value" style="font-size:12px;color:#475569">${today}</div></div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-title">Operational Recommendation</div>
+    <div class="rec-box" style="background:${col}08;border-left-color:${col}">${recText[ps.v]||recText[3]}</div>
+    ${isGeo?'<div class="geo-note">◈ Scores derived from real public data: HRSA Workforce Data, HRSA HPSA Q4 FY2025, USDA Rural-Urban Continuum, 2020 Census, Chartis 2026 Rural Health Report. Verify with direct provider outreach.</div>':''}
+  </div>
+  <div class="section">
+    <div class="section-title">Full Service Scorecard</div>
+    <table><tr><th>Service Type</th><th style="width:130px">Difficulty Level</th><th></th></tr>${scoreBars}</table>
+  </div>
+  ${nearbyRows?`<div class="section">
+    <div class="section-title">Nearest Alternative Markets</div>
+    <table><tr><th>Location</th><th>Difficulty</th><th>Distance</th></tr>${nearbyRows}</table>
+  </div>`:''}
+  <div class="footer">
+    <div class="footer-brand">OCCU-MED · NETWORK MANAGEMENT SYSTEM · CONFIDENTIAL</div>
+    <div class="footer-note">For internal use only. Data reflects network intelligence as of report date.</div>
+  </div>
+</div></body></html>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main App Component
+// ─────────────────────────────────────────────────────────────────────────────
+export default function App() {
+  const mapRef = useRef<L.Map|null>(null);
+  const mapDivRef = useRef<HTMLDivElement>(null);
+  const stateGeoRef = useRef<L.GeoJSON|null>(null);
+  const cityLayerRef = useRef<L.LayerGroup|null>(null);
+  const customPinRef = useRef<L.Marker|null>(null);
+  const radiusCircleRef = useRef<any>(null);
+  const tzLayerRef = useRef<L.LayerGroup|null>(null);
+  const liveGrpRef = useRef<L.LayerGroup|null>(null);
+  const liveCircleRef = useRef<L.Circle|null>(null);
+  const livePinRef = useRef<L.Marker|null>(null);
+
+  // UI State
+  const [metric, setMetric] = useState('primaryCare');
+  const [showLabels, setShowLabels] = useState(true);
+  const [showTZ, setShowTZ] = useState(false);
+  const [showRadius, setShowRadius] = useState(true);
+  const [filterDiff, setFilterDiff] = useState<number|null>(null);
+  const [view, setView] = useState<'us'|'east'|'central'|'west'>('us');
+  const [rpOpen, setRpOpen] = useState(true);
+  const [liveOpen, setLiveOpen] = useState(false);
+  const [showDir, setShowDir] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);
+  const [showPdf, setShowPdf] = useState(false);
+  const [pdfHtml, setPdfHtml] = useState('');
+  const [pdfDlName, setPdfDlName] = useState('');
+
+  // Coverage request panel state
+  const [rpCity, setRpCity] = useState('');
+  const [rpExam, setRpExam] = useState('primaryCare');
+  const [rpResult, setRpResult] = useState<React.ReactNode>(null);
+  const [rpSuggestions, setRpSuggestions] = useState<any[]>([]);
+  const [lastGeoResult, setLastGeoResult] = useState<any>(null);
+  const [lastReportData, setLastReportData] = useState<ReportData|null>(null);
+  const [driveLocA, setDriveLocA] = useState<{name:string;lat:number;lng:number}|null>(null);
+  const [driveLocB, setDriveLocB] = useState<{name:string;lat:number;lng:number}|null>(null);
+  const [dtInput, setDtInput] = useState('');
+
+  // Compare
+  const [pinnedCities, setPinnedCities] = useState<any[]>([]);
+
+  // Live finder state
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveResults, setLiveResults] = useState<any[]>([]);
+  const [liveFilter, setLiveFilter] = useState<string>('all');
+  const [liveLocation, setLiveLocation] = useState('');
+  const [liveRadius, setLiveRadius] = useState(10);
+  const [liveHighlightId, setLiveHighlightId] = useState<any>(null);
+  const [liveHint, setLiveHint] = useState('Click anywhere on the map to search for facilities');
+  const [liveMirror, setLiveMirror] = useState('');
+  const lastRadiusRef = useRef<{lat:number;lng:number}|null>(null);
+
+  // ── Price Finder state ────────────────────────────────────────────────────
+  const [showPriceFinder, setShowPriceFinder] = useState(false);
+  const [pfCity, setPfCity] = useState('');
+  const [pfState, setPfState] = useState('');
+  const [pfServiceType, setPfServiceType] = useState<'urgentCare'|'dental'|'pharmacy'|'physicalExam'|'faamedical'|'stressTest'|'mammogram'|'dotExam'|'vaccinations'>('urgentCare');
+  const [pfLoading, setPfLoading] = useState(false);
+  const [pfClinics, setPfClinics] = useState<Array<{name:string;address:string;phone:string;taxonomy:string;isFqhc:boolean;npiUrl:string;searchUrl:string}>>([]);
+  const [pfNetworks, setPfNetworks] = useState<Array<{name:string;desc:string;url:string;tag:string}>>([]);
+  const [pfResources, setPfResources] = useState<Array<{name:string;desc:string;url:string;tag:string}>>([]);
+  const [pfError, setPfError] = useState('');
+  const [pfLocation, setPfLocation] = useState('');
+  const [pfDone, setPfDone] = useState(false);
+
+  async function runPriceSearch() {
+    if(!pfCity.trim()) return;
+    setPfLoading(true);
+    setPfError('');
+    setPfClinics([]);
+    setPfNetworks([]);
+    setPfResources([]);
+    setPfDone(false);
+    try {
+      const params = new URLSearchParams({ city: pfCity.trim(), state: pfState.trim(), serviceType: pfServiceType });
+      const resp = await fetch(`/api/price-finder?${params}`);
+      if(!resp.ok) throw new Error(`Server error ${resp.status}`);
+      const data = await resp.json();
+      setPfClinics(data.clinics || []);
+      setPfNetworks(data.networks || []);
+      setPfResources(data.pricingResources || []);
+      setPfLocation(data.location || '');
+      setPfDone(true);
+    } catch(e:any) {
+      setPfError(e.message || 'Search failed. Please try again.');
+    } finally {
+      setPfLoading(false);
+    }
+  }
+
+  // Stats
+  const totalCities = LOCS.length;
+  const statesCount = Object.keys(SD).length;
+  const criticalCount = LOCS.filter(l=>getVal(l,metric)>=4).length;
+
+  const [mapReady, setMapReady] = useState(false);
+
+  // ── Init Map ───────────────────────────────────────────────────────────────
+  useEffect(()=>{
+    if(mapRef.current||!mapDivRef.current) return;
+    const map = L.map(mapDivRef.current, {
+      center:[38.5,-96],zoom:4,zoomControl:true,
+      preferCanvas:true,
+      attributionControl:false,
+    });
+    mapRef.current = map;
+
+    // Tile layer with dark filter
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+      maxZoom:19,className:'dark-tiles'
+    }).addTo(map);
+
+    // City layer
+    const cityLayer = L.layerGroup().addTo(map);
+    cityLayerRef.current = cityLayer;
+
+    // Live layer
+    const liveGrp = L.layerGroup().addTo(map);
+    liveGrpRef.current = liveGrp;
+
+    // Load GeoJSON
+    loadStateGeo(map);
+
+    // Map click for live finder
+    map.on('click',(e:L.LeafletMouseEvent)=>{
+      if(liveOpenRef.current) {
+        doLiveSearch(e.latlng.lat, e.latlng.lng);
+      }
+    });
+
+    setMapReady(true);
+
+    return ()=>{ map.remove(); mapRef.current=null; cityLayerRef.current=null; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+
+  const liveOpenRef = useRef(false);
+  useEffect(()=>{ liveOpenRef.current = liveOpen; },[liveOpen]);
+
+  const labelLayerRef = useRef<L.LayerGroup|null>(null);
+
+  // ── Load State GeoJSON ───────────────────────────────────────────────────
+  async function loadStateGeo(map:L.Map) {
+    const urls = [
+      'https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json',
+      'https://unpkg.com/us-atlas@3/states-10m.json',
+    ];
+    for(const url of urls) {
+      try {
+        const r = await fetch(url);
+        if(!r.ok) continue;
+        const topo = await r.json();
+        const gj = topojson.feature(topo, topo.objects.states) as any;
+        gj.features.forEach((f:any)=>{
+          const id = String(f.properties.id||'').padStart(2,'0');
+          f.properties.postal = FIPS2CODE[id]||NAME2CODE[(f.properties.name||'').toLowerCase()]||'';
+        });
+        const stateGeo = L.geoJSON(gj,{
+          style:(f:any)=>sStyle(f?.properties?.postal||'',metric),
+          onEachFeature:(f:any,layer:any)=>{
+            const postal = f.properties.postal;
+            layer.on({
+              mouseover:(e:any)=>{ e.target.setStyle({weight:2,opacity:0.9}); },
+              mouseout:(e:any)=>{ stateGeo.resetStyle(e.target); },
+              click:(e:any)=>{
+                L.popup({maxWidth:340,className:''})
+                  .setLatLng(e.latlng)
+                  .setContent(buildStatePopup(postal))
+                  .openOn(map);
+              }
+            });
+            layer.bindTooltip(()=>{
+              const d=SD[postal];
+              if(!d) return postal;
+              const v=getVal(d,metricRef.current);
+              return `<div style="padding:5px 8px;font-family:'IBM Plex Mono',monospace">
+                <span style="font-weight:700;font-size:11px;color:#eef4ff">${postal}</span>&nbsp;
+                <span style="font-size:9px;color:${DCOL[v]};font-weight:700">${DLBL[v]}</span>
+              </div>`;
+            },{sticky:true,direction:'top'});
+          }
+        }).addTo(map);
+        stateGeoRef.current = stateGeo;
+        buildStateLabels(map, stateGeo);
+        break;
+      } catch(e) { console.warn('GeoJSON load error',e); }
+    }
+  }
+
+  function sStyle(postal:string,m:string):L.PathOptions {
+    const d=SD[postal];
+    if(!d) return{fillColor:'#0a1830',fillOpacity:0.5,weight:1,color:'rgba(99,179,237,0.15)',opacity:0.6};
+    const v=getVal(d,m);
+    const col=DCOL[v]||'#3d5478';
+    return{fillColor:col,fillOpacity:0.25,weight:1,color:col,opacity:0.45};
+  }
+
+  const metricRef = useRef(metric);
+  useEffect(()=>{ metricRef.current=metric; },[metric]);
+
+  function buildStateLabels(map:L.Map,stateGeo:L.GeoJSON) {
+    const labelGrp = L.layerGroup();
+    stateGeo.eachLayer((layer:any)=>{
+      const props = layer.feature?.properties;
+      if(!props) return;
+      const postal = props.postal;
+      if(!postal) return;
+      const rawCtr = layer.getBounds().getCenter();
+      const [lat,lng] = STATE_CTR[postal]||[rawCtr.lat,rawCtr.lng];
+      const icon = L.divIcon({
+        className:'',
+        html:`<div style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;color:#8aa4c4;text-shadow:0 1px 4px rgba(0,0,0,0.9),0 0 8px rgba(0,0,0,0.7);pointer-events:none;white-space:nowrap;letter-spacing:0.5px;">${postal}</div>`,
+        iconSize:[0,0],iconAnchor:[10,7]
+      });
+      const mk = L.marker([lat,lng],{icon,interactive:false,zIndexOffset:200});
+      labelGrp.addLayer(mk);
+    });
+    labelLayerRef.current = labelGrp;
+    if(showLabelsRef.current) labelGrp.addTo(map);
+    return labelGrp;
+  }
+
+  const showLabelsRef = useRef(showLabels);
+  useEffect(()=>{
+    showLabelsRef.current = showLabels;
+    const map = mapRef.current;
+    const lyr = labelLayerRef.current;
+    if(!map||!lyr) return;
+    if(showLabels) lyr.addTo(map); else map.removeLayer(lyr);
+  },[showLabels]);
+
+  // ── Re-style states when metric changes ─────────────────────────────────
+  useEffect(()=>{
+    if(!stateGeoRef.current) return;
+    stateGeoRef.current.setStyle((f:any)=>sStyle(f?.properties?.postal||'',metric));
+  },[metric]);
+
+  // ── City markers ─────────────────────────────────────────────────────────
+  useEffect(()=>{
+    const map = mapRef.current;
+    const cityLayer = cityLayerRef.current;
+    if(!map||!cityLayer) return;
+    cityLayer.clearLayers();
+
+    // Show ALL cities — only apply difficulty filter if one is active
+    const visibleLocs = LOCS.filter(loc=>{
+      if(filterDiff!==null && getVal(loc,metric)!==filterDiff) return false;
+      return true;
+    });
+
+    for(const loc of visibleLocs) {
+      const [name,state,lat,lng,tier]=loc;
+      const v = getVal(loc,metric);
+      const col = DCOL[v];
+      // Scale dot by tier: 1=major metro large, 2=mid, 3/4=small
+      const r = tier===1?9:tier===2?6:tier===3?4:3;
+      const borderW = tier<=2 ? 2 : 1.5;
+      const icon = L.divIcon({
+        className:'',
+        html:`<div style="width:${r*2}px;height:${r*2}px;border-radius:50%;background:${col};border:${borderW}px solid rgba(255,255,255,${tier===1?0.8:0.5});box-shadow:0 0 ${r+4}px ${col}55,0 1px 4px rgba(0,0,0,0.6);cursor:pointer;"></div>`,
+        iconSize:[r*2,r*2],iconAnchor:[r,r]
+      });
+      const mk = L.marker([lat,lng],{icon,zIndexOffset:tier===1?300:tier===2?200:tier===3?100:50});
+      mk.bindPopup(()=>buildCityPopup(loc,metricRef.current),{maxWidth:320,className:''});
+      mk.bindTooltip(()=>`<div style="padding:5px 8px;font-family:'IBM Plex Mono',monospace">
+        <span style="font-weight:700;color:#eef4ff">${name}, ${state}</span><br>
+        <span style="font-size:9px;color:${DCOL[getVal(loc,metricRef.current)]}">${DLBL[getVal(loc,metricRef.current)]}</span>
+      </div>`,{sticky:false,direction:'top'});
+      cityLayer.addLayer(mk);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[metric,filterDiff,mapReady]);
+
+  // ── Timezone layer ────────────────────────────────────────────────────────
+  useEffect(()=>{
+    const map = mapRef.current;
+    if(!map) return;
+    if(!showTZ) {
+      if(tzLayerRef.current) { map.removeLayer(tzLayerRef.current); tzLayerRef.current=null; }
+      return;
+    }
+    if(tzLayerRef.current) return;
+    if(!stateGeoRef.current) return;
+    const layers:L.Layer[]=[];
+    const labelDone:Record<string,boolean>={};
+    stateGeoRef.current.eachLayer((layer:any)=>{
+      const props=layer.feature?.properties;
+      if(!props) return;
+      const postal=props.postal||'';
+      const tzIdx=(STATE_TZ as any)[postal];
+      if(tzIdx===undefined) return;
+      const info=TZ_INFO[tzIdx];
+      const poly=L.geoJSON(layer.feature,{
+        style:{color:info.color,weight:1.2,opacity:0.7,fillColor:info.color,fillOpacity:0.16},
+        interactive:true
+      });
+      poly.bindTooltip(`<div style="padding:5px 8px;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;color:${info.color}">${info.name} Time<br><span style="font-size:10px;color:#aac">${info.abbr} · ${info.utc}</span></div>`,{direction:'top'});
+      layers.push(poly);
+      const rawCtr=layer.getBounds().getCenter();
+      const [lat,lng]=STATE_CTR[postal]||[rawCtr.lat,rawCtr.lng];
+      const stateIcon=L.divIcon({className:'',html:`<div style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;color:${info.color};text-shadow:0 0 6px rgba(0,0,0,0.9),0 1px 3px rgba(0,0,0,0.9);pointer-events:none;white-space:nowrap;letter-spacing:0.5px;">${postal}</div>`,iconSize:[0,0],iconAnchor:[10,7]});
+      layers.push(L.marker([lat,lng],{icon:stateIcon,interactive:false,zIndexOffset:200}));
+      if(!labelDone[info.abbr]&&info.abbr!=='AK'&&info.abbr!=='HI') {
+        labelDone[info.abbr]=true;
+        const bigIcon=L.divIcon({className:'',html:`<div style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:${info.color};text-shadow:0 0 14px ${info.color},0 1px 6px rgba(0,0,0,0.95);letter-spacing:3px;pointer-events:none;white-space:nowrap;padding:2px 8px;border-radius:3px;background:rgba(4,12,26,0.55);border:1px solid ${info.color}44;">${info.abbr}</div>`,iconSize:[0,0],iconAnchor:[-4,10]});
+        layers.push(L.marker([info.labelLat,info.labelLng],{icon:bigIcon,interactive:false,zIndexOffset:-500}));
+      }
+    });
+    tzLayerRef.current=L.layerGroup(layers).addTo(map);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[showTZ]);
+
+  // ── View presets ─────────────────────────────────────────────────────────
+  function flyToView(v:'us'|'east'|'central'|'west') {
+    setView(v);
+    const map=mapRef.current;
+    if(!map) return;
+    if(v==='us') map.flyTo([38.5,-96],4,{duration:1});
+    else if(v==='east') map.flyTo([38,-79],5.5,{duration:1});
+    else if(v==='central') map.flyTo([38.5,-96],5,{duration:1});
+    else if(v==='west') map.flyTo([40,-118],5.5,{duration:1});
+  }
+
+  // ── Radius circle ─────────────────────────────────────────────────────────
+  const lastRadiusLatRef = useRef<number|null>(null);
+  const lastRadiusLngRef = useRef<number|null>(null);
+  function drawRadiusCircle(lat:number,lng:number) {
+    const map=mapRef.current;
+    if(!map) return;
+    lastRadiusLatRef.current=lat;
+    lastRadiusLngRef.current=lng;
+    if(!showRadiusRef.current) return;
+    if(radiusCircleRef.current) {
+      try{ if(radiusCircleRef.current._label) map.removeLayer(radiusCircleRef.current._label); }catch(e){}
+      try{ map.removeLayer(radiusCircleRef.current); }catch(e){}
+      radiusCircleRef.current=null;
+    }
+    const circle=L.circle([lat,lng],{radius:70*1609.34,color:'#00d4ff',opacity:1,weight:3,dashArray:'10 6',fillColor:'#00d4ff',fillOpacity:0.07,interactive:false}).addTo(map);
+    const lbl=L.marker([lat,lng],{
+      icon:L.divIcon({className:'',html:`<div style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;color:#00d4ff;white-space:nowrap;pointer-events:none;margin-top:-26px;margin-left:8px;text-shadow:0 0 8px rgba(0,212,255,0.8),0 1px 4px rgba(0,0,0,0.9)">70mi radius</div>`,iconSize:[0,0]}),
+      interactive:false,zIndexOffset:-100
+    }).addTo(map);
+    (circle as any)._label=lbl;
+    radiusCircleRef.current=circle;
+  }
+  const showRadiusRef=useRef(showRadius);
+  useEffect(()=>{
+    showRadiusRef.current=showRadius;
+    if(!showRadius) {
+      const map=mapRef.current;
+      if(radiusCircleRef.current&&map) {
+        try{ if(radiusCircleRef.current._label) map.removeLayer(radiusCircleRef.current._label); }catch(e){}
+        try{ map.removeLayer(radiusCircleRef.current); }catch(e){}
+        radiusCircleRef.current=null;
+      }
+    } else if(lastRadiusLatRef.current!==null&&lastRadiusLngRef.current!==null) {
+      drawRadiusCircle(lastRadiusLatRef.current,lastRadiusLngRef.current);
+    }
+  },[showRadius]);
+
+  // ── Coverage Lookup ──────────────────────────────────────────────────────
+  function handleCityInput(val:string) {
+    setRpCity(val);
+    if(!val.trim()){ setRpSuggestions([]); return; }
+    const results=localSearch(val,8);
+    setRpSuggestions(results);
+  }
+
+  function selectSuggestion(loc:any) {
+    setRpCity(`${loc[0]}, ${loc[1]}`);
+    setRpSuggestions([]);
+    setLastGeoResult({lat:loc[2],lng:loc[3],display:`${loc[0]}, ${loc[1]}`,city:loc[0],state:loc[1],zip:''});
+  }
+
+  function runLookup() {
+    const inputVal=rpCity.trim();
+    if(!inputVal){ alert('Please enter a city, address, or ZIP code.'); return; }
+    setRpSuggestions([]);
+    // try dataset match
+    const query=inputVal.toLowerCase().replace(/,.*$/,'').trim();
+    const stateHint=inputVal.match(/,?\s*([A-Za-z]{2})\s*$/);
+    const stateCode=stateHint?stateHint[1].toUpperCase():null;
+    let match=LOCS.find(l=>l[0].toLowerCase()===query&&(!stateCode||l[1]===stateCode));
+    if(!match) match=LOCS.find(l=>l[0].toLowerCase()===query);
+    if(!match) match=LOCS.find(l=>l[0].toLowerCase().startsWith(query)&&(!stateCode||l[1]===stateCode));
+    if(!match) match=LOCS.find(l=>l[0].toLowerCase().startsWith(query));
+    if(!match) match=LOCS.find(l=>l[0].toLowerCase().includes(query)&&(!stateCode||l[1]===stateCode));
+    if(!match) match=LOCS.find(l=>l[0].toLowerCase().includes(query));
+    if(match){ renderDatasetMatch(match); return; }
+    let geo=lastGeoResult;
+    if(!geo||!inputVal.toLowerCase().includes((geo.city||'').toLowerCase())) geo=geocodeQuery(inputVal);
+    setLastGeoResult(null);
+    if(!geo){ setRpResult(<div style={{fontSize:'11px',color:'#3d5478',textAlign:'center',padding:'14px 0'}}>LOCATION NOT FOUND.<br/>Try city + state abbreviation, e.g. "Sweetwater TX".</div>); return; }
+    renderGeocodedResult(geo);
+  }
+
+  function renderDatasetMatch(match:any) {
+    const [name,state,lat,lng,tier]=match;
+    const prov=match[16];const wait=match[17];
+    const v=getVal(match,rpExam);const col=DCOL[v];
+    const tierLabel=tier===1?'Major Metro':tier===2?'Mid-Size City':tier===3?'Small City':'Rural / Remote';
+    const nearby=findNearby(lat,lng,match,rpExam);
+    const scores=ALL_METRICS.map(mk=>({key:mk,v:getVal(match,mk)}));
+    const nearbyData=LOCS.filter(l=>l!==match&&l[4]<=2).map(l=>{const dist=approxMiles(l[2],l[3],lat,lng);return{name:l[0],state:l[1],dist,v:getVal(l,rpExam)};}).filter(l=>l.dist<250&&l.dist>0).sort((a,b)=>a.dist-b.dist).slice(0,4);
+    const rd:ReportData={locName:`${name}, ${state}`,stateCode:state,examKey:rpExam,scores,nearby:nearbyData,recommendation:v,isGeo:false,prov,wait,tier};
+    setLastReportData(rd);
+    const map=mapRef.current;
+    if(map) { map.flyTo([lat,lng],tier<=2?9:11,{duration:1.2}); drawRadiusCircle(lat,lng); }
+    placeCustomPin(lat,lng,`${name}, ${state}`,col);
+    setDriveLocA(a=>{ setDriveLocB(a||null); return {name:`${name}, ${state}`,lat,lng}; });
+    const provData=countProvidersInRadius(lat,lng,rpExam);
+    const nearerItems=findNearestEasier(lat,lng,v,rpExam,name);
+    setRpResult(
+      <div className="fadein">
+        <div className="rp-divider"/>
+        <div className="rp-city-name">{name}</div>
+        <div className="rp-city-meta">{state} · {tierLabel.toUpperCase()} · Prov/100k: {prov} · Wait: ~{wait}d</div>
+        <div className="rp-alert" style={{background:`${col}12`,border:`1px solid ${col}30`,color:col}}>
+          {MLBL[rpExam]}: <strong>{DLBL[v]}</strong> — Score {v}/5
+        </div>
+        <ScoreCard scores={ALL_METRICS.map(m=>({key:m,v:getVal(match,m),hl:m===rpExam}))}/>
+        <div className="rp-rec">▸ {buildRecText(v)}</div>
+        {nearby.length>0&&<div className="rp-nearby">
+          <div className="rp-nearby-ttl">Nearest Markets</div>
+          {nearby.map((n,i)=><div key={i} className="rp-nearby-item">
+            <span className="rp-nearby-city">{n.name}, {n.state}</span>
+            <span style={{display:'flex',gap:8,alignItems:'center'}}>
+              <span style={{fontSize:10,color:DCOL[n.v]}}>{DLBL[n.v]}</span>
+              <span className="rp-nearby-dist">~{n.dist}mi</span>
+            </span>
+          </div>)}
+        </div>}
+        <ProviderBox data={provData} examKey={rpExam} cityName={`${name}, ${state}`} locIdx={LOCS.indexOf(match)} onPin={pinCity}/>
+        <DriveTimeBox fromLat={lat} fromLng={lng} fromName={`${name}, ${state}`} locB={null}/>
+        {nearerItems.length>0&&<NearestEasier items={nearerItems} onFly={flyToNearer}/>}
+        <button className="export-btn" onClick={()=>doExportReport(rd)}>↓ EXPORT PDF REPORT</button>
+      </div>
+    );
+  }
+
+  function renderGeocodedResult(geo:any) {
+    const {lat,lng,city,state,zip,display}=geo;
+    const v=estimateDifficultyFromNeighbors(lat,lng,rpExam);
+    const col=DCOL[v];
+    const stD=SD[state]||null;
+    const nearby=findNearby(lat,lng,null,rpExam);
+    const scores=ALL_METRICS.map(mk=>({key:mk,v:estimateDifficultyFromNeighbors(lat,lng,mk)}));
+    const nearbyData=LOCS.filter(l=>l[4]<=2).map(l=>{const dist=approxMiles(l[2],l[3],lat,lng);return{name:l[0],state:l[1],dist,v:getVal(l,rpExam)};}).filter(l=>l.dist<250&&l.dist>0).sort((a,b)=>a.dist-b.dist).slice(0,4);
+    const rd:ReportData={locName:`${city||display}${state?', '+state:''}`,stateCode:state||'',examKey:rpExam,scores,nearby:nearbyData,recommendation:v,isGeo:true,prov:stD?stD.prov:null,wait:stD?stD.wait:null,tier:null};
+    setLastReportData(rd);
+    const map=mapRef.current;
+    if(map){ map.flyTo([lat,lng],11,{duration:1.2}); drawRadiusCircle(lat,lng); }
+    placeCustomPin(lat,lng,`${city}${zip?', '+zip:''}`,col);
+    setDriveLocA(a=>{ setDriveLocB(a||null); return {name:`${city}, ${state}`,lat,lng}; });
+    const provData=countProvidersInRadius(lat,lng,rpExam);
+    const nearerItems=findNearestEasier(lat,lng,v,rpExam,city||'');
+    let geoLocIdx=LOCS.findIndex(l=>l[0].toLowerCase()===(city||'').toLowerCase()&&l[1]===(state||''));
+    if(geoLocIdx<0){let best=100,bi=-1;LOCS.forEach((l,i)=>{const d=approxMiles(l[2],l[3],lat,lng);if(d<best){best=d;bi=i;}});geoLocIdx=bi;}
+    setRpResult(
+      <div className="fadein">
+        <div className="rp-divider"/>
+        <div className="rp-city-name">{city||display}</div>
+        <div className="rp-city-meta" style={{marginBottom:4}}>{state}{zip?' · ZIP '+zip:''} · <span style={{color:'#3b82f6'}}>◈ GEOCODED ESTIMATE</span></div>
+        <div style={{fontSize:'9.5px',color:'#3d5478',marginBottom:8,padding:'5px 8px',background:'rgba(59,130,246,0.06)',borderRadius:5,lineHeight:1.5}}>
+          Interpolated from nearest data points{stD?` · State baseline: <strong style="color:${DCOL[getVal(stD,rpExam)]}">${DLBL[getVal(stD,rpExam)]}</strong>`:''}
+        </div>
+        <div className="rp-alert" style={{background:`${col}12`,border:`1px solid ${col}30`,color:col}}>
+          {MLBL[rpExam]}: <strong>{DLBL[v]}</strong> difficulty (est. {v}/5)
+        </div>
+        <GeoScoreCard lat={lat} lng={lng} examKey={rpExam}/>
+        <div className="rp-rec">▸ {buildRecText(v)}</div>
+        {nearby.length>0&&<div className="rp-nearby">
+          <div className="rp-nearby-ttl">Nearest Markets</div>
+          {nearby.map((n,i)=><div key={i} className="rp-nearby-item">
+            <span className="rp-nearby-city">{n.name}, {n.state}</span>
+            <span style={{display:'flex',gap:8,alignItems:'center'}}>
+              <span style={{fontSize:10,color:DCOL[n.v]}}>{DLBL[n.v]}</span>
+              <span className="rp-nearby-dist">~{n.dist}mi</span>
+            </span>
+          </div>)}
+        </div>}
+        <ProviderBox data={provData} examKey={rpExam} cityName={`${city}, ${state}`} locIdx={geoLocIdx} onPin={pinCity}/>
+        <DriveTimeBox fromLat={lat} fromLng={lng} fromName={`${city}, ${state}`} locB={null}/>
+        {nearerItems.length>0&&<NearestEasier items={nearerItems} onFly={flyToNearer}/>}
+        <button className="export-btn" onClick={()=>doExportReport(rd)}>↓ EXPORT PDF REPORT</button>
+      </div>
+    );
+  }
+
+  function buildRecText(v:number):string {
+    return {
+      1:'Easy fill. Standard outreach should yield results within 24–48 hrs.',
+      2:'Moderate effort. 2–5 day turnaround expected. Check contracted providers first.',
+      3:'Plan ahead. Allow 5–10 business days. May need to contact 3–5 providers.',
+      4:'Difficult market. Expect 1–2 week search. Begin outreach immediately.',
+      5:'Critical gap. No reliable local coverage. Consider expanded radius, telehealth, or mobile unit.'
+    }[v]||'';
+  }
+
+  function placeCustomPin(lat:number,lng:number,label:string,color:string) {
+    const map=mapRef.current;
+    if(!map) return;
+    if(customPinRef.current) map.removeLayer(customPinRef.current);
+    const icon=L.divIcon({className:'',html:`<div style="position:relative;width:28px;height:28px;"><div style="width:20px;height:20px;border-radius:50% 50% 50% 0;background:${color};border:2px solid white;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,0.5);position:absolute;top:0;left:4px;"></div><div style="width:6px;height:6px;border-radius:50%;background:white;position:absolute;top:6px;left:11px;z-index:2;"></div></div>`,iconSize:[28,28],iconAnchor:[14,24]});
+    const mk=L.marker([lat,lng],{icon}).addTo(map);
+    mk.bindTooltip(`<div style="padding:5px 8px;font-size:11px;font-weight:600;color:#eef4ff">${label}</div>`,{permanent:false});
+    customPinRef.current=mk;
+  }
+
+  function flyToNearer(lat:number,lng:number,name:string,state:string,score:number,examKey:string) {
+    const map=mapRef.current;
+    if(!map) return;
+    map.flyTo([lat,lng],9,{duration:1.2});
+    drawRadiusCircle(lat,lng);
+    L.popup({closeButton:true,maxWidth:240})
+      .setLatLng([lat,lng])
+      .setContent(`<div style="font-family:'Inter',sans-serif;padding:4px 2px"><div style="font-size:13px;font-weight:700;color:#cdd9f0">${name}, ${state}</div><div style="font-size:10px;color:#3d5478;margin-top:2px">${MLBL[examKey]}: <span style="color:${DCOL[score]};font-weight:600">${DLBL[score]}</span></div></div>`)
+      .openOn(map);
+  }
+
+  function pinCity(idx:number) {
+    const match=LOCS[idx];
+    if(!match) return;
+    if(pinnedCities.find(p=>p[0]===match[0]&&p[1]===match[1])) return;
+    if(pinnedCities.length>=5){ alert('Maximum 5 cities. Remove one first.'); return; }
+    setPinnedCities(prev=>[...prev,match]);
+  }
+
+  function doExportReport(rd:ReportData) {
+    const html=generateReportHtml(rd);
+    const name=`OccuMed_Coverage_${rd.locName.replace(/[^a-z0-9]/gi,'_')}.html`;
+    setPdfHtml(html);
+    setPdfDlName(name);
+    setShowPdf(true);
+  }
+
+  // ── Live Finder ──────────────────────────────────────────────────────────
+  async function doLiveSearch(lat:number,lng:number) {
+    const map=mapRef.current;
+    if(!map) return;
+    setLiveLoading(true);
+    setLiveResults([]);
+    setLiveHint('Searching...');
+    lastRadiusRef.current={lat,lng};
+
+    if(liveCircleRef.current) { try{map.removeLayer(liveCircleRef.current);}catch(e){} }
+    if(livePinRef.current) { try{map.removeLayer(livePinRef.current);}catch(e){} }
+    liveCircleRef.current=L.circle([lat,lng],{radius:liveRadius*1000,color:'#06b6d4',weight:1.5,opacity:0.45,dashArray:'7 5',fillColor:'#06b6d4',fillOpacity:0.03,interactive:false}).addTo(map);
+    livePinRef.current=L.marker([lat,lng],{icon:L.divIcon({className:'',html:'<div style="width:14px;height:14px;border-radius:50%;background:#06b6d4;border:2.5px solid #fff;box-shadow:0 0 0 4px rgba(6,182,212,0.28),0 0 14px rgba(6,182,212,0.6);"></div>',iconSize:[14,14],iconAnchor:[7,7]}),zIndexOffset:3000,interactive:false}).addTo(map);
+
+    try { await revGeo(lat,lng); } catch(e){}
+
+    const r=liveRadius*1000;
+    const q=`[out:json][timeout:30];(
+  node["amenity"="hospital"](around:${r},${lat},${lng});
+  node["amenity"="clinic"](around:${r},${lat},${lng});
+  node["amenity"="doctors"](around:${r},${lat},${lng});
+  node["amenity"="pharmacy"](around:${r},${lat},${lng});
+  node["amenity"="dentist"](around:${r},${lat},${lng});
+  node["amenity"="urgent_care"](around:${r},${lat},${lng});
+  node["amenity"="nursing_home"](around:${r},${lat},${lng});
+  node["healthcare"](around:${r},${lat},${lng});
+  way["healthcare"](around:${r},${lat},${lng});
+  way["amenity"="hospital"](around:${r},${lat},${lng});
+  way["amenity"="clinic"](around:${r},${lat},${lng});
+  node["office"="physician"](around:${r},${lat},${lng});
+  node["office"="medical"](around:${r},${lat},${lng});
+  node["shop"="optician"](around:${r},${lat},${lng});
+  node["shop"="chemist"](around:${r},${lat},${lng});
+);
+out center tags;`;
+
+    let success=false;
+    for(let i=0;i<OVERPASS_ENDPOINTS.length;i++) {
+      const url=OVERPASS_ENDPOINTS[i];
+      setLiveMirror(`Trying mirror ${i+1}/${OVERPASS_ENDPOINTS.length}…`);
+      try {
+        const controller=new AbortController();
+        const timer=setTimeout(()=>controller.abort(),8000);
+        const res=await fetch(url,{method:'POST',body:'data='+encodeURIComponent(q),signal:controller.signal});
+        clearTimeout(timer);
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        const data=await res.json();
+        if(!data||!Array.isArray(data.elements)) throw new Error('Bad response');
+        const seen:Record<string,boolean>={};
+        const results=data.elements.map((el:any)=>{
+          const la=el.lat||(el.center&&el.center.lat);
+          const lo=el.lon||(el.center&&el.center.lon);
+          if(!la||!lo) return null;
+          const t=el.tags||{};
+          const nm=t.name||t['name:en']||t.operator||'Unnamed Facility';
+          const key=nm.toLowerCase()+'|'+Math.round(la*500)+'|'+Math.round(lo*500);
+          if(seen[key]) return null; seen[key]=true;
+          const ad=[t['addr:housenumber'],t['addr:street'],t['addr:city']].filter(Boolean).join(' ');
+          return{id:el.id,lat:la,lng:lo,name:nm,cat:classifyFacility(t),
+            dist:haversine(lat,lng,la,lo),addr:ad,phone:t.phone||t['contact:phone']||'',
+            website:t.website||t['contact:website']||'',hours:t.opening_hours||'',op:t.operator||''};
+        }).filter(Boolean).sort((a:any,b:any)=>a.dist-b.dist);
+        setLiveResults(results);
+        renderLiveMarkers(results);
+        setLiveHint('');
+        setLiveMirror('');
+        setLiveLoading(false);
+        success=true;
+        break;
+      } catch(err) { console.warn('[LiveFinder] Mirror failed',url,err); }
+    }
+    if(!success) {
+      setLiveHint('⚠ Could not reach OpenStreetMap. Try a different location or larger radius.');
+      setLiveMirror('');
+      setLiveLoading(false);
+    }
+  }
+
+  async function revGeo(lat:number,lng:number) {
+    try {
+      const r=await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=12`,{headers:{'Accept-Language':'en'}});
+      const d=await r.json();
+      const a=d.address||{};
+      setLiveLocation((a.city||a.town||a.village||a.county||a.state||'')+(a.state_code?' · '+a.state_code:''));
+    } catch(e){ setLiveLocation(`${lat.toFixed(4)}, ${lng.toFixed(4)}`); }
+  }
+
+  function renderLiveMarkers(results:any[]) {
+    const liveGrp=liveGrpRef.current;
+    const map=mapRef.current;
+    if(!liveGrp||!map) return;
+    liveGrp.clearLayers();
+    const filtered=liveFilter==='all'?results:results.filter(r=>r.cat===liveFilter);
+    filtered.forEach((r:any,i:number)=>{
+      const c=CATS[r.cat]||CATS.clinic;
+      const gmUrl=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.name+(r.addr?' '+r.addr:''))}`;
+      const mk=L.marker([r.lat,r.lng],{icon:L.divIcon({className:'',html:`<div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(4,10,22,0.92);border:2px solid ${c.col};box-shadow:0 0 8px ${c.col}44,0 2px 6px rgba(0,0,0,0.6);font-size:13px;cursor:pointer;">${c.ico}</div>`,iconSize:[28,28],iconAnchor:[14,14]}),zIndexOffset:1000+i});
+      mk.bindPopup(`<div style="font-family:Inter,sans-serif;padding:10px 12px;min-width:190px;">
+        <div style="display:flex;gap:7px;align-items:flex-start;margin-bottom:6px;"><span style="font-size:16px">${c.ico}</span>
+        <div><div style="font-size:12.5px;font-weight:700;color:#e2f0ff;line-height:1.3">${r.name}</div>
+        <div style="font-size:8.5px;font-weight:700;font-family:'IBM Plex Mono',monospace;color:${c.col};letter-spacing:1px;text-transform:uppercase;margin-top:2px">${c.lbl}</div></div></div>
+        ${r.addr?`<div style="font-size:9.5px;color:#4a6888;margin-bottom:3px;">📍 ${r.addr}</div>`:''}
+        ${r.phone?`<div style="font-size:9.5px;color:#4a6888;margin-bottom:3px;">📞 <a href="tel:${r.phone}" style="color:#67e8f9;text-decoration:none">${r.phone}</a></div>`:''}
+        ${r.hours?`<div style="font-size:9px;color:#3d5478;margin-bottom:5px;">🕐 ${r.hours}</div>`:''}
+        <div style="font-size:8.5px;color:#2d3f55;margin-bottom:7px;">~${fmtDist(r.dist)} away</div>
+        <div style="display:flex;gap:4px;">
+          <a href="${gmUrl}" target="_blank" rel="noopener" style="flex:1;text-align:center;padding:5px;border-radius:3px;background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.25);color:#93c5fd;font-size:8.5px;font-family:'IBM Plex Mono',monospace;font-weight:700;text-decoration:none;">GOOGLE MAPS</a>
+          ${r.website?`<a href="${r.website}" target="_blank" rel="noopener" style="flex:1;text-align:center;padding:5px;border-radius:3px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);color:#34d399;font-size:8.5px;font-family:'IBM Plex Mono',monospace;font-weight:700;text-decoration:none;">WEBSITE</a>`:''}
+        </div></div>`,{maxWidth:270,className:'live-marker-popup'});
+      mk.on('click',()=>setLiveHighlightId(r.id));
+      r._mk=mk;
+      liveGrp.addLayer(mk);
+    });
+  }
+
+  useEffect(()=>{
+    const filtered=liveFilter==='all'?liveResults:liveResults.filter(r=>r.cat===liveFilter);
+    renderLiveMarkers(filtered.length?filtered:liveResults);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[liveFilter]);
+
+  function lpFly(lat:number,lng:number,id:any) {
+    const map=mapRef.current;
+    if(!map) return;
+    map.flyTo([lat,lng],17,{duration:0.8});
+    const r=liveResults.find(x=>x.id==id);
+    if(r&&r._mk) setTimeout(()=>r._mk.openPopup(),900);
+    setLiveHighlightId(id);
+  }
+
+  // ── Distribution stats ─────────────────────────────────────────────────
+  const dist = [1,2,3,4,5].map(v=>({v,count:LOCS.filter(l=>getVal(l,metric)===v).length}));
+  const maxDist = Math.max(...dist.map(d=>d.count),1);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ─────────────────────────────────────────────────────────────────────────
+  return (
+    <div className="app-wrap">
+      {/* ── HEADER ── */}
+      <header className="app-header">
+        <div className="hdr-brand">
+          <div className="hdr-brand-dot"/>
+          <span>OCCU-MED</span>
+        </div>
+        <div className="hdr-sep"/>
+        <div className="hdr-stat"><div className="hdr-stat-v">{totalCities}</div><div className="hdr-stat-l">Cities</div></div>
+        <div className="hdr-sep"/>
+        <div className="hdr-stat"><div className="hdr-stat-v">{statesCount}</div><div className="hdr-stat-l">States</div></div>
+        <div className="hdr-sep"/>
+        <div className="hdr-stat"><div className="hdr-stat-v" style={{color:'#f97316'}}>{criticalCount}</div><div className="hdr-stat-l">Difficult+</div></div>
+        <div className="hdr-actions">
+          <button className={`hdr-btn${rpOpen?' active':''}`} onClick={()=>setRpOpen(o=>!o)}>◎ COVERAGE</button>
+          <button className={`hdr-btn${liveOpen?' active':''}`} onClick={()=>setLiveOpen(o=>!o)}>📡 LIVE FINDER</button>
+          <button className="hdr-btn" onClick={()=>setShowDir(true)}>📁 DIRECTORIES</button>
+          <button className={`hdr-btn${showPriceFinder?' active':''}`} style={{color:'#34d399'}} onClick={()=>setShowPriceFinder(o=>!o)}>💲 PRICE FINDER</button>
+          <button className={`hdr-btn green`} onClick={()=>setShowCompare(true)}>
+            ⊞ COMPARE{pinnedCities.length>0&&<span className="badge">{pinnedCities.length}</span>}
+          </button>
+        </div>
+      </header>
+
+      {/* ── BODY ── */}
+      <div className="app-body">
+        {/* ── SIDEBAR ── */}
+        <aside className="sidebar">
+          <div className="sb-section">
+            <div className="sb-lbl">SERVICE METRIC</div>
+            {ALL_METRICS.map(m=>(
+              <button key={m} className={`mbtn${metric===m?' active':''}`} onClick={()=>setMetric(m)}>
+                <span className="mico">{MICONS[m]}</span>{MLBL[m]}
+              </button>
+            ))}
+          </div>
+          <div className="sb-divider"/>
+          <div className="sb-section">
+            <div className="sb-lbl">VIEW PRESETS</div>
+            <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+              {(['us','east','central','west'] as const).map(v=>(
+                <button key={v} className={`vbtn${view===v?' active':''}`} onClick={()=>flyToView(v)}>{v.toUpperCase()}</button>
+              ))}
+            </div>
+          </div>
+          <div className="sb-divider"/>
+          <div className="sb-section">
+            <div className="sb-lbl">LAYERS</div>
+            <div className="tog-row">
+              <span className="tog-lbl">State labels</span>
+              <label className="tog-switch"><input type="checkbox" checked={showLabels} onChange={e=>setShowLabels(e.target.checked)}/><span className="tog-slider"/></label>
+            </div>
+            <div className="tog-row">
+              <span className="tog-lbl">Timezone overlay</span>
+              <label className="tog-switch"><input type="checkbox" checked={showTZ} onChange={e=>setShowTZ(e.target.checked)}/><span className="tog-slider"/></label>
+            </div>
+            <div className="tog-row">
+              <span className="tog-lbl">70mi radius ring</span>
+              <label className="tog-switch"><input type="checkbox" checked={showRadius} onChange={e=>setShowRadius(e.target.checked)}/><span className="tog-slider"/></label>
+            </div>
+          </div>
+          <div className="sb-divider"/>
+          <div className="sb-section">
+            <div className="sb-lbl">FILTER CITIES</div>
+            <div style={{display:'flex',gap:3,flexWrap:'wrap',marginBottom:8}}>
+              <button className={`fbtn${filterDiff===null?' active':''}`} onClick={()=>setFilterDiff(null)}>ALL</button>
+              {[1,2,3,4,5].map(v=>(
+                <button key={v} className={`fbtn${filterDiff===v?' active':''}`} style={{color:DCOL[v]}} onClick={()=>setFilterDiff(filterDiff===v?null:v)}>{DLBL[v]}</button>
+              ))}
+            </div>
+          </div>
+          <div className="sb-divider"/>
+          <div className="sb-section" style={{paddingBottom:10}}>
+            <div className="sb-lbl">DISTRIBUTION</div>
+            {dist.map(d=>(
+              <div key={d.v} className="br">
+                <div className="br-hdr">
+                  <span style={{fontSize:9.5,color:DCOL[d.v],fontFamily:'IBM Plex Mono, monospace',fontWeight:700}}>{DLBL[d.v]}</span>
+                  <span style={{fontSize:9,color:'#3d5478'}}>{d.count}</span>
+                </div>
+                <div className="br-track"><div className="br-fill" style={{width:`${(d.count/maxDist)*100}%`,background:DCOL[d.v]}}/></div>
+              </div>
+            ))}
+          </div>
+          <div className="sb-divider"/>
+          <div className="sb-section" style={{paddingBottom:12}}>
+            <div className="sb-lbl">LEGEND</div>
+            {[1,2,3,4,5].map(v=>(
+              <div key={v} className="legend-row">
+                <div className="legend-dot" style={{background:DCOL[v]}}/>
+                <span className="legend-lbl">{v} — {DLBL[v]}</span>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        {/* ── MAP ── */}
+        <div className="map-wrap">
+          <div id="map" ref={mapDivRef}/>
+          {showTZ&&(
+            <div className="tz-legend">
+              {TZ_INFO.map(tz=>(
+                <div key={tz.abbr} className="tz-item">
+                  <div className="tz-dot" style={{background:tz.color}}/>
+                  <span style={{color:tz.color}}>{tz.abbr}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── RIGHT PANEL ── */}
+        <div className={`right-panel${rpOpen?' open':''}`}>
+          {rpOpen&&(
+            <div className="rp-inner">
+              <div className="rp-header">
+                <span className="rp-title">◎ Coverage Request</span>
+                <button className="rp-close" onClick={()=>setRpOpen(false)}>✕</button>
+              </div>
+              <div className="rp-field" style={{position:'relative'}}>
+                <label>CITY / ADDRESS / ZIP</label>
+                <input
+                  className="rp-input"
+                  placeholder="e.g. Birmingham AL"
+                  value={rpCity}
+                  onChange={e=>handleCityInput(e.target.value)}
+                  onKeyDown={e=>e.key==='Enter'&&runLookup()}
+                />
+                {rpSuggestions.length>0&&(
+                  <div className="rp-suggestions">
+                    {rpSuggestions.map((loc,i)=>(
+                      <div key={i} className="rp-sug-item" onClick={()=>selectSuggestion(loc)}>
+                        <div className="rp-sug-main">{loc[0]}, {loc[1]}</div>
+                        <div className="rp-sug-sub">{loc[4]===1?'Major Metro':loc[4]===2?'Mid-Size City':loc[4]===3?'Small City':'Rural'} · {DLBL[getVal(loc,metric)]}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="rp-field">
+                <label>EXAM / SERVICE TYPE</label>
+                <select className="rp-select" value={rpExam} onChange={e=>setRpExam(e.target.value)}>
+                  {ALL_METRICS.map(m=><option key={m} value={m}>{MLBL[m]}</option>)}
+                </select>
+              </div>
+              <button className="rp-run-btn" onClick={runLookup}>▶ ASSESS COVERAGE</button>
+              {rpResult}
+            </div>
+          )}
+        </div>
+
+        {/* ── LIVE PANEL ── */}
+        <div className={`live-panel${liveOpen?' open':''}`}>
+          {liveOpen&&(
+            <div className="lp-inner">
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <span className="lp-title">📡 LIVE HEALTHCARE FINDER</span>
+                <button className="rp-close" onClick={()=>setLiveOpen(false)}>✕</button>
+              </div>
+              <div style={{fontSize:10,color:'#3d5478',lineHeight:1.5}}>
+                {liveHint||`${liveResults.length} facilit${liveResults.length===1?'y':'ies'}${liveLocation?' · '+liveLocation:''}`}
+                {liveMirror&&<div style={{fontSize:9,color:'#2d4060',marginTop:3}}>{liveMirror}</div>}
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <span style={{fontSize:9.5,color:'#3d5478',whiteSpace:'nowrap'}}>Radius:</span>
+                <input type="range" min={2} max={50} value={liveRadius} onChange={e=>setLiveRadius(Number(e.target.value))} onMouseUp={()=>{ if(lastRadiusRef.current) doLiveSearch(lastRadiusRef.current.lat,lastRadiusRef.current.lng); }}/>
+                <span style={{fontFamily:'IBM Plex Mono,monospace',fontSize:10,color:'#67e8f9',whiteSpace:'nowrap'}}>{liveRadius} km</span>
+              </div>
+              {/* Filter chips */}
+              <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
+                <button className={`lp-chip${liveFilter==='all'?' on':''}`} onClick={()=>setLiveFilter('all')}>All</button>
+                {Object.entries(CATS).map(([cat,c])=>(
+                  <button key={cat} className={`lp-chip${liveFilter===cat?' on':''}`} onClick={()=>setLiveFilter(cat)}>{c.ico} {c.lbl}</button>
+                ))}
+              </div>
+              <div className={`lp-loading${liveLoading?' show':''}`}>
+                <div className="lp-spin"/>
+                <div style={{fontSize:10,color:'#3d5478'}}>Querying Overpass API...</div>
+              </div>
+              {!liveLoading&&liveResults.length===0&&!liveHint.startsWith('⚠')&&(
+                <div className="lp-empty show">Click anywhere on the map to search nearby facilities</div>
+              )}
+              {!liveLoading&&liveHint.startsWith('⚠')&&(
+                <div style={{padding:14,textAlign:'center',fontSize:10.5,color:'#ef4444',lineHeight:1.9}}>
+                  {liveHint}
+                  <br/><button style={{marginTop:8,padding:'4px 12px',borderRadius:3,background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',color:'#ef4444',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,cursor:'pointer'}} onClick={()=>{if(lastRadiusRef.current)doLiveSearch(lastRadiusRef.current.lat,lastRadiusRef.current.lng);}}>↺ RETRY</button>
+                </div>
+              )}
+              {(liveFilter==='all'?liveResults:liveResults.filter(r=>r.cat===liveFilter)).map((r:any)=>{
+                const c=CATS[r.cat]||CATS.clinic;
+                const gm=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.name+(r.addr?' '+r.addr:''))}`;
+                return (
+                  <div key={r.id} className={`lp-item${liveHighlightId===r.id?' hl':''}`} onClick={()=>lpFly(r.lat,r.lng,r.id)}>
+                    <div className="lp-row1">
+                      <span className="lp-ico">{c.ico}</span>
+                      <span className="lp-name">{r.name}</span>
+                      <span className="lp-dist">{fmtDist(r.dist)}</span>
+                    </div>
+                    {r.addr&&<div className="lp-addr">{r.addr}</div>}
+                    <div className="lp-tags">
+                      <span className="lp-tag" style={{color:c.col,borderColor:c.col+'30',background:c.col+'0d'}}>{c.lbl}</span>
+                      {r.hours&&<span className="lp-tag">{r.hours.substring(0,30)}</span>}
+                      {r.phone&&<span className="lp-tag">📞</span>}
+                    </div>
+                    <div className="lp-acts">
+                      <a href={gm} target="_blank" rel="noopener" className="lp-act pri" onClick={e=>e.stopPropagation()}>Google Maps ↗</a>
+                      {r.website&&<a href={r.website} target="_blank" rel="noopener" className="lp-act" onClick={e=>e.stopPropagation()}>Website ↗</a>}
+                      {r.phone&&<a href={`tel:${r.phone}`} className="lp-act" onClick={e=>e.stopPropagation()}>Call</a>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── DIRECTORIES MODAL ── */}
+      <div className={`modal-backdrop${showDir?' open':''}`} onClick={()=>setShowDir(false)}>
+        <div className="modal-box" style={{width:640}} onClick={e=>e.stopPropagation()}>
+          <div className="modal-header">
+            <span className="modal-title">📁 PROVIDER DIRECTORIES</span>
+            <button className="modal-close" onClick={()=>setShowDir(false)}>✕</button>
+          </div>
+          <div className="modal-body">
+            <div className="dir-section-lbl">OCCUPATIONAL HEALTH RESOURCES</div>
+            <div className="dir-grid">
+              {PROVIDER_DIRS.map((d,i)=>(
+                <a key={i} className="dir-app" href={d.url} target="_blank" rel="noopener noreferrer">
+                  <div style={{fontSize:18}}>🔗</div>
+                  <div className="dir-app-name">{d.name}</div>
+                  <div className="dir-app-tag">{d.tag}</div>
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── PRICE FINDER MODAL ── */}
+      {showPriceFinder && (
+        <div className="modal-backdrop open" onClick={()=>setShowPriceFinder(false)}>
+          <div className="modal-box" style={{width:720,maxHeight:'85vh',display:'flex',flexDirection:'column'}} onClick={e=>e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title" style={{color:'#34d399'}}>💲 CLINIC PRICE FINDER</span>
+              <button className="modal-close" onClick={()=>setShowPriceFinder(false)}>✕</button>
+            </div>
+            <div className="modal-body" style={{flex:1,overflowY:'auto',padding:'16px 20px'}}>
+              <p style={{fontSize:11,color:'#5d7a9e',marginBottom:14,lineHeight:1.5}}>
+                Searches the web for urgent care and dental clinics that publish transparent pricing online — no insurance required.
+              </p>
+              {/* Search form */}
+              <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
+                <div style={{flex:2,minWidth:140}}>
+                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:4}}>CITY / ZIP</div>
+                  <input
+                    className="rp-input"
+                    style={{width:'100%',boxSizing:'border-box'}}
+                    placeholder="e.g. Birmingham"
+                    value={pfCity}
+                    onChange={e=>setPfCity(e.target.value)}
+                    onKeyDown={e=>e.key==='Enter'&&runPriceSearch()}
+                  />
+                </div>
+                <div style={{flex:1,minWidth:80}}>
+                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:4}}>STATE</div>
+                  <input
+                    className="rp-input"
+                    style={{width:'100%',boxSizing:'border-box'}}
+                    placeholder="e.g. AL"
+                    value={pfState}
+                    onChange={e=>setPfState(e.target.value.toUpperCase().slice(0,2))}
+                    onKeyDown={e=>e.key==='Enter'&&runPriceSearch()}
+                  />
+                </div>
+                <div style={{flex:2,minWidth:140}}>
+                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:4}}>SERVICE TYPE</div>
+                  <select
+                    className="rp-select"
+                    style={{width:'100%',boxSizing:'border-box'}}
+                    value={pfServiceType}
+                    onChange={e=>setPfServiceType(e.target.value as any)}
+                  >
+                    <option value="urgentCare">Urgent Care</option>
+                    <option value="dental">Dental</option>
+                    <option value="pharmacy">Pharmacy</option>
+                    <option value="physicalExam">Physical Exam</option>
+                    <option value="faamedical">FAA Medical</option>
+                    <option value="stressTest">Treadmill Stress Test</option>
+                    <option value="mammogram">Mammogram</option>
+                    <option value="dotExam">DOT Exam</option>
+                    <option value="vaccinations">Vaccinations</option>
+                  </select>
+                </div>
+                <div style={{display:'flex',alignItems:'flex-end'}}>
+                  <button
+                    className="rp-assess-btn"
+                    style={{padding:'8px 18px',minWidth:90,opacity:pfLoading?0.6:1}}
+                    onClick={runPriceSearch}
+                    disabled={pfLoading||!pfCity.trim()}
+                  >
+                    {pfLoading ? '⏳ SEARCHING...' : '🔍 SEARCH'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Loading */}
+              {pfLoading && (
+                <div style={{textAlign:'center',padding:'30px 0',color:'#3d5478',fontSize:11}}>
+                  <div style={{fontSize:20,marginBottom:8,animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</div>
+                  <div>Scanning the web for clinics with published pricing...</div>
+                  <div style={{marginTop:4,fontSize:10,color:'#2a3f5e'}}>This may take 5–10 seconds</div>
+                </div>
+              )}
+
+              {/* Error */}
+              {pfError && !pfLoading && (
+                <div style={{background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',borderRadius:6,padding:'10px 14px',color:'#fca5a5',fontSize:11,marginBottom:12}}>
+                  ⚠ {pfError}
+                </div>
+              )}
+
+              {/* Results */}
+              {!pfLoading && pfDone && (
+                <>
+                  {/* Section: Local Clinics from NPI Registry */}
+                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
+                    LICENSED PROVIDERS NEAR <span style={{color:'#06b6d4'}}>{pfLocation.toUpperCase()}</span>
+                    <span style={{marginLeft:8,color:'#2a3f5e'}}>({pfClinics.length} found via NPI Registry)</span>
+                  </div>
+                  {pfClinics.length === 0 && (
+                    <div style={{fontSize:10,color:'#2a3f5e',marginBottom:12,padding:'8px 12px',background:'rgba(10,24,48,0.4)',borderRadius:6}}>
+                      No licensed providers found in the NPI Registry for this city. Try a nearby major city.
+                    </div>
+                  )}
+                  <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:18}}>
+                    {pfClinics.map((c,i)=>(
+                      <div key={i} style={{
+                        background: c.isFqhc ? 'rgba(52,211,153,0.07)' : 'rgba(6,10,24,0.5)',
+                        border: c.isFqhc ? '1px solid rgba(52,211,153,0.25)' : '1px solid rgba(20,40,80,0.6)',
+                        borderRadius:6,padding:'9px 12px',
+                      }}>
+                        <div style={{display:'flex',alignItems:'flex-start',gap:8}}>
+                          {c.isFqhc && (
+                            <span style={{fontSize:7,fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,color:'#34d399',border:'1px solid rgba(52,211,153,0.4)',borderRadius:3,padding:'2px 5px',whiteSpace:'nowrap',marginTop:2,flexShrink:0}}>
+                              ✓ SLIDING SCALE FEE
+                            </span>
+                          )}
+                          <div style={{flex:1}}>
+                            <div style={{fontSize:11,fontWeight:600,color:'#eef4ff',marginBottom:2}}>{c.name}</div>
+                            {c.address && <div style={{fontSize:9,color:'#5d7a9e'}}>{c.address}</div>}
+                            {c.phone && <div style={{fontSize:9,color:'#3d8bcd',fontFamily:"'IBM Plex Mono',monospace",marginTop:1}}>{c.phone}</div>}
+                          </div>
+                          <div style={{display:'flex',gap:5,flexShrink:0}}>
+                            <a href={c.searchUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'3px 7px',background:'rgba(6,182,212,0.1)',border:'1px solid rgba(6,182,212,0.25)',borderRadius:3,color:'#06b6d4',textDecoration:'none'}}>FIND PRICING →</a>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Section: Transparent-Pricing Networks */}
+                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
+                    TRANSPARENT-PRICING NETWORKS
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:18}}>
+                    {pfNetworks.map((n,i)=>(
+                      <a key={i} href={n.url} target="_blank" rel="noopener noreferrer" style={{
+                        background:'rgba(10,24,48,0.5)',border:'1px solid rgba(20,50,100,0.5)',
+                        borderRadius:6,padding:'9px 11px',textDecoration:'none',display:'block',
+                      }}>
+                        <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+                          <span style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,color:'#fbbf24',border:'1px solid rgba(251,191,36,0.3)',borderRadius:3,padding:'1px 5px'}}>{n.tag}</span>
+                        </div>
+                        <div style={{fontSize:10,fontWeight:600,color:'#c8ddf0',marginBottom:3}}>{n.name}</div>
+                        <div style={{fontSize:9,color:'#4a6080',lineHeight:1.4}}>{n.desc}</div>
+                      </a>
+                    ))}
+                  </div>
+
+                  {/* Section: Pricing Research Tools */}
+                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>PRICING RESEARCH TOOLS</div>
+                  <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                    {pfResources.map((r,i)=>(
+                      <a key={i} href={r.url} target="_blank" rel="noopener noreferrer" style={{
+                        flex:'1 1 180px',background:'rgba(6,182,212,0.05)',border:'1px solid rgba(6,182,212,0.15)',
+                        borderRadius:6,padding:'8px 11px',textDecoration:'none',display:'block',
+                      }}>
+                        <div style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",color:'#06b6d4',marginBottom:3}}>{r.tag}</div>
+                        <div style={{fontSize:10,fontWeight:600,color:'#c8ddf0',marginBottom:2}}>{r.name}</div>
+                        <div style={{fontSize:9,color:'#4a6080',lineHeight:1.4}}>{r.desc}</div>
+                      </a>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Empty state */}
+              {!pfLoading && !pfError && !pfDone && (
+                <div style={{textAlign:'center',padding:'20px 0',color:'#2a3f5e',fontSize:11,lineHeight:1.7}}>
+                  <div style={{fontSize:28,marginBottom:10}}>💲</div>
+                  <div style={{color:'#3d5478',marginBottom:6}}>Enter a city to find:</div>
+                  <div style={{fontSize:10,color:'#2a3f5e',lineHeight:1.8}}>
+                    • Licensed clinics in the NPI Registry<br/>
+                    • Federally-qualified health centers (sliding scale fees)<br/>
+                    • National networks with transparent pricing<br/>
+                    • Tools to compare costs before your visit
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── COMPARE MODAL ── */}
+      <div className={`modal-backdrop${showCompare?' open':''}`} onClick={()=>setShowCompare(false)}>
+        <div className="modal-box" style={{width:Math.min(900,pinnedCities.length*160+200)}} onClick={e=>e.stopPropagation()}>
+          <div className="modal-header">
+            <span className="modal-title">⊞ CITY COMPARISON</span>
+            <span style={{fontSize:10,color:'#3d5478',marginLeft:10}}>{pinnedCities.length} of 5 cities pinned</span>
+            <button className="modal-close" onClick={()=>setShowCompare(false)}>✕</button>
+          </div>
+          <div className="modal-body">
+            {pinnedCities.length===0?(
+              <div style={{textAlign:'center',padding:'30px 20px',fontSize:11,color:'#3d5478'}}>No cities pinned yet. Look up a city and click <strong style={{color:'#a78bfa'}}>+ PIN TO COMPARE</strong>.</div>
+            ):(
+              <>
+                <div style={{marginBottom:10}}>
+                  {pinnedCities.map((p,i)=>(
+                    <div key={i} className="cmp-pin-slot">
+                      <div className="cmp-pin-dot" style={{background:DCOL[getVal(p,metric)]}}/>
+                      <span className="cmp-pin-name">{p[0]}, {p[1]}</span>
+                      <span style={{fontSize:9,color:DCOL[getVal(p,metric)],fontFamily:'IBM Plex Mono,monospace'}}>{DLBL[getVal(p,metric)]}</span>
+                      <button className="cmp-pin-rm" onClick={()=>setPinnedCities(prev=>prev.filter((_,j)=>j!==i))}>✕</button>
+                    </div>
+                  ))}
+                </div>
+                <div className="cmp-scroll">
+                  <table className="cmp-table">
+                    <thead><tr>
+                      <th className="metric-label">METRIC</th>
+                      {pinnedCities.map((p,i)=>{
+                        const v=getVal(p,metric);
+                        const dt=i>0?calcDrive(pinnedCities[0][2],pinnedCities[0][3],p[2],p[3]):null;
+                        return <th key={i} style={{textAlign:'center',minWidth:140}}>
+                          <div style={{fontSize:12,fontWeight:700,color:'#eef4ff'}}>{p[0]}</div>
+                          <div style={{fontSize:9,color:'#3d5478',fontFamily:'IBM Plex Mono,monospace',marginTop:2}}>{p[1]} · {p[4]===1?'Major':p[4]===2?'Mid-Size':'Small'}</div>
+                          <div style={{display:'inline-block',padding:'2px 6px',borderRadius:2,fontSize:8.5,fontWeight:700,fontFamily:'IBM Plex Mono,monospace',marginTop:4,background:`${DCOL[v]}22`,color:DCOL[v],border:`1px solid ${DCOL[v]}44`}}>{DLBL[v]}</div>
+                          {dt&&<div style={{fontSize:9,color:'#34d399',marginTop:4,fontFamily:'IBM Plex Mono,monospace'}}>🚗 {dt.timeStr} · {dt.miles}mi</div>}
+                          <div style={{fontSize:9,color:'#3d5478',marginTop:3}}>{p[16]} prov/100k · ~{p[17]}d</div>
+                          <button onClick={()=>setPinnedCities(prev=>prev.filter((_,j)=>j!==i))} style={{marginTop:5,padding:'2px 8px',background:'transparent',border:'1px solid rgba(255,255,255,0.08)',color:'#3d5478',borderRadius:2,fontSize:8.5,cursor:'pointer',fontFamily:'IBM Plex Mono,monospace'}}>remove</button>
+                        </th>;
+                      })}
+                    </tr></thead>
+                    <tbody>
+                      <tr>
+                        <td className="metric-label" style={{fontWeight:700,color:'#67e8f9',borderTop:'1px solid rgba(6,182,212,0.2)'}}>Providers in 70mi</td>
+                        {pinnedCities.map((p,i)=>{
+                          const d=countProvidersInRadius(p[2],p[3],metric);
+                          return <td key={i} style={{textAlign:'center',borderTop:'1px solid rgba(6,182,212,0.2)'}}>
+                            <div style={{fontFamily:'IBM Plex Mono,monospace',fontSize:14,fontWeight:700,color:'#67e8f9'}}>{d.estProviders}</div>
+                            <div style={{fontSize:8.5,color:'#3d5478'}}>{d.citiesInRadius} cities in zone</div>
+                          </td>;
+                        })}
+                      </tr>
+                      {ALL_METRICS.map(m=>(
+                        <tr key={m}>
+                          <td className="metric-label" style={{color:m===metric?'#93c5fd':'',fontWeight:m===metric?700:400}}>{m===metric?'▶ ':''}{MLBL[m]}</td>
+                          {pinnedCities.map((p,i)=>{
+                            const v=getVal(p,m);
+                            return <td key={i} style={{textAlign:'center'}}>
+                              <span className="cmp-score" style={{background:`${DCOL[v]}18`,color:DCOL[v],border:`1px solid ${DCOL[v]}33`}}>{DLBL[v]} <span style={{opacity:0.6}}>{v}/5</span></span>
+                            </td>;
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{marginTop:12,fontSize:9.5,color:'#3d5478',lineHeight:1.6}}>Drive times are estimates (~55mph avg). Provider counts estimated from HRSA density data within the 70mi radius.</div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── PDF MODAL ── */}
+      {showPdf&&(
+        <div className="pdf-modal-wrap" onClick={()=>setShowPdf(false)}>
+          <div className="pdf-toolbar" onClick={e=>e.stopPropagation()}>
+            <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#3b82f6',letterSpacing:3,textTransform:'uppercase'}}>◈ Report Preview</span>
+            <div style={{display:'flex',gap:10}}>
+              <button style={{padding:'7px 18px',borderRadius:3,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,cursor:'pointer',letterSpacing:1.5,textTransform:'uppercase',border:'1px solid rgba(6,182,212,0.4)',background:'rgba(6,182,212,0.15)',color:'#67e8f9'}} onClick={()=>{const b=new Blob([pdfHtml],{type:'text/html'});const u=URL.createObjectURL(b);window.open(u,'_blank');}}>↗ OPEN IN NEW TAB</button>
+              <button style={{padding:'7px 18px',borderRadius:3,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,cursor:'pointer',letterSpacing:1.5,textTransform:'uppercase',border:'1px solid rgba(59,130,246,0.4)',background:'rgba(59,130,246,0.15)',color:'#93c5fd'}} onClick={()=>{const b=new Blob([pdfHtml],{type:'text/html'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=pdfDlName;document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(u);},1000);}}>↓ DOWNLOAD HTML</button>
+              <button style={{padding:'7px 14px',background:'transparent',color:'#4a6888',border:'1px solid rgba(255,255,255,0.08)',borderRadius:3,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,cursor:'pointer'}} onClick={()=>setShowPdf(false)}>✕ Close</button>
+            </div>
+          </div>
+          <div className="pdf-tip" onClick={e=>e.stopPropagation()}><strong style={{color:'#93c5fd'}}>To save as PDF:</strong> Click "Open in New Tab" → then Ctrl+P / ⌘+P → Save as PDF. Or use "Download HTML" to save the file.</div>
+          <div style={{flex:1,display:'flex',justifyContent:'center',padding:'0 0 40px',width:'100%'}} onClick={e=>e.stopPropagation()}>
+            <iframe style={{width:860,maxWidth:'96vw',minHeight:'85vh',border:'none',borderRadius:4,background:'white',boxShadow:'0 4px 40px rgba(0,0,0,0.6)'}} srcDoc={pdfHtml}/>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Sub-components ───────────────────────────────────────────────────────────
+function ScoreCard({scores}:{scores:{key:string;v:number;hl:boolean}[]}) {
+  return (
+    <div className="rp-scorecard">
+      {scores.map(s=>(
+        <div key={s.key} className="rp-score-row" style={s.hl?{background:'rgba(59,130,246,0.06)',padding:'2px 4px',borderRadius:4}:{}}>
+          <span className="rp-score-icon">{MICONS[s.key]}</span>
+          <span className="rp-score-name" style={s.hl?{color:'#cdd9f0',fontWeight:600}:{}}>{MLBL[s.key]}</span>
+          <div className="rp-score-bar"><div className="rp-score-fill" style={{width:`${s.v*20}%`,background:DCOL[s.v]}}/></div>
+          <span className="rp-score-val" style={{color:DCOL[s.v]}}>{DLBL[s.v]}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GeoScoreCard({lat,lng,examKey}:{lat:number;lng:number;examKey:string}) {
+  return (
+    <div className="rp-scorecard">
+      {ALL_METRICS.map(m=>{
+        const v=estimateDifficultyFromNeighbors(lat,lng,m);
+        return (
+          <div key={m} className="rp-score-row">
+            <span className="rp-score-icon">{MICONS[m]}</span>
+            <span className="rp-score-name">{MLBL[m]}</span>
+            <div className="rp-score-bar"><div className="rp-score-fill" style={{width:`${v*20}%`,background:DCOL[v]}}/></div>
+            <span className="rp-score-val" style={{color:DCOL[v]}}>{DLBL[v]}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ProviderBox({data,examKey,cityName,locIdx,onPin}:{data:any;examKey:string;cityName:string;locIdx:number;onPin:(i:number)=>void}) {
+  const [pinned,setPinned]=useState(false);
+  const hasPin=locIdx>=0;
+  return (
+    <div className="prov-box">
+      <div className="prov-stat"><div className="prov-stat-v">{data.estProviders}</div><div className="prov-stat-l">Est. {MLBL[examKey]} Providers<br/><span style={{fontSize:8.5}}>within 70mi</span></div></div>
+      <div className="prov-stat"><div className="prov-stat-v">{data.citiesInRadius}</div><div className="prov-stat-l">Cities / Markets<br/><span style={{fontSize:8.5}}>in coverage zone</span></div></div>
+      <div className="prov-stat"><div className="prov-stat-v" style={{color:DCOL[Math.round(parseFloat(data.avgDifficulty))||3]}}>{data.avgDifficulty}</div><div className="prov-stat-l">Avg Difficulty</div></div>
+      {hasPin&&(
+        <button className="prov-pin-btn" style={pinned?{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.3)',color:'#10b981'}:{background:'rgba(167,139,250,0.1)',border:'1px solid rgba(167,139,250,0.25)',color:'#a78bfa'}} onClick={()=>{if(!pinned){onPin(locIdx);setPinned(true);}}}>{pinned?'✓ PINNED':'+ PIN TO COMPARE'}</button>
+      )}
+    </div>
+  );
+}
+
+function DriveTimeBox({fromLat,fromLng,fromName,locB}:{fromLat:number;fromLng:number;fromName:string;locB:{name:string;lat:number;lng:number}|null}) {
+  const [dest,setDest]=useState('');
+  const [result,setResult]=useState<{timeStr:string;miles:number;hours:number;name:string}|null>(null);
+  const [destB]=useState(locB);
+  const dt=destB?calcDrive(fromLat,fromLng,destB.lat,destB.lng):null;
+  const urgency=dt?(dt.hours<1?'#10b981':dt.hours<2.5?'#84cc16':dt.hours<4?'#f59e0b':'#f97316'):null;
+
+  function calc() {
+    const q=dest.trim().toLowerCase().replace(/,.*$/,'').trim();
+    const match=LOCS.find(l=>l[0].toLowerCase()===q)||LOCS.find(l=>l[0].toLowerCase().startsWith(q))||LOCS.find(l=>l[0].toLowerCase().includes(q));
+    if(!match){return;}
+    const d=calcDrive(fromLat,fromLng,match[2],match[3]);
+    setResult({...d,name:`${match[0]}, ${match[1]}`});
+  }
+
+  return (
+    <div className="drivetime-box">
+      <div className="drivetime-lbl">🚗 DRIVE TIME FROM HERE</div>
+      {dt&&destB&&(
+        <div style={{marginBottom:8}}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+            <span style={{fontSize:10,color:'#3d5478'}}>{fromName}</span>
+            <span style={{color:'#3d5478'}}>→</span>
+            <span style={{fontSize:10,color:'#7aabda',fontWeight:600}}>{destB.name}</span>
+          </div>
+          <div style={{display:'flex',gap:18,marginBottom:6}}>
+            <div><div className="drivetime-val" style={{color:urgency||'#eef4ff'}}>{dt.timeStr}</div><div className="drivetime-sub">est. drive time</div></div>
+            <div><div className="drivetime-val">{dt.miles} mi</div><div className="drivetime-sub">straight-line</div></div>
+          </div>
+        </div>
+      )}
+      {result&&(
+        <div style={{marginBottom:8}}>
+          <div style={{fontSize:10,color:'#7aabda',marginBottom:4}}>{fromName} → {result.name}</div>
+          <div style={{display:'flex',gap:18}}>
+            <div><div className="drivetime-val" style={{color:result.hours<1?'#10b981':result.hours<2.5?'#84cc16':result.hours<4?'#f59e0b':'#f97316'}}>{result.timeStr}</div><div className="drivetime-sub">est. drive time</div></div>
+            <div><div className="drivetime-val">{result.miles} mi</div><div className="drivetime-sub">straight-line</div></div>
+          </div>
+        </div>
+      )}
+      <div style={{fontSize:8.5,color:'#3d5478',marginBottom:4}}>Based on ~55mph avg. Actual time may vary.</div>
+      <input className="drivetime-input" placeholder="Destination city, e.g. Dallas TX" value={dest} onChange={e=>setDest(e.target.value)} onKeyDown={e=>e.key==='Enter'&&calc()}/>
+      <button className="drivetime-btn" onClick={calc}>CALCULATE DRIVE TIME</button>
+    </div>
+  );
+}
+
+function NearestEasier({items,onFly}:{items:any[];onFly:(lat:number,lng:number,name:string,state:string,score:number,examKey:string)=>void}) {
+  return (
+    <div style={{marginTop:10}}>
+      <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:8.5,color:'#3d5478',letterSpacing:1.5,marginBottom:7}}>NEAREST EASIER CITIES</div>
+      {items.map((r,i)=>{
+        const col=DCOL[r.v];
+        const tierIcon=r.tier===1?'◉':r.tier===2?'◎':'○';
+        return (
+          <div key={i} className="nearer-row" onClick={()=>onFly(r.lat,r.lng,r.name,r.state,r.v,'primaryCare')}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontSize:12,fontWeight:600,color:'#cdd9f0'}}>{r.name}, {r.state}</span>
+              <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'rgba(99,179,237,0.7)'}}>{r.dist} mi</span>
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginTop:3}}>
+              <span style={{fontSize:9,color:'#3d5478'}}>{tierIcon} {r.tier===1?'Major Metro':r.tier===2?'Mid-Size':'Small City'}</span>
+              <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:col,fontWeight:600}}>{DLBL[r.v]}</span>
+            </div>
+          </div>
+        );
+      })}
+      <div style={{fontSize:9,color:'#3d5478',marginTop:4,textAlign:'center'}}>Click any city to fly to it on the map</div>
+    </div>
+  );
+}
