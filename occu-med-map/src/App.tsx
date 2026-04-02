@@ -1,9 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import * as topojson from 'topojson-client';
+import * as XLSX from 'xlsx';
 import {
   SD, LOCS, MKEYS, MICONS, MLBL, DCOL, DLBL, ALL_METRICS, getVal, STATE_CTR, EXTRA_COORDS
 } from './lib/data';
+import { STATE_POP, densityColor, densityLabel } from './lib/populationData';
+import {
+  PROCEDURE_RATES, STATE_COST_INDEX, STATE_COST_TIER,
+  adjustedPrice, tierColor,
+} from './lib/procedurePrices';
 
 // ── FIPS → state abbreviation lookup ────────────────────────────────────────
 const FIPS2CODE: Record<string,string> = {
@@ -85,6 +91,151 @@ const PROVIDER_DIRS = [
   {name:'SpecFit360',url:'https://specfit360.com/',tag:'OCC MED'},
   {name:'US HealthWorks',url:'https://www.ushealthworks.com/',tag:'OCC MED'},
   {name:'National Drug Screening',url:'https://ndsinc.com/',tag:'DRUG TEST'},
+];
+
+// ── Price Finder: static data ────────────────────────────────────────────────
+const PF_SERVICE_LABELS: Record<string,string> = {
+  urgentCare:'Urgent Care', dental:'Dental', pharmacy:'Pharmacy',
+  physicalExam:'Physical Exam', faamedical:'FAA Medical Exam',
+  stressTest:'Stress Test', mammogram:'Mammogram',
+  dotExam:'DOT Physical', vaccinations:'Vaccinations',
+};
+const PF_TAXONOMY_MAP: Record<string,string[]> = {
+  urgentCare:  ['Clinic/Center, Urgent Care','Urgent Care'],
+  dental:      ['Dentist General Practice','Dentist'],
+  pharmacy:    ['Pharmacy'],
+  physicalExam:['Occupational Medicine','Preventive Medicine','Family Medicine'],
+  faamedical:  ['Aerospace Medicine','Occupational Medicine'],
+  stressTest:  ['Cardiovascular Disease','Cardiology'],
+  mammogram:   ['Diagnostic Radiology','Radiology'],
+  dotExam:     ['Occupational Medicine'],
+  vaccinations:['Public Health & General Preventive Medicine','Family Medicine'],
+};
+const PF_REF_PRICES: Record<string,{range:string;note:string}> = {
+  urgentCare:  {range:'$120 – $280', note:'Self-pay typical; Medicare avg ~$120; FQHCs $20–$40 sliding scale'},
+  dental:      {range:'$200 – $350', note:'Exam + cleaning; crown $1,000–$1,500; FQHCs ~$20–$80 sliding scale'},
+  pharmacy:    {range:'Varies widely', note:'Use GoodRx or Cost Plus Drugs for generics — may save 80%+'},
+  physicalExam:{range:'$100 – $200', note:'Medicare covers annual wellness visit free; occ-med physicals $100–$200'},
+  faamedical:  {range:'$75 – $250', note:'Class 3 (private pilot) ~$75–$150; Class 1 (ATP) ~$150–$250'},
+  stressTest:  {range:'$350 – $800', note:'Exercise stress test; echo stress test $800–$1,500; Medicare avg ~$350'},
+  mammogram:   {range:'$100 – $300', note:'Medicare covers annual screening free; ACS & CDC free programs available'},
+  dotExam:     {range:'$75 – $150', note:'FMCSA certified examiner required; Concentra/CareNow ~$75–$100'},
+  vaccinations:{range:'$0 – $300',  note:'Flu/COVID often free; travel vaccines $100–$300; see VaccineFinder.org'},
+};
+const PF_ZOCDOC_SPEC: Record<string,string> = {
+  urgentCare:'Urgent Care', dental:'Dentist', pharmacy:'General Practice',
+  physicalExam:'General Practice', faamedical:'Internal Medicine',
+  stressTest:'Cardiologist', mammogram:'OB-GYN',
+  dotExam:'Internal Medicine', vaccinations:'General Practice',
+};
+const PF_SESAME_SPEC: Record<string,string> = {
+  urgentCare:'urgent-care', dental:'dentist', pharmacy:'primary-care',
+  physicalExam:'physical-exam', faamedical:'primary-care',
+  stressTest:'cardiology', mammogram:'mammogram',
+  dotExam:'dot-physical-exam', vaccinations:'primary-care',
+};
+const PF_MDSAVE_SLUG: Record<string,string> = {
+  urgentCare:'urgent-care-visit', dental:'dental-exam-and-cleaning',
+  pharmacy:'', physicalExam:'annual-physical-exam',
+  faamedical:'faa-medical-exam', stressTest:'stress-test',
+  mammogram:'mammogram', dotExam:'dot-physical-exam', vaccinations:'',
+};
+const PF_NEWCHOICE_SLUG: Record<string,string> = {
+  urgentCare:'urgent-care', dental:'dental', pharmacy:'',
+  physicalExam:'physical-exam', faamedical:'', stressTest:'stress-test',
+  mammogram:'mammogram', dotExam:'', vaccinations:'',
+};
+function pfDeepLinks(city:string, state:string, svc:string) {
+  const loc = encodeURIComponent(`${city}${state?', '+state:''}`);
+  const links:Array<{name:string;url:string;tag:string;desc:string}> = [];
+  const zSpec = PF_ZOCDOC_SPEC[svc];
+  if (zSpec) links.push({name:'ZocDoc', tag:'BOOK ONLINE',
+    desc:'Book in-network appointments & compare accepted insurance',
+    url:`https://www.zocdoc.com/search?address=${loc}&dr_specialty=${encodeURIComponent(zSpec)}`});
+  const mSlug = PF_MDSAVE_SLUG[svc];
+  if (mSlug) links.push({name:'MDsave', tag:'PRE-PAY PRICE',
+    desc:'Pre-purchase procedures at listed prices — up to 60% off',
+    url:`https://www.mdsave.com/procedures/${mSlug}`});
+  const sSpec = PF_SESAME_SPEC[svc];
+  if (sSpec) links.push({name:'Sesame Care', tag:'CASH PAY',
+    desc:'Direct-pay appointments with upfront transparent pricing',
+    url:`https://sesamecare.com/search?specialty=${sSpec}&location=${loc}`});
+  const ncSlug = PF_NEWCHOICE_SLUG[svc];
+  if (ncSlug) links.push({name:'New Choice Health', tag:'COMPARE',
+    desc:'Side-by-side price comparison at nearby facilities',
+    url:`https://www.newchoicehealth.com/${ncSlug}?location=${loc}`});
+  links.push({name:'Healthcare Bluebook', tag:'FAIR PRICE',
+    desc:'Find the fair price for this service in your area',
+    url:'https://www.healthcarebluebook.com/'});
+  links.push({name:'FAIR Health Consumer', tag:'ESTIMATOR',
+    desc:'Estimate out-of-pocket costs by zip code and procedure',
+    url:'https://fairhealthconsumer.org/'});
+  return links;
+}
+const PF_NETWORKS: Record<string,Array<{name:string;desc:string;url:string;tag:string}>> = {
+  urgentCare:[
+    {name:'Sesame Care',desc:'Transparent cash-pay urgent care. Prices listed upfront.',url:'https://sesamecare.com/urgent-care',tag:'CASH PAY'},
+    {name:'GoodRx Care',desc:'Online urgent care with upfront pricing, starting at $20.',url:'https://www.goodrx.com/care/urgent-care',tag:'ONLINE'},
+    {name:'MinuteClinic (CVS)',desc:'Walk-in urgent care — prices posted online before your visit.',url:'https://www.cvs.com/minuteclinic/visit-types-and-costs',tag:'TRANSPARENT'},
+    {name:'Mira Health',desc:'Flat-fee urgent care membership — $45/mo includes visits & labs.',url:'https://www.talkmira.com/',tag:'FLAT FEE'},
+    {name:'MDsave',desc:'Prepay for urgent care at listed prices and save up to 60%.',url:'https://www.mdsave.com/',tag:'PREPAY'},
+    {name:'Solv Health',desc:'Book urgent care online — many locations list wait times and prices.',url:'https://www.solvhealth.com/',tag:'BOOKING'},
+  ],
+  dental:[
+    {name:'Affordable Care',desc:'600+ dental practices with transparent fee schedules.',url:'https://www.affordablecare.com/',tag:'FEE SCHEDULE'},
+    {name:'1-800-Dentist',desc:'Find local dentists and compare prices in your area.',url:'https://www.1800dentist.com/',tag:'COMPARE'},
+    {name:'Open Care',desc:'Compares dental practices by price, insurance, and location.',url:'https://www.opencare.com/',tag:'COMPARE'},
+    {name:'Dental Plans',desc:'Discount dental plans with listed savings on procedures.',url:'https://www.dentalplans.com/',tag:'DISCOUNT'},
+    {name:'CostHelper Health',desc:'Real user-reported dental costs with ranges for common procedures.',url:'https://health.costhelper.com/dentist.html',tag:'COST GUIDE'},
+  ],
+  pharmacy:[
+    {name:'GoodRx',desc:'Compare prescription prices at pharmacies near you.',url:'https://www.goodrx.com/',tag:'FREE COUPONS'},
+    {name:'RxSaver',desc:'Compare pharmacy prices and print discount coupons.',url:'https://www.rxsaver.com/',tag:'COMPARE'},
+    {name:'Mark Cuban Cost Plus Drugs',desc:'Transparent drug pricing — 1,000+ medications at cost + 15%.',url:'https://costplusdrugs.com/',tag:'COST + 15%'},
+    {name:'Blink Health',desc:'Prepay for prescriptions online and pick up at local pharmacies.',url:'https://www.blinkhealth.com/',tag:'PREPAY'},
+  ],
+  physicalExam:[
+    {name:'Sesame Care – Physical Exams',desc:'Book a physical exam with upfront transparent pricing.',url:'https://sesamecare.com/physical-exam',tag:'CASH PAY'},
+    {name:'Concentra',desc:'Occupational health physicals with pricing available by location.',url:'https://www.concentra.com/',tag:'OCC HEALTH'},
+    {name:'MinuteClinic – Annual Physical',desc:'CVS walk-in physical exams with published visit costs.',url:'https://www.cvs.com/minuteclinic/services/preventive-care/physical-exams',tag:'WALK-IN'},
+    {name:'FAIR Health Consumer',desc:'Look up fair prices for physical exam codes in your zip code.',url:'https://fairhealthconsumer.org/',tag:'PRICE GUIDE'},
+  ],
+  faamedical:[
+    {name:'FAA AME Locator',desc:'Official FAA tool to find certified Aviation Medical Examiners near you.',url:'https://designee.faa.gov/designeeLocator',tag:'OFFICIAL FAA'},
+    {name:'AOPA Medical Certification',desc:'AOPA guide to FAA medical exams with typical cost ranges.',url:'https://www.aopa.org/go-fly/medical-resources/a-guide-to-faa-medical-certification',tag:'COST GUIDE'},
+    {name:'AeroMD',desc:'Specialized FAA medical exam service with upfront online booking.',url:'https://aeromd.com/',tag:'SPECIALIST'},
+    {name:'MDsave – FAA Medical',desc:'Find and pre-purchase FAA exam packages where available.',url:'https://www.mdsave.com/',tag:'PREPAY'},
+  ],
+  stressTest:[
+    {name:'MDsave – Stress Test',desc:'Pre-purchase treadmill stress test at listed prices, up to 60% off.',url:'https://www.mdsave.com/procedures/stress-test',tag:'PREPAY'},
+    {name:'Healthcare Bluebook',desc:'Find fair prices for exercise stress tests in your area.',url:'https://www.healthcarebluebook.com/',tag:'FAIR PRICE'},
+    {name:'New Choice Health',desc:'Compare stress test prices at facilities near you.',url:'https://www.newchoicehealth.com/',tag:'COMPARE'},
+    {name:'Sesame Care – Cardiology',desc:'Book cardiology consultations with upfront transparent pricing.',url:'https://sesamecare.com/',tag:'CASH PAY'},
+  ],
+  mammogram:[
+    {name:'MDsave – Mammogram',desc:'Pre-purchase screening mammograms at listed prices.',url:'https://www.mdsave.com/procedures/mammogram',tag:'PREPAY'},
+    {name:'New Choice Health – Mammogram',desc:'Compare mammogram prices at imaging centers near you.',url:'https://www.newchoicehealth.com/mammogram',tag:'COMPARE'},
+    {name:'Susan G. Komen – Free Screening',desc:'Connects uninsured women to free or low-cost mammograms.',url:'https://www.komen.org/breast-health/screening/mammograms/free-low-cost-mammograms/',tag:'FREE/LOW COST'},
+    {name:'CDC NBCCEDP',desc:'National Breast & Cervical Cancer Early Detection — free mammograms for qualifying women.',url:'https://www.cdc.gov/cancer/nbccedp/',tag:'FREE PROGRAM'},
+  ],
+  dotExam:[
+    {name:'Concentra – DOT Physicals',desc:'DOT physical exams at 500+ locations. Prices typically $75–$150.',url:'https://www.concentra.com/occupational-health/dot-physicals/',tag:'CHAIN PRICING'},
+    {name:'CareNow – DOT Physicals',desc:'Urgent care chain offering DOT exams with online check-in.',url:'https://www.carenow.com/services/dot-physical/',tag:'WALK-IN'},
+    {name:'FMCSA Medical Examiner Locator',desc:'Official FMCSA tool to find certified DOT medical examiners near you.',url:'https://ai.fmcsa.dot.gov/mcs150/commonMESearchForm.aspx',tag:'OFFICIAL FMCSA'},
+    {name:'OHS Health',desc:'Occupational health clinics specializing in DOT exams with listed fees.',url:'https://ohshealth.com/',tag:'TRANSPARENT'},
+  ],
+  vaccinations:[
+    {name:'VaccineFinder (CDC)',desc:'Official CDC tool to find COVID, flu, and other vaccines near you.',url:'https://vaccinefinder.org/',tag:'FREE / CDC'},
+    {name:'CVS Pharmacy – Vaccines',desc:'Walk-in vaccinations with prices listed online.',url:'https://www.cvs.com/immunizations/in-store-immunizations',tag:'PRICE LIST'},
+    {name:'Walgreens – Vaccines',desc:'Walk-in vaccine clinic with published vaccine prices.',url:'https://www.walgreens.com/topic/pharmacy/walgreens-immunization-services.jsp',tag:'PRICE LIST'},
+    {name:'Vaccines.gov',desc:'Find flu shots, travel vaccines, and immunization clinics near you.',url:'https://www.vaccines.gov/',tag:'LOCATOR'},
+  ],
+};
+const PF_RESOURCES = [
+  {name:'Healthcare Bluebook',desc:'Fair price range for medical procedures in your area.',url:'https://www.healthcarebluebook.com/',tag:'FAIR PRICE'},
+  {name:'FAIR Health Consumer',desc:'Estimate out-of-pocket costs by procedure and zip code.',url:'https://fairhealthconsumer.org/',tag:'ESTIMATOR'},
+  {name:'ClearHealthCosts',desc:'Crowdsourced prices for medical procedures. Find what others paid.',url:'https://clearhealthcosts.com/',tag:'CROWDSOURCED'},
+  {name:'New Choice Health',desc:'Compare procedure prices at facilities near you.',url:'https://www.newchoicehealth.com/',tag:'COMPARE'},
 ];
 
 // ── Utils ─────────────────────────────────────────────────────────────────────
@@ -220,6 +371,9 @@ function geocodeQuery(q:string):{lat:number;lng:number;display:string;city:strin
 function buildStatePopup(postal:string):string {
   const d=SD[postal];
   if(!d) return `<div class="pi"><div class="pt">${postal}</div></div>`;
+  const pop=STATE_POP[postal];
+  const tier=STATE_COST_TIER[postal]||'Average';
+  const costIdx=STATE_COST_INDEX[postal]??1.0;
   const metrics=ALL_METRICS;
   const rows=metrics.map(m=>{
     const v=getVal(d,m);
@@ -230,6 +384,20 @@ function buildStatePopup(postal:string):string {
       <span class="pcs" style="color:${DCOL[v]}">${DLBL[v]}</span>
     </div>`;
   }).join('');
+  const popBlock=pop?`
+    <div class="pdiv"></div>
+    <div class="pcl">POPULATION (2020 CENSUS)</div>
+    <div class="pg">
+      <div><div class="psl">Population</div><div class="psv">${pop.pop.toLocaleString()}</div></div>
+      <div><div class="psl">Density</div><div class="psv">${pop.density>=1000?(pop.density/1000).toFixed(1)+'k':Math.round(pop.density)}/mi²</div></div>
+      <div><div class="psl">Land Area</div><div class="psv">${pop.area.toLocaleString()} mi²</div></div>
+    </div>
+    <div class="pdiv"></div>
+    <div class="pcl">HEALTHCARE COST INDEX</div>
+    <div class="pg">
+      <div><div class="psl">Cost Tier</div><div class="psv" style="color:${tierColor(tier)}">${tier}</div></div>
+      <div><div class="psl">vs. National</div><div class="psv" style="color:${costIdx>1.05?'#f97316':costIdx<0.95?'#22c55e':'#67e8f9'}">${costIdx>=1?'+':''}${((costIdx-1)*100).toFixed(0)}%</div></div>
+    </div>`:'';
   return `<div class="pi">
     <div class="pt">${d.n}</div>
     <div class="ps">${postal} · ${d.rur}% Rural</div>
@@ -237,6 +405,7 @@ function buildStatePopup(postal:string):string {
       <div><div class="psl">Providers/100k</div><div class="psv">${d.prov}</div></div>
       <div><div class="psl">Avg Wait</div><div class="psv">${d.wait}d</div></div>
     </div>
+    ${popBlock}
     <div class="pdiv"></div>
     <div class="pcl">SERVICE METRICS</div>
     ${rows}
@@ -408,13 +577,32 @@ export default function App() {
   const liveGrpRef = useRef<L.LayerGroup|null>(null);
   const liveCircleRef = useRef<L.Circle|null>(null);
   const livePinRef = useRef<L.Marker|null>(null);
+  const popDensityLayerRef = useRef<L.LayerGroup|null>(null);
+  const clinicLayerRef = useRef<L.LayerGroup|null>(null);
+  const rawStateFeaturesRef = useRef<any[]>([]);
+  const clinicFileInputRef = useRef<HTMLInputElement>(null);
 
   // UI State
   const [metric, setMetric] = useState('primaryCare');
   const [showLabels, setShowLabels] = useState(true);
   const [showTZ, setShowTZ] = useState(false);
   const [showRadius, setShowRadius] = useState(true);
+  const [showPopDensity, setShowPopDensity] = useState(false);
   const [filterDiff, setFilterDiff] = useState<number|null>(null);
+  // Clinic upload
+  const [uploadedClinics, setUploadedClinics] = useState<Array<{
+    name:string; address:string; city:string; state:string; zip:string;
+    phone:string; notes:string; lat:number|null; lng:number|null; color:string;
+  }>>(() => { try { return JSON.parse(localStorage.getItem('uploaded_clinics')||'[]'); } catch { return []; } });
+  const [showUploadedClinics, setShowUploadedClinics] = useState(true);
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState('');
+  const [uploadColor, setUploadColor] = useState('#f472b6');
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  // Area prices
+  const [showAreaPrices, setShowAreaPrices] = useState(false);
+  const [apState, setApState] = useState('');
+  const [apProcedure, setApProcedure] = useState('urgentCareL3');
   const [view, setView] = useState<'us'|'east'|'central'|'west'>('us');
   const [rpOpen, setRpOpen] = useState(true);
   const [liveOpen, setLiveOpen] = useState(false);
@@ -456,35 +644,102 @@ export default function App() {
   const [pfServiceType, setPfServiceType] = useState<'urgentCare'|'dental'|'pharmacy'|'physicalExam'|'faamedical'|'stressTest'|'mammogram'|'dotExam'|'vaccinations'>('urgentCare');
   const [pfLoading, setPfLoading] = useState(false);
   const [pfClinics, setPfClinics] = useState<Array<{name:string;address:string;phone:string;taxonomy:string;isFqhc:boolean;npiUrl:string;searchUrl:string}>>([]);
-  const [pfNetworks, setPfNetworks] = useState<Array<{name:string;desc:string;url:string;tag:string}>>([]);
-  const [pfResources, setPfResources] = useState<Array<{name:string;desc:string;url:string;tag:string}>>([]);
   const [pfError, setPfError] = useState('');
   const [pfLocation, setPfLocation] = useState('');
   const [pfDone, setPfDone] = useState(false);
+  const [pfTab, setPfTab] = useState<'providers'|'compare'|'areaPrices'|'report'>('providers');
+  const [pfReports, setPfReports] = useState<Array<{provider:string;price:string;service:string;city:string;date:string}>>(() => {
+    try { return JSON.parse(localStorage.getItem('occumed_price_reports') || '[]'); } catch { return []; }
+  });
+  const [pfReportProvider, setPfReportProvider] = useState('');
+  const [pfReportPrice, setPfReportPrice] = useState('');
+  const [pfShareCopied, setPfShareCopied] = useState(false);
+
+  async function pfSearchNpi(city: string, state: string, taxonomyDesc: string) {
+    const params = new URLSearchParams({
+      version: '2.1', city: city.trim(),
+      state: state.trim().toUpperCase(),
+      taxonomy_description: taxonomyDesc,
+      enumeration_type: 'NPI-2', limit: '15',
+    });
+    const resp = await fetch(`https://npiregistry.cms.hhs.gov/api/?${params}`, {signal: AbortSignal.timeout(8000)});
+    if (!resp.ok) throw new Error(`NPI ${resp.status}`);
+    const data = await resp.json() as {results?: any[]};
+    return data.results || [];
+  }
 
   async function runPriceSearch() {
-    if(!pfCity.trim()) return;
+    if (!pfCity.trim()) return;
     setPfLoading(true);
     setPfError('');
     setPfClinics([]);
-    setPfNetworks([]);
-    setPfResources([]);
     setPfDone(false);
     try {
-      const params = new URLSearchParams({ city: pfCity.trim(), state: pfState.trim(), serviceType: pfServiceType });
-      const resp = await fetch(`/api/price-finder?${params}`);
-      if(!resp.ok) throw new Error(`Server error ${resp.status}`);
-      const data = await resp.json();
-      setPfClinics(data.clinics || []);
-      setPfNetworks(data.networks || []);
-      setPfResources(data.pricingResources || []);
-      setPfLocation(data.location || '');
+      const taxonomies = PF_TAXONOMY_MAP[pfServiceType] || ['Family Medicine'];
+      const searches = [
+        ...taxonomies.slice(0, 2).map(t => pfSearchNpi(pfCity, pfState, t).catch((): any[] => [])),
+        pfSearchNpi(pfCity, pfState, 'Federally Qualified Health Center').catch((): any[] => []),
+      ];
+      const allResults = await Promise.all(searches);
+      const seen = new Set<string>();
+      const clinics: typeof pfClinics = [];
+      for (const batch of allResults) {
+        for (const r of batch) {
+          const nm = r.basic?.organization_name || `${r.basic?.first_name||''} ${r.basic?.last_name||''}`.trim();
+          if (!nm || seen.has(nm.toLowerCase())) continue;
+          seen.add(nm.toLowerCase());
+          const addr = r.addresses?.[0];
+          const address = addr ? `${addr.address_1}, ${addr.city}, ${addr.state} ${(addr.postal_code||'').slice(0,5)}` : '';
+          const taxonomy = r.taxonomies?.find((t:any)=>t.primary)?.desc || r.taxonomies?.[0]?.desc || '';
+          const isFqhc = taxonomy.toLowerCase().includes('federally qualified');
+          clinics.push({
+            name: nm,
+            address,
+            phone: addr?.telephone_number || '',
+            taxonomy,
+            isFqhc,
+            npiUrl: `https://npiregistry.cms.hhs.gov/provider-view/${r.basic?.npi||''}`,
+            searchUrl: `https://www.google.com/search?q=${encodeURIComponent(nm+' '+(addr?.city||'')+' '+(addr?.state||'')+' price cost')}`,
+          });
+        }
+      }
+      clinics.sort((a, b) => (b.isFqhc ? 1 : 0) - (a.isFqhc ? 1 : 0));
+      setPfClinics(clinics.slice(0, 20));
+      setPfLocation(`${pfCity.trim()}${pfState.trim() ? ', '+pfState.trim().toUpperCase() : ''}`);
+      setPfTab('providers');
       setPfDone(true);
-    } catch(e:any) {
+    } catch (e: any) {
       setPfError(e.message || 'Search failed. Please try again.');
     } finally {
       setPfLoading(false);
     }
+  }
+
+  function pfAddReport() {
+    if (!pfReportProvider.trim() || !pfReportPrice.trim()) return;
+    const report = {
+      provider: pfReportProvider.trim(),
+      price: pfReportPrice.trim(),
+      service: PF_SERVICE_LABELS[pfServiceType] || pfServiceType,
+      city: pfLocation || pfCity,
+      date: new Date().toLocaleDateString(),
+    };
+    const next = [report, ...pfReports].slice(0, 50);
+    setPfReports(next);
+    localStorage.setItem('occumed_price_reports', JSON.stringify(next));
+    setPfReportProvider('');
+    setPfReportPrice('');
+  }
+
+  function pfShareReports() {
+    try {
+      const encoded = btoa(JSON.stringify(pfReports));
+      const url = `${window.location.origin}${window.location.pathname}?pf_reports=${encoded}`;
+      navigator.clipboard.writeText(url).then(() => {
+        setPfShareCopied(true);
+        setTimeout(() => setPfShareCopied(false), 2500);
+      });
+    } catch {}
   }
 
   // Stats
@@ -493,6 +748,26 @@ export default function App() {
   const criticalCount = LOCS.filter(l=>getVal(l,metric)>=4).length;
 
   const [mapReady, setMapReady] = useState(false);
+
+  // ── Import shared price reports from URL on first load ────────────────────
+  useEffect(()=>{
+    const params = new URLSearchParams(window.location.search);
+    const encoded = params.get('pf_reports');
+    if (!encoded) return;
+    try {
+      const imported = JSON.parse(atob(encoded));
+      if (!Array.isArray(imported)) return;
+      setPfReports(prev => {
+        const merged = [...imported, ...prev];
+        const unique = merged.filter((r, i, arr) =>
+          arr.findIndex(x => x.provider===r.provider && x.price===r.price && x.date===r.date) === i
+        ).slice(0, 50);
+        localStorage.setItem('occumed_price_reports', JSON.stringify(unique));
+        return unique;
+      });
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
 
   // ── Init Map ───────────────────────────────────────────────────────────────
   useEffect(()=>{
@@ -580,6 +855,7 @@ export default function App() {
           }
         }).addTo(map);
         stateGeoRef.current = stateGeo;
+        rawStateFeaturesRef.current = gj.features;
         buildStateLabels(map, stateGeo);
         break;
       } catch(e) { console.warn('GeoJSON load error',e); }
@@ -617,6 +893,140 @@ export default function App() {
     labelLayerRef.current = labelGrp;
     if(showLabelsRef.current) labelGrp.addTo(map);
     return labelGrp;
+  }
+
+  // ── Population density overlay ─────────────────────────────────────────────
+  const showPopDensityRef = useRef(showPopDensity);
+  useEffect(()=>{ showPopDensityRef.current = showPopDensity; },[showPopDensity]);
+  useEffect(()=>{
+    const map = mapRef.current;
+    if (!map) return;
+    if (!showPopDensity) {
+      if (popDensityLayerRef.current) { map.removeLayer(popDensityLayerRef.current); popDensityLayerRef.current = null; }
+      return;
+    }
+    const features = rawStateFeaturesRef.current;
+    if (!features.length) return;
+    const layers: L.Layer[] = [];
+    features.forEach((f: any) => {
+      const postal = f.properties?.postal;
+      const pop = STATE_POP[postal];
+      if (!pop) return;
+      const color = densityColor(pop.density);
+      const lyr = L.geoJSON(f, {
+        style: { fillColor: color, fillOpacity: 0.55, weight: 1, color: color, opacity: 0.6 },
+      });
+      lyr.bindTooltip(()=>{
+        return `<div style="padding:5px 8px;font-family:'IBM Plex Mono',monospace;font-size:10px">
+          <span style="font-weight:700;color:#eef4ff">${postal}</span>
+          <span style="color:${color};margin-left:6px;font-weight:700">${densityLabel(pop.density)}</span><br/>
+          <span style="color:#67e8f9">${Math.round(pop.density).toLocaleString()}/mi²</span>
+          <span style="color:#3d5478;margin-left:6px">${pop.pop.toLocaleString()}</span>
+        </div>`;
+      },{sticky:true,direction:'top'});
+      layers.push(lyr);
+    });
+    const grp = L.layerGroup(layers).addTo(map);
+    popDensityLayerRef.current = grp;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[showPopDensity]);
+
+  // ── Uploaded clinic pins ───────────────────────────────────────────────────
+  useEffect(()=>{
+    const map = mapRef.current;
+    if (!map) return;
+    if (clinicLayerRef.current) { map.removeLayer(clinicLayerRef.current); clinicLayerRef.current = null; }
+    if (!showUploadedClinics || uploadedClinics.length===0) return;
+    const grp = L.layerGroup();
+    uploadedClinics.forEach((c,i)=>{
+      if (c.lat===null || c.lng===null) return;
+      const col = c.color || uploadColor;
+      const mk = L.marker([c.lat, c.lng], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="width:18px;height:18px;border-radius:50%;background:${col};box-shadow:0 0 10px ${col},0 0 20px ${col}66,0 0 4px rgba(0,0,0,0.6);animation:clinic-pulse 2s ease-in-out ${(i*0.15).toFixed(1)}s infinite;cursor:pointer;"></div>`,
+          iconSize: [18,18], iconAnchor: [9,9],
+        }),
+        zIndexOffset: 2000,
+      });
+      mk.bindPopup(`<div style="font-family:Inter,sans-serif;padding:10px 12px;min-width:170px;">
+        <div style="font-size:12px;font-weight:700;color:#e2f0ff;margin-bottom:4px">${c.name}</div>
+        ${c.address?`<div style="font-size:9.5px;color:#4a6888">📍 ${c.address}${c.city?', '+c.city:''}${c.state?' '+c.state:''}${c.zip?' '+c.zip:''}</div>`:''}
+        ${c.phone?`<div style="font-size:9.5px;color:#67e8f9;margin-top:2px">📞 <a href="tel:${c.phone}" style="color:#67e8f9;text-decoration:none">${c.phone}</a></div>`:''}
+        ${c.notes?`<div style="font-size:9px;color:#3d5478;margin-top:3px">${c.notes}</div>`:''}
+        <div style="margin-top:6px;display:flex;gap:5px">
+          <div style="width:8px;height:8px;border-radius:50%;background:${col};box-shadow:0 0 6px ${col};flex-shrink:0;margin-top:2px"></div>
+          <span style="font-size:8.5px;color:#3d5478;font-family:'IBM Plex Mono',monospace">UPLOADED CLINIC</span>
+        </div>
+      </div>`);
+      grp.addLayer(mk);
+    });
+    grp.addTo(map);
+    clinicLayerRef.current = grp;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[uploadedClinics, showUploadedClinics, uploadColor]);
+
+  async function handleClinicUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setUploadLoading(true);
+    setUploadProgress('Parsing file…');
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows: any[] = XLSX.utils.sheet_to_json(ws, {defval:''});
+      if (!rows.length) { setUploadProgress('No data found in file.'); setUploadLoading(false); return; }
+
+      // Flexible column detection (case-insensitive)
+      function col(row:any, ...keys:string[]):string {
+        for (const k of keys) {
+          const found = Object.keys(row).find(r=>r.toLowerCase().replace(/[\s_-]/g,'')===k.toLowerCase().replace(/[\s_-]/g,''));
+          if (found && row[found]!=='' && row[found]!==undefined) return String(row[found]).trim();
+        }
+        return '';
+      }
+
+      const parsed = rows.map(r=>({
+        name:    col(r,'name','providername','clinicname','practicename','facility') || 'Unnamed',
+        address: col(r,'address','streetaddress','street','addr'),
+        city:    col(r,'city','town'),
+        state:   col(r,'state','st').toUpperCase().slice(0,2),
+        zip:     col(r,'zip','zipcode','postalcode','postal'),
+        phone:   col(r,'phone','telephone','tel'),
+        notes:   col(r,'notes','note','description','desc'),
+        lat:     parseFloat(col(r,'lat','latitude')) || null,
+        lng:     parseFloat(col(r,'lng','lon','long','longitude')) || null,
+        color:   uploadColor,
+      }));
+
+      // Geocode rows missing coordinates
+      const toGeocode = parsed.filter(p=>p.lat===null||isNaN(p.lat as any));
+      let geocoded = 0;
+      for (const p of toGeocode) {
+        const q = [p.address, p.city, p.state, p.zip].filter(Boolean).join(', ');
+        if (!q) continue;
+        setUploadProgress(`Geocoding ${++geocoded}/${toGeocode.length}: ${p.name}`);
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`,{headers:{'Accept-Language':'en'}});
+          const data = await res.json();
+          if (data?.[0]) { p.lat = parseFloat(data[0].lat); p.lng = parseFloat(data[0].lon); }
+        } catch {}
+        await new Promise(r=>setTimeout(r, 1100)); // Nominatim rate limit: 1 req/sec
+      }
+
+      const final = parsed.filter(p=>p.lat!==null&&!isNaN(p.lat as any));
+      const skipped = parsed.length - final.length;
+      const merged = [...final, ...uploadedClinics].slice(0, 500);
+      setUploadedClinics(merged);
+      localStorage.setItem('uploaded_clinics', JSON.stringify(merged));
+      setUploadProgress(`✓ Added ${final.length} clinics${skipped>0?` (${skipped} skipped — no address/coordinates)`:''}. Toggle with the MY CLINICS button.`);
+    } catch(err:any) {
+      setUploadProgress(`Error: ${err.message||'Could not parse file'}`);
+    } finally {
+      setUploadLoading(false);
+    }
   }
 
   const showLabelsRef = useRef(showLabels);
@@ -1089,6 +1499,9 @@ out center tags;`;
           <button className={`hdr-btn${liveOpen?' active':''}`} onClick={()=>setLiveOpen(o=>!o)}>📡 LIVE FINDER</button>
           <button className="hdr-btn" onClick={()=>setShowDir(true)}>📁 DIRECTORIES</button>
           <button className={`hdr-btn${showPriceFinder?' active':''}`} style={{color:'#34d399'}} onClick={()=>setShowPriceFinder(o=>!o)}>💲 PRICE FINDER</button>
+          <button className="hdr-btn" style={{color:'#f472b6'}} onClick={()=>setShowUploadModal(true)}>
+            📤 MY CLINICS{uploadedClinics.length>0&&<span className="badge" style={{background:'rgba(244,114,182,0.25)',color:'#f472b6'}}>{uploadedClinics.length}</span>}
+          </button>
           <button className={`hdr-btn green`} onClick={()=>setShowCompare(true)}>
             ⊞ COMPARE{pinnedCities.length>0&&<span className="badge">{pinnedCities.length}</span>}
           </button>
@@ -1128,9 +1541,17 @@ out center tags;`;
               <label className="tog-switch"><input type="checkbox" checked={showTZ} onChange={e=>setShowTZ(e.target.checked)}/><span className="tog-slider"/></label>
             </div>
             <div className="tog-row">
+              <span className="tog-lbl">Population density</span>
+              <label className="tog-switch"><input type="checkbox" checked={showPopDensity} onChange={e=>setShowPopDensity(e.target.checked)}/><span className="tog-slider"/></label>
+            </div>
+            <div className="tog-row">
               <span className="tog-lbl">70mi radius ring</span>
               <label className="tog-switch"><input type="checkbox" checked={showRadius} onChange={e=>setShowRadius(e.target.checked)}/><span className="tog-slider"/></label>
             </div>
+            {uploadedClinics.length>0&&<div className="tog-row">
+              <span className="tog-lbl" style={{color:'#f472b6'}}>My clinics ({uploadedClinics.length})</span>
+              <label className="tog-switch"><input type="checkbox" checked={showUploadedClinics} onChange={e=>setShowUploadedClinics(e.target.checked)}/><span className="tog-slider"/></label>
+            </div>}
           </div>
           <div className="sb-divider"/>
           <div className="sb-section">
@@ -1313,47 +1734,33 @@ out center tags;`;
       {/* ── PRICE FINDER MODAL ── */}
       {showPriceFinder && (
         <div className="modal-backdrop open" onClick={()=>setShowPriceFinder(false)}>
-          <div className="modal-box" style={{width:720,maxHeight:'85vh',display:'flex',flexDirection:'column'}} onClick={e=>e.stopPropagation()}>
+          <div className="modal-box" style={{width:760,maxHeight:'88vh',display:'flex',flexDirection:'column'}} onClick={e=>e.stopPropagation()}>
             <div className="modal-header">
-              <span className="modal-title" style={{color:'#34d399'}}>💲 CLINIC PRICE FINDER</span>
+              <span className="modal-title" style={{color:'#34d399'}}>💲 PROVIDER PRICE FINDER</span>
               <button className="modal-close" onClick={()=>setShowPriceFinder(false)}>✕</button>
             </div>
             <div className="modal-body" style={{flex:1,overflowY:'auto',padding:'16px 20px'}}>
-              <p style={{fontSize:11,color:'#5d7a9e',marginBottom:14,lineHeight:1.5}}>
-                Searches the web for urgent care and dental clinics that publish transparent pricing online — no insurance required.
-              </p>
+
               {/* Search form */}
-              <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
+              <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
                 <div style={{flex:2,minWidth:140}}>
                   <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:4}}>CITY / ZIP</div>
-                  <input
-                    className="rp-input"
-                    style={{width:'100%',boxSizing:'border-box'}}
-                    placeholder="e.g. Birmingham"
-                    value={pfCity}
+                  <input className="rp-input" style={{width:'100%',boxSizing:'border-box'}}
+                    placeholder="e.g. Birmingham" value={pfCity}
                     onChange={e=>setPfCity(e.target.value)}
-                    onKeyDown={e=>e.key==='Enter'&&runPriceSearch()}
-                  />
+                    onKeyDown={e=>e.key==='Enter'&&runPriceSearch()} />
                 </div>
-                <div style={{flex:1,minWidth:80}}>
+                <div style={{flex:1,minWidth:70}}>
                   <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:4}}>STATE</div>
-                  <input
-                    className="rp-input"
-                    style={{width:'100%',boxSizing:'border-box'}}
-                    placeholder="e.g. AL"
-                    value={pfState}
+                  <input className="rp-input" style={{width:'100%',boxSizing:'border-box'}}
+                    placeholder="AL" value={pfState}
                     onChange={e=>setPfState(e.target.value.toUpperCase().slice(0,2))}
-                    onKeyDown={e=>e.key==='Enter'&&runPriceSearch()}
-                  />
+                    onKeyDown={e=>e.key==='Enter'&&runPriceSearch()} />
                 </div>
-                <div style={{flex:2,minWidth:140}}>
+                <div style={{flex:2,minWidth:160}}>
                   <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:4}}>SERVICE TYPE</div>
-                  <select
-                    className="rp-select"
-                    style={{width:'100%',boxSizing:'border-box'}}
-                    value={pfServiceType}
-                    onChange={e=>setPfServiceType(e.target.value as any)}
-                  >
+                  <select className="rp-select" style={{width:'100%',boxSizing:'border-box'}}
+                    value={pfServiceType} onChange={e=>setPfServiceType(e.target.value as any)}>
                     <option value="urgentCare">Urgent Care</option>
                     <option value="dental">Dental</option>
                     <option value="pharmacy">Pharmacy</option>
@@ -1366,23 +1773,45 @@ out center tags;`;
                   </select>
                 </div>
                 <div style={{display:'flex',alignItems:'flex-end'}}>
-                  <button
-                    className="rp-assess-btn"
-                    style={{padding:'8px 18px',minWidth:90,opacity:pfLoading?0.6:1}}
-                    onClick={runPriceSearch}
-                    disabled={pfLoading||!pfCity.trim()}
-                  >
+                  <button className="rp-assess-btn" style={{padding:'8px 18px',minWidth:90,opacity:pfLoading?0.6:1}}
+                    onClick={runPriceSearch} disabled={pfLoading||!pfCity.trim()}>
                     {pfLoading ? '⏳ SEARCHING...' : '🔍 SEARCH'}
                   </button>
                 </div>
               </div>
 
+              {/* Reference price anchor */}
+              {PF_REF_PRICES[pfServiceType] && (
+                <div style={{background:'rgba(52,211,153,0.06)',border:'1px solid rgba(52,211,153,0.18)',borderRadius:6,padding:'8px 14px',marginBottom:12,display:'flex',gap:14,alignItems:'center',flexWrap:'wrap'}}>
+                  <div>
+                    <div style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",color:'#34d399',letterSpacing:'0.1em',marginBottom:2}}>TYPICAL PRICE RANGE</div>
+                    <div style={{fontSize:15,fontWeight:700,color:'#a7f3d0',fontFamily:"'IBM Plex Mono',monospace"}}>{PF_REF_PRICES[pfServiceType].range}</div>
+                  </div>
+                  <div style={{flex:1,fontSize:9,color:'#4a7a66',lineHeight:1.5}}>{PF_REF_PRICES[pfServiceType].note}</div>
+                </div>
+              )}
+
+              {/* Tab bar */}
+              <div style={{display:'flex',gap:0,marginBottom:14,borderBottom:'1px solid rgba(20,50,100,0.5)'}}>
+                {([['providers','📋 PROVIDERS','#67e8f9'],['compare','💰 COMPARE PRICES','#34d399'],['areaPrices','📊 AREA PRICES','#a78bfa'],['report','⭐ REPORT A PRICE','#fbbf24']] as const).map(([tab,label,col])=>(
+                  <button key={tab} onClick={()=>setPfTab(tab)} style={{
+                    padding:'7px 16px',background:'transparent',border:'none',
+                    borderBottom:`2px solid ${pfTab===tab?col:'transparent'}`,
+                    color:pfTab===tab?col:'#3d5478',
+                    fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,
+                    letterSpacing:'0.08em',cursor:'pointer',transition:'color 0.15s,border-color 0.15s',
+                  }}>
+                    {label}{tab==='report'&&pfReports.length>0?` (${pfReports.length})`:''}
+                  </button>
+                ))}
+              </div>
+
               {/* Loading */}
               {pfLoading && (
                 <div style={{textAlign:'center',padding:'30px 0',color:'#3d5478',fontSize:11}}>
-                  <div style={{fontSize:20,marginBottom:8,animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</div>
-                  <div>Scanning the web for clinics with published pricing...</div>
-                  <div style={{marginTop:4,fontSize:10,color:'#2a3f5e'}}>This may take 5–10 seconds</div>
+                  <div style={{fontSize:20,marginBottom:8}}>⏳</div>
+                  <div>Querying NPI Registry for licensed providers...</div>
+                  <div style={{marginTop:4,fontSize:10,color:'#2a3f5e'}}>Searching primary taxonomy + FQHCs in parallel</div>
                 </div>
               )}
 
@@ -1393,51 +1822,95 @@ out center tags;`;
                 </div>
               )}
 
-              {/* Results */}
-              {!pfLoading && pfDone && (
-                <>
-                  {/* Section: Local Clinics from NPI Registry */}
-                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
-                    LICENSED PROVIDERS NEAR <span style={{color:'#06b6d4'}}>{pfLocation.toUpperCase()}</span>
-                    <span style={{marginLeft:8,color:'#2a3f5e'}}>({pfClinics.length} found via NPI Registry)</span>
-                  </div>
-                  {pfClinics.length === 0 && (
-                    <div style={{fontSize:10,color:'#2a3f5e',marginBottom:12,padding:'8px 12px',background:'rgba(10,24,48,0.4)',borderRadius:6}}>
-                      No licensed providers found in the NPI Registry for this city. Try a nearby major city.
+              {/* ── PROVIDERS TAB ── */}
+              {!pfLoading && pfTab==='providers' && (
+                pfDone ? (
+                  <>
+                    <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
+                      LICENSED PROVIDERS NEAR <span style={{color:'#06b6d4'}}>{pfLocation.toUpperCase()}</span>
+                      <span style={{marginLeft:8,color:'#2a3f5e'}}>({pfClinics.length} found · NPI Registry)</span>
                     </div>
-                  )}
-                  <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:18}}>
-                    {pfClinics.map((c,i)=>(
-                      <div key={i} style={{
-                        background: c.isFqhc ? 'rgba(52,211,153,0.07)' : 'rgba(6,10,24,0.5)',
-                        border: c.isFqhc ? '1px solid rgba(52,211,153,0.25)' : '1px solid rgba(20,40,80,0.6)',
-                        borderRadius:6,padding:'9px 12px',
-                      }}>
-                        <div style={{display:'flex',alignItems:'flex-start',gap:8}}>
-                          {c.isFqhc && (
-                            <span style={{fontSize:7,fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,color:'#34d399',border:'1px solid rgba(52,211,153,0.4)',borderRadius:3,padding:'2px 5px',whiteSpace:'nowrap',marginTop:2,flexShrink:0}}>
-                              ✓ SLIDING SCALE FEE
-                            </span>
-                          )}
-                          <div style={{flex:1}}>
-                            <div style={{fontSize:11,fontWeight:600,color:'#eef4ff',marginBottom:2}}>{c.name}</div>
-                            {c.address && <div style={{fontSize:9,color:'#5d7a9e'}}>{c.address}</div>}
-                            {c.phone && <div style={{fontSize:9,color:'#3d8bcd',fontFamily:"'IBM Plex Mono',monospace",marginTop:1}}>{c.phone}</div>}
-                          </div>
-                          <div style={{display:'flex',gap:5,flexShrink:0}}>
-                            <a href={c.searchUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'3px 7px',background:'rgba(6,182,212,0.1)',border:'1px solid rgba(6,182,212,0.25)',borderRadius:3,color:'#06b6d4',textDecoration:'none'}}>FIND PRICING →</a>
+                    {pfClinics.length===0 && (
+                      <div style={{fontSize:10,color:'#2a3f5e',marginBottom:12,padding:'8px 12px',background:'rgba(10,24,48,0.4)',borderRadius:6}}>
+                        No licensed providers found for this city. Try a nearby major city, or use the <strong style={{color:'#34d399'}}>Compare Prices</strong> tab to book directly on ZocDoc, MDsave, or Sesame.
+                      </div>
+                    )}
+                    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                      {pfClinics.map((c,i)=>(
+                        <div key={i} style={{
+                          background:c.isFqhc?'rgba(52,211,153,0.07)':'rgba(6,10,24,0.5)',
+                          border:c.isFqhc?'1px solid rgba(52,211,153,0.25)':'1px solid rgba(20,40,80,0.6)',
+                          borderRadius:6,padding:'9px 12px',
+                        }}>
+                          <div style={{display:'flex',alignItems:'flex-start',gap:8}}>
+                            {c.isFqhc && (
+                              <span style={{fontSize:7,fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,color:'#34d399',border:'1px solid rgba(52,211,153,0.4)',borderRadius:3,padding:'2px 5px',whiteSpace:'nowrap',marginTop:2,flexShrink:0}}>
+                                ✓ SLIDING SCALE
+                              </span>
+                            )}
+                            <div style={{flex:1}}>
+                              <div style={{fontSize:11,fontWeight:600,color:'#eef4ff',marginBottom:1}}>{c.name}</div>
+                              <div style={{fontSize:8.5,color:'#4a5a7a',fontFamily:"'IBM Plex Mono',monospace",marginBottom:2}}>{c.taxonomy}</div>
+                              {c.address && <div style={{fontSize:9,color:'#5d7a9e'}}>📍 {c.address}</div>}
+                              {c.phone && <div style={{fontSize:9,color:'#3d8bcd',fontFamily:"'IBM Plex Mono',monospace",marginTop:1}}>
+                                📞 <a href={`tel:${c.phone}`} style={{color:'#67e8f9',textDecoration:'none'}}>{c.phone}</a>
+                              </div>}
+                            </div>
+                            <div style={{display:'flex',flexDirection:'column',gap:4,flexShrink:0}}>
+                              <a href={c.searchUrl} target="_blank" rel="noopener noreferrer"
+                                style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'3px 7px',background:'rgba(6,182,212,0.1)',border:'1px solid rgba(6,182,212,0.25)',borderRadius:3,color:'#06b6d4',textDecoration:'none',textAlign:'center'}}>
+                                FIND PRICE →
+                              </a>
+                              <button onClick={()=>{setPfReportProvider(c.name);setPfTab('report');}}
+                                style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'3px 7px',background:'rgba(251,191,36,0.08)',border:'1px solid rgba(251,191,36,0.2)',borderRadius:3,color:'#fbbf24',cursor:'pointer'}}>
+                                REPORT PRICE
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{textAlign:'center',padding:'24px 0',color:'#2a3f5e',fontSize:11,lineHeight:1.8}}>
+                    <div style={{fontSize:28,marginBottom:10}}>💲</div>
+                    <div style={{color:'#3d5478',marginBottom:6}}>Enter a city above to find:</div>
+                    <div style={{fontSize:10,color:'#2a3f5e'}}>
+                      • Licensed providers from the federal NPI Registry<br/>
+                      • FQHCs with income-based sliding scale fees<br/>
+                      • Clickable phone numbers and address lookup<br/>
+                      • One-click "Report Price" for any provider
+                    </div>
+                  </div>
+                )
+              )}
+
+              {/* ── COMPARE PRICES TAB ── */}
+              {!pfLoading && pfTab==='compare' && (
+                <>
+                  {/* Deep links: Book & compare */}
+                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
+                    BOOK & COMPARE{pfCity.trim()&&<> NEAR <span style={{color:'#06b6d4'}}>{(pfLocation||pfCity).toUpperCase()}{pfState?' · '+pfState.toUpperCase():''}</span></>}
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:18}}>
+                    {pfDeepLinks(pfCity||'your city', pfState, pfServiceType).map((lk,i)=>(
+                      <a key={i} href={lk.url} target="_blank" rel="noopener noreferrer" style={{
+                        background:'rgba(10,24,48,0.5)',border:'1px solid rgba(20,50,100,0.5)',
+                        borderRadius:6,padding:'10px 12px',textDecoration:'none',display:'block',
+                      }}>
+                        <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+                          <span style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,color:'#34d399',border:'1px solid rgba(52,211,153,0.3)',borderRadius:3,padding:'1px 5px'}}>{lk.tag}</span>
+                          <span style={{fontSize:10,fontWeight:700,color:'#c8ddf0'}}>{lk.name}</span>
+                        </div>
+                        <div style={{fontSize:9,color:'#4a6080',lineHeight:1.4}}>{lk.desc}</div>
+                      </a>
                     ))}
                   </div>
 
-                  {/* Section: Transparent-Pricing Networks */}
-                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
-                    TRANSPARENT-PRICING NETWORKS
-                  </div>
+                  {/* Transparent pricing networks */}
+                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>TRANSPARENT-PRICING NETWORKS</div>
                   <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:18}}>
-                    {pfNetworks.map((n,i)=>(
+                    {(PF_NETWORKS[pfServiceType]||PF_NETWORKS.urgentCare).map((n,i)=>(
                       <a key={i} href={n.url} target="_blank" rel="noopener noreferrer" style={{
                         background:'rgba(10,24,48,0.5)',border:'1px solid rgba(20,50,100,0.5)',
                         borderRadius:6,padding:'9px 11px',textDecoration:'none',display:'block',
@@ -1451,10 +1924,10 @@ out center tags;`;
                     ))}
                   </div>
 
-                  {/* Section: Pricing Research Tools */}
+                  {/* Research tools */}
                   <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>PRICING RESEARCH TOOLS</div>
                   <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                    {pfResources.map((r,i)=>(
+                    {PF_RESOURCES.map((r,i)=>(
                       <a key={i} href={r.url} target="_blank" rel="noopener noreferrer" style={{
                         flex:'1 1 180px',background:'rgba(6,182,212,0.05)',border:'1px solid rgba(6,182,212,0.15)',
                         borderRadius:6,padding:'8px 11px',textDecoration:'none',display:'block',
@@ -1468,17 +1941,264 @@ out center tags;`;
                 </>
               )}
 
-              {/* Empty state */}
-              {!pfLoading && !pfError && !pfDone && (
-                <div style={{textAlign:'center',padding:'20px 0',color:'#2a3f5e',fontSize:11,lineHeight:1.7}}>
-                  <div style={{fontSize:28,marginBottom:10}}>💲</div>
-                  <div style={{color:'#3d5478',marginBottom:6}}>Enter a city to find:</div>
-                  <div style={{fontSize:10,color:'#2a3f5e',lineHeight:1.8}}>
-                    • Licensed clinics in the NPI Registry<br/>
-                    • Federally-qualified health centers (sliding scale fees)<br/>
-                    • National networks with transparent pricing<br/>
-                    • Tools to compare costs before your visit
+              {/* ── AREA PRICES TAB ── */}
+              {!pfLoading && pfTab==='areaPrices' && (()=>{
+                const proc = PROCEDURE_RATES[apProcedure];
+                const adjLow  = apState ? adjustedPrice(proc?.selfPayLow||0, apState) : proc?.selfPayLow||0;
+                const adjHigh = apState ? adjustedPrice(proc?.selfPayLow||0, apState) : proc?.selfPayHigh||0;
+                const adjMed  = apState ? adjustedPrice(proc?.medicareAvg||0, apState) : proc?.medicareAvg||0;
+                const tier    = apState ? (STATE_COST_TIER[apState]||'Average') : 'Average';
+                const costIdx = apState ? (STATE_COST_INDEX[apState]??1.0) : 1.0;
+                const allStates = Object.entries(STATE_COST_INDEX)
+                  .map(([st,idx])=>({st, cost: Math.round((proc?.selfPayLow||100)*idx)}))
+                  .sort((a,b)=>a.cost-b.cost);
+                const cheapest = allStates.slice(0,5);
+                const priciest = allStates.slice(-5).reverse();
+                return <>
+                  <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
+                    <div style={{flex:2,minWidth:200}}>
+                      <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:4}}>PROCEDURE</div>
+                      <select className="rp-select" style={{width:'100%',boxSizing:'border-box'}}
+                        value={apProcedure} onChange={e=>setApProcedure(e.target.value)}>
+                        {Object.entries(PROCEDURE_RATES).map(([k,v])=>(
+                          <option key={k} value={k}>{v.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{flex:1,minWidth:70}}>
+                      <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:4}}>STATE</div>
+                      <input className="rp-input" style={{width:'100%',boxSizing:'border-box'}}
+                        placeholder="e.g. AL" value={apState}
+                        onChange={e=>setApState(e.target.value.toUpperCase().slice(0,2))} />
+                    </div>
                   </div>
+
+                  {proc && <>
+                    {/* Reference card */}
+                    <div style={{background:'rgba(167,139,250,0.07)',border:'1px solid rgba(167,139,250,0.2)',borderRadius:8,padding:'14px',marginBottom:14}}>
+                      <div style={{fontSize:9,color:'#a78bfa',letterSpacing:'0.1em',marginBottom:8}}>{proc.cpt} · {proc.description}</div>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:8}}>
+                        <div>
+                          <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>MEDICARE ALLOWED</div>
+                          <div style={{fontSize:16,fontWeight:700,color:'#67e8f9',fontFamily:"'IBM Plex Mono',monospace"}}>
+                            {adjMed>0?`$${adjMed.toLocaleString()}`:'Not covered'}
+                          </div>
+                          {apState&&<div style={{fontSize:8,color:'#2a3f5e',marginTop:1}}>Adjusted for {apState}</div>}
+                        </div>
+                        <div>
+                          <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>SELF-PAY LOW</div>
+                          <div style={{fontSize:16,fontWeight:700,color:'#34d399',fontFamily:"'IBM Plex Mono',monospace"}}>
+                            ${adjLow.toLocaleString()}
+                          </div>
+                          <div style={{fontSize:8,color:'#2a3f5e',marginTop:1}}>Cash / uninsured</div>
+                        </div>
+                        <div>
+                          <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>SELF-PAY HIGH</div>
+                          <div style={{fontSize:16,fontWeight:700,color:'#f97316',fontFamily:"'IBM Plex Mono',monospace"}}>
+                            ${apState?adjustedPrice(proc.selfPayHigh,apState):proc.selfPayHigh}
+                          </div>
+                          <div style={{fontSize:8,color:'#2a3f5e',marginTop:1}}>Without negotiation</div>
+                        </div>
+                      </div>
+                      {apState && <>
+                        <div style={{fontSize:8,color:'#3d5478',marginBottom:4}}>GEOGRAPHIC COST TIER · {apState}</div>
+                        <div style={{display:'flex',alignItems:'center',gap:10}}>
+                          <span style={{fontSize:11,fontWeight:700,color:tierColor(tier),fontFamily:"'IBM Plex Mono',monospace"}}>{tier}</span>
+                          <div style={{flex:1,height:6,borderRadius:3,background:'rgba(20,50,100,0.5)',overflow:'hidden'}}>
+                            <div style={{height:'100%',borderRadius:3,background:tierColor(tier),width:`${Math.min(100,Math.max(5,((costIdx-0.8)/0.6)*100))}%`,transition:'width 0.3s'}}/>
+                          </div>
+                          <span style={{fontSize:10,fontFamily:"'IBM Plex Mono',monospace",color:costIdx>1.05?'#f97316':costIdx<0.95?'#22c55e':'#67e8f9'}}>
+                            {costIdx>=1?'+':''}{ ((costIdx-1)*100).toFixed(0)}%
+                          </span>
+                        </div>
+                      </>}
+                    </div>
+
+                    {/* Cheapest / most expensive states comparison */}
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
+                      <div>
+                        <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:6}}>💚 LOWEST COST STATES</div>
+                        {cheapest.map((s,i)=>(
+                          <div key={s.st} style={{display:'flex',alignItems:'center',gap:6,marginBottom:4,padding:'4px 8px',background:'rgba(34,197,94,0.06)',borderRadius:4,border:'1px solid rgba(34,197,94,0.15)'}}>
+                            <span style={{fontSize:8,color:'#3d5478',fontFamily:"'IBM Plex Mono',monospace",width:14}}>{i+1}</span>
+                            <span style={{fontSize:10,fontWeight:600,color:'#eef4ff',flex:1}}>{s.st}</span>
+                            <span style={{fontSize:10,fontWeight:700,color:'#22c55e',fontFamily:"'IBM Plex Mono',monospace"}}>${s.cost}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div>
+                        <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:6}}>🔴 HIGHEST COST STATES</div>
+                        {priciest.map((s,i)=>(
+                          <div key={s.st} style={{display:'flex',alignItems:'center',gap:6,marginBottom:4,padding:'4px 8px',background:'rgba(239,68,68,0.06)',borderRadius:4,border:'1px solid rgba(239,68,68,0.15)'}}>
+                            <span style={{fontSize:8,color:'#3d5478',fontFamily:"'IBM Plex Mono',monospace",width:14}}>{i+1}</span>
+                            <span style={{fontSize:10,fontWeight:600,color:'#eef4ff',flex:1}}>{s.st}</span>
+                            <span style={{fontSize:10,fontWeight:700,color:'#ef4444',fontFamily:"'IBM Plex Mono',monospace"}}>${s.cost}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div style={{fontSize:8.5,color:'#2a3f5e',lineHeight:1.5,padding:'8px 10px',background:'rgba(10,24,48,0.4)',borderRadius:6}}>
+                      Prices are estimates based on 2024 Medicare Physician Fee Schedule and CMS Geographic Practice Cost Index.
+                      Self-pay rates vary by facility. Use ZocDoc, MDsave, or Sesame Care for actual quoted prices.
+                    </div>
+                  </>}
+                </>;
+              })()}
+
+              {/* ── REPORT A PRICE TAB ── */}
+              {!pfLoading && pfTab==='report' && (
+                <>
+                  <div style={{background:'rgba(10,24,48,0.5)',border:'1px solid rgba(251,191,36,0.2)',borderRadius:8,padding:'14px',marginBottom:16}}>
+                    <div style={{fontSize:9,color:'#fbbf24',letterSpacing:'0.08em',marginBottom:10}}>⭐ SUBMIT A PRICE YOU FOUND</div>
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:8}}>
+                      <div style={{flex:2,minWidth:160}}>
+                        <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>PROVIDER NAME</div>
+                        <input className="rp-input" style={{width:'100%',boxSizing:'border-box'}}
+                          placeholder="e.g. Concentra Urgent Care" value={pfReportProvider}
+                          onChange={e=>setPfReportProvider(e.target.value)} />
+                      </div>
+                      <div style={{flex:1,minWidth:100}}>
+                        <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>PRICE PAID</div>
+                        <input className="rp-input" style={{width:'100%',boxSizing:'border-box'}}
+                          placeholder="e.g. $95" value={pfReportPrice}
+                          onChange={e=>setPfReportPrice(e.target.value)} />
+                      </div>
+                      <div style={{display:'flex',alignItems:'flex-end'}}>
+                        <button className="rp-assess-btn"
+                          style={{padding:'8px 14px',background:'rgba(251,191,36,0.12)',borderColor:'rgba(251,191,36,0.3)',color:'#fbbf24'}}
+                          onClick={pfAddReport} disabled={!pfReportProvider.trim()||!pfReportPrice.trim()}>
+                          + ADD
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{fontSize:8.5,color:'#2a3f5e',lineHeight:1.5}}>
+                      Service: <span style={{color:'#67e8f9'}}>{PF_SERVICE_LABELS[pfServiceType]}</span>
+                      {pfLocation && <> · <span style={{color:'#67e8f9'}}>{pfLocation}</span></>}
+                      {' · '}Saved to your browser — use Share to send to colleagues
+                    </div>
+                  </div>
+
+                  {pfReports.length===0 ? (
+                    <div style={{textAlign:'center',padding:'20px 0',color:'#2a3f5e',fontSize:10,lineHeight:1.7}}>
+                      No prices reported yet.<br/>
+                      Search for a provider above, then click <strong style={{color:'#fbbf24'}}>REPORT PRICE</strong> on any result,<br/>or fill in the form manually.
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                        <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em'}}>{pfReports.length} PRICE REPORTS</div>
+                        <button onClick={pfShareReports} style={{
+                          fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'4px 10px',
+                          background:'rgba(6,182,212,0.08)',border:'1px solid rgba(6,182,212,0.25)',
+                          borderRadius:3,color:pfShareCopied?'#34d399':'#06b6d4',cursor:'pointer',
+                        }}>
+                          {pfShareCopied ? '✓ LINK COPIED' : '🔗 SHARE REPORTS'}
+                        </button>
+                      </div>
+                      <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                        {pfReports.map((r,i)=>(
+                          <div key={i} style={{background:'rgba(6,10,24,0.5)',border:'1px solid rgba(20,40,80,0.6)',borderRadius:6,padding:'8px 12px',display:'flex',gap:10,alignItems:'center'}}>
+                            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:14,fontWeight:700,color:'#34d399',minWidth:70}}>{r.price}</div>
+                            <div style={{flex:1}}>
+                              <div style={{fontSize:10,fontWeight:600,color:'#eef4ff'}}>{r.provider}</div>
+                              <div style={{fontSize:8.5,color:'#3d5478',fontFamily:"'IBM Plex Mono',monospace"}}>{r.service} · {r.city} · {r.date}</div>
+                            </div>
+                            <button onClick={()=>{const n=pfReports.filter((_,j)=>j!==i);setPfReports(n);localStorage.setItem('occumed_price_reports',JSON.stringify(n));}}
+                              style={{background:'transparent',border:'1px solid rgba(255,255,255,0.06)',borderRadius:3,color:'#3d5478',fontSize:9,padding:'2px 7px',cursor:'pointer'}}>✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MY CLINICS / UPLOAD MODAL ── */}
+      {showUploadModal && (
+        <div className="modal-backdrop open" onClick={()=>setShowUploadModal(false)}>
+          <div className="modal-box" style={{width:680,maxHeight:'85vh',display:'flex',flexDirection:'column'}} onClick={e=>e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title" style={{color:'#f472b6'}}>📤 MY CLINICS</span>
+              <button className="modal-close" onClick={()=>setShowUploadModal(false)}>✕</button>
+            </div>
+            <div className="modal-body" style={{flex:1,overflowY:'auto',padding:'16px 20px'}}>
+
+              {/* Upload section */}
+              <div style={{background:'rgba(244,114,182,0.06)',border:'1px solid rgba(244,114,182,0.2)',borderRadius:8,padding:'14px',marginBottom:16}}>
+                <div style={{fontSize:9,color:'#f472b6',letterSpacing:'0.08em',marginBottom:8}}>UPLOAD SPREADSHEET</div>
+                <p style={{fontSize:10,color:'#4a6888',lineHeight:1.6,marginBottom:10}}>
+                  Upload an Excel (.xlsx) or CSV file with your clinic locations. Columns detected automatically.
+                  Supported: <span style={{color:'#c8ddf0'}}>Name, Address, City, State, Zip, Phone, Notes, Lat, Lng</span>.
+                  Addresses without coordinates will be geocoded automatically.
+                </p>
+                <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap',marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>PIN COLOR</div>
+                    <input type="color" value={uploadColor} onChange={e=>setUploadColor(e.target.value)}
+                      style={{width:40,height:32,border:'1px solid rgba(244,114,182,0.3)',borderRadius:4,background:'transparent',cursor:'pointer',padding:2}} />
+                  </div>
+                  <button className="rp-assess-btn"
+                    style={{padding:'8px 18px',background:'rgba(244,114,182,0.12)',borderColor:'rgba(244,114,182,0.3)',color:'#f472b6',opacity:uploadLoading?0.6:1}}
+                    disabled={uploadLoading}
+                    onClick={()=>clinicFileInputRef.current?.click()}>
+                    {uploadLoading ? '⏳ PROCESSING...' : '📁 CHOOSE FILE (.xlsx / .csv)'}
+                  </button>
+                  <input ref={clinicFileInputRef} type="file" accept=".xlsx,.xls,.csv" style={{display:'none'}}
+                    onChange={handleClinicUpload} />
+                </div>
+                {uploadProgress && (
+                  <div style={{fontSize:9,color:uploadProgress.startsWith('✓')?'#34d399':uploadProgress.startsWith('Error')?'#fca5a5':'#67e8f9',fontFamily:"'IBM Plex Mono',monospace",lineHeight:1.5}}>
+                    {uploadProgress}
+                  </div>
+                )}
+              </div>
+
+              {/* Controls */}
+              {uploadedClinics.length>0 && (
+                <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:12,flexWrap:'wrap'}}>
+                  <div style={{fontSize:9,color:'#f472b6',letterSpacing:'0.08em',flex:1}}>
+                    {uploadedClinics.filter(c=>c.lat!==null).length} / {uploadedClinics.length} CLINICS MAPPED
+                  </div>
+                  <label style={{display:'flex',alignItems:'center',gap:5,cursor:'pointer',fontSize:9,color:'#3d5478'}}>
+                    <input type="checkbox" checked={showUploadedClinics} onChange={e=>setShowUploadedClinics(e.target.checked)}/>
+                    Show on map
+                  </label>
+                  <button onClick={()=>{setUploadedClinics([]);localStorage.removeItem('uploaded_clinics');setUploadProgress('');}}
+                    style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'3px 8px',background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:3,color:'#fca5a5',cursor:'pointer'}}>
+                    CLEAR ALL
+                  </button>
+                </div>
+              )}
+
+              {/* Clinic list */}
+              {uploadedClinics.length===0 ? (
+                <div style={{textAlign:'center',padding:'24px 0',color:'#2a3f5e',fontSize:10,lineHeight:1.8}}>
+                  <div style={{fontSize:28,marginBottom:10}}>📍</div>
+                  No clinics uploaded yet.<br/>
+                  Upload a spreadsheet to see glowing pins on the map.
+                </div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                  {uploadedClinics.map((c,i)=>(
+                    <div key={i} style={{background:'rgba(6,10,24,0.5)',border:`1px solid ${c.lat!==null?'rgba(244,114,182,0.2)':'rgba(30,50,80,0.5)'}`,borderRadius:6,padding:'8px 12px',display:'flex',gap:10,alignItems:'center'}}>
+                      <div style={{width:10,height:10,borderRadius:'50%',background:c.color||uploadColor,boxShadow:`0 0 6px ${c.color||uploadColor}`,flexShrink:0}} />
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:'#eef4ff'}}>{c.name}</div>
+                        <div style={{fontSize:8.5,color:'#3d5478',fontFamily:"'IBM Plex Mono',monospace"}}>
+                          {[c.address,c.city,c.state,c.zip].filter(Boolean).join(', ')||'No address'}
+                          {c.lat!==null?<span style={{color:'#34d399',marginLeft:6}}>✓ {c.lat?.toFixed(3)},{c.lng?.toFixed(3)}</span>:<span style={{color:'#f97316',marginLeft:6}}>⚠ Not geocoded</span>}
+                        </div>
+                      </div>
+                      <button onClick={()=>{const n=uploadedClinics.filter((_,j)=>j!==i);setUploadedClinics(n);localStorage.setItem('uploaded_clinics',JSON.stringify(n));}}
+                        style={{background:'transparent',border:'1px solid rgba(255,255,255,0.06)',borderRadius:3,color:'#3d5478',fontSize:9,padding:'2px 7px',cursor:'pointer',flexShrink:0}}>✕</button>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
