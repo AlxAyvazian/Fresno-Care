@@ -79,6 +79,10 @@ If you see that exact error in Render, it means Render cannot read the file from
 2. In Render’s Blueprint screen:
    - **Branch** should match the branch that contains the file.
    - **Blueprint Path** should be exactly `render.yaml` (with the dot).
+   - `render.yaml` (and this repo also includes `render.yml` for compatibility)
+2. In Render’s Blueprint screen:
+   - **Branch** should match the branch that contains the file.
+   - **Blueprint Path** should be exactly `render.yaml` (with the dot), or `render.yml`.
 3. If you just pushed changes, click **Retry** after Git provider sync completes.
 4. If still failing, reconnect the Git repo in Render and re-open the Blueprint flow.
 
