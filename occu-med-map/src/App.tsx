@@ -688,9 +688,6 @@ export default function App() {
   const [phResults, setPhResults] = useState<any[]>([]);
   const [phExtracted, setPhExtracted] = useState(0);
   const [phDebug, setPhDebug] = useState<any>(null);
-  const [phLoading, setPhLoading] = useState(false);
-  const [phResults, setPhResults] = useState<any[]>([]);
-  const [phExtracted, setPhExtracted] = useState(0);
   const [ohLoading, setOhLoading] = useState(false);
   const [ohResults, setOhResults] = useState<any[]>([]);
   const [pfReports, setPfReports] = useState<Array<{provider:string;price:string;service:string;city:string;date:string}>>(() => {
@@ -2348,13 +2345,6 @@ out center tags;`;
                                   <div style={{fontSize:8.5,color:'#9bb7d8',lineHeight:1.5}}>{hit.context}</div>
                                 </div>
                               ))}
-                          {(r.matches||[]).slice(0,2).map((m:any,mi:number)=>(
-                            <div key={mi} style={{marginBottom:6,padding:'6px',borderRadius:5,background:'rgba(7,20,42,0.5)',border:'1px solid rgba(251,191,36,0.18)'}}>
-                              <div style={{fontSize:9,color:'#fbbf24',marginBottom:3,fontFamily:"'IBM Plex Mono',monospace"}}>
-                                {(m.hits?.[0]?.value)||'Price mention found'}
-                              </div>
-                              <div style={{fontSize:8.5,color:'#9bb7d8',lineHeight:1.5,marginBottom:3}}>{(m.hits?.[0]?.context)||''}</div>
-                              <a href={m.url} target="_blank" rel="noopener noreferrer" style={{fontSize:8,color:'#67e8f9'}}>Source ↗</a>
                             </div>
                           ))}
                         </div>
