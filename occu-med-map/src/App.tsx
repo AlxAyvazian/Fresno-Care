@@ -63,8 +63,16 @@ const CATS: Record<string,{ico:string;col:string;lbl:string}> = {
   clinic:  {ico:'🏨',col:'#f97316',lbl:'Clinic'},
   urgent:  {ico:'⚡',col:'#f59e0b',lbl:'Urgent Care'},
   doctor:  {ico:'👨‍⚕️',col:'#84cc16',lbl:'Doctor / GP'},
+  physical:{ico:'🩺',col:'#22d3ee',lbl:'Physical Exam'},
+  faa:     {ico:'✈️',col:'#38bdf8',lbl:'FAA Exam'},
+  dotmd:   {ico:'🚛',col:'#facc15',lbl:'DOT MD/DO/PA/NP'},
+  dotchiro:{ico:'🦴',col:'#fb7185',lbl:'DOT Chiropractor'},
+  mammogram:{ico:'🎀',col:'#f472b6',lbl:'Mammogram'},
   pharmacy:{ico:'💊',col:'#10b981',lbl:'Pharmacy'},
   dentist: {ico:'🦷',col:'#06b6d4',lbl:'Dentist'},
+  audiology:{ico:'🎧',col:'#60a5fa',lbl:'Audiology'},
+  stress:  {ico:'🫀',col:'#f97316',lbl:'Stress Test'},
+  drugscreen:{ico:'🧪',col:'#a78bfa',lbl:'Drug Screen'},
   eye:     {ico:'👁️',col:'#3b82f6',lbl:'Eye Care'},
   physio:  {ico:'🦴',col:'#8b5cf6',lbl:'Physical Therapy'},
   lab:     {ico:'🧪',col:'#ec4899',lbl:'Lab / Diagnostics'},
@@ -335,6 +343,14 @@ function classifyFacility(tags:any):string {
   const a=(tags.amenity||'').toLowerCase(),h=(tags.healthcare||'').toLowerCase(),
     n=(tags.name||'').toLowerCase(),o=(tags.office||'').toLowerCase(),
     b=(tags.building||'').toLowerCase(),s=(tags.shop||'').toLowerCase();
+  if(n.includes('faa')) return 'faa';
+  if(n.includes('dot')&&n.includes('chiro')) return 'dotchiro';
+  if(n.includes('dot')&&(n.includes('md')||n.includes('np')||n.includes('do')||n.includes('pa')||n.includes('medical'))) return 'dotmd';
+  if(n.includes('mammogram')||n.includes('breast imaging')) return 'mammogram';
+  if(n.includes('audiology')||n.includes('audiogram')||n.includes('hearing')) return 'audiology';
+  if(n.includes('drug screen')||n.includes('toxicology')||n.includes('urine test')) return 'drugscreen';
+  if(n.includes('stress test')||n.includes('cardiology')) return 'stress';
+  if(n.includes('physical exam')||n.includes('occupational health')) return 'physical';
   if(n.includes('urgent care')||a==='urgent_care'||h==='urgent_care') return 'urgent';
   if(a==='hospital'||h==='hospital'||b==='hospital'||n.includes('hospital')) return 'hospital';
   if(a==='clinic'||h==='clinic'||n.includes('clinic')) return 'clinic';
@@ -588,6 +604,7 @@ export default function App() {
   const [showTZ, setShowTZ] = useState(false);
   const [showRadius, setShowRadius] = useState(true);
   const [showPopDensity, setShowPopDensity] = useState(false);
+  const [showStateColors, setShowStateColors] = useState(true);
   const [filterDiff, setFilterDiff] = useState<number|null>(null);
   // Clinic upload
   const [uploadedClinics, setUploadedClinics] = useState<Array<{
@@ -635,7 +652,24 @@ export default function App() {
   const [liveHighlightId, setLiveHighlightId] = useState<any>(null);
   const [liveHint, setLiveHint] = useState('Click anywhere on the map to search for facilities');
   const [liveMirror, setLiveMirror] = useState('');
+  const [outreachNotes, setOutreachNotes] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_notes')||'{}'); } catch { return {}; } });
+  const [outreachStatus, setOutreachStatus] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_status')||'{}'); } catch { return {}; } });
   const lastRadiusRef = useRef<{lat:number;lng:number}|null>(null);
+
+  function updateOutreachNote(id:any, value:string) {
+    setOutreachNotes(prev=>{
+      const next={...prev,[String(id)]:value};
+      localStorage.setItem('outreach_notes', JSON.stringify(next));
+      return next;
+    });
+  }
+  function updateOutreachStatus(id:any, value:string) {
+    setOutreachStatus(prev=>{
+      const next={...prev,[String(id)]:value};
+      localStorage.setItem('outreach_status', JSON.stringify(next));
+      return next;
+    });
+  }
 
   // ── Price Finder state ────────────────────────────────────────────────────
   const [showPriceFinder, setShowPriceFinder] = useState(false);
@@ -647,7 +681,12 @@ export default function App() {
   const [pfError, setPfError] = useState('');
   const [pfLocation, setPfLocation] = useState('');
   const [pfDone, setPfDone] = useState(false);
-  const [pfTab, setPfTab] = useState<'providers'|'compare'|'areaPrices'|'report'>('providers');
+  const [pfTab, setPfTab] = useState<'providers'|'compare'|'areaPrices'|'priceHunt'|'occHunt'|'report'>('providers');
+  const [phLoading, setPhLoading] = useState(false);
+  const [phResults, setPhResults] = useState<any[]>([]);
+  const [phExtracted, setPhExtracted] = useState(0);
+  const [ohLoading, setOhLoading] = useState(false);
+  const [ohResults, setOhResults] = useState<any[]>([]);
   const [pfReports, setPfReports] = useState<Array<{provider:string;price:string;service:string;city:string;date:string}>>(() => {
     try { return JSON.parse(localStorage.getItem('occumed_price_reports') || '[]'); } catch { return []; }
   });
@@ -742,12 +781,42 @@ export default function App() {
     } catch {}
   }
 
+  function occHealthScore(c:{name:string;taxonomy:string;isFqhc:boolean}) {
+    const txt = `${c.name} ${c.taxonomy}`.toLowerCase();
+    let score = 0;
+    if (txt.includes('occupational')) score += 4;
+    if (txt.includes('urgent')) score += 2;
+    if (txt.includes('family medicine')) score += 1;
+    if (txt.includes('internal medicine')) score += 1;
+    if (txt.includes('chiropr')) score += 2;
+    if (txt.includes('cardiology')) score += 1;
+    if (txt.includes('radiology')) score += 1;
+    if (txt.includes('federally qualified') || c.isFqhc) score += 2;
+    return Math.min(score, 10);
+  }
+
+  function exportOutreachCsv() {
+    const rows = [
+      ['facility_id','status','notes'],
+      ...Object.keys(outreachStatus).map(id => [id, outreachStatus[id] || 'new', (outreachNotes[id] || '').replace(/\n/g,' ')])
+    ];
+    const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv],{type:'text/csv;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `outreach_export_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
   // Stats
   const totalCities = LOCS.length;
   const statesCount = Object.keys(SD).length;
   const criticalCount = LOCS.filter(l=>getVal(l,metric)>=4).length;
 
   const [mapReady, setMapReady] = useState(false);
+  const [localPopInfo, setLocalPopInfo] = useState<null|{lat:number;lng:number;density:number;state:string;population:number;nearestCity:string;nearestDist:number}>(null);
 
   // ── Import shared price reports from URL on first load ────────────────────
   useEffect(()=>{
@@ -795,8 +864,10 @@ export default function App() {
     // Load GeoJSON
     loadStateGeo(map);
 
-    // Map click for live finder
+    // Map click for live finder + local population estimate
     map.on('click',(e:L.LeafletMouseEvent)=>{
+      const est = estimateLocalPopulationDensity(e.latlng.lat, e.latlng.lng);
+      if (est) setLocalPopInfo(est);
       if(liveOpenRef.current) {
         doLiveSearch(e.latlng.lat, e.latlng.lng);
       }
@@ -864,7 +935,8 @@ export default function App() {
 
   function sStyle(postal:string,m:string):L.PathOptions {
     const d=SD[postal];
-    if(!d) return{fillColor:'#0a1830',fillOpacity:0.5,weight:1,color:'rgba(99,179,237,0.15)',opacity:0.6};
+    if(!d) return{fillColor:'#0a1830',fillOpacity:0.38,weight:1,color:'rgba(99,179,237,0.15)',opacity:0.6};
+    if(!showStateColors) return {fillColor:'#11243f',fillOpacity:0.12,weight:1,color:'rgba(161,209,255,0.25)',opacity:0.8};
     const v=getVal(d,m);
     const col=DCOL[v]||'#3d5478';
     return{fillColor:col,fillOpacity:0.25,weight:1,color:col,opacity:0.45};
@@ -872,6 +944,117 @@ export default function App() {
 
   const metricRef = useRef(metric);
   useEffect(()=>{ metricRef.current=metric; },[metric]);
+  useEffect(()=>{
+    if(!stateGeoRef.current) return;
+    stateGeoRef.current.setStyle((f:any)=>sStyle(f?.properties?.postal||'',metricRef.current));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[showStateColors]);
+
+  function estimateLocalPopulationDensity(lat:number,lng:number) {
+    const nearest = LOCS
+      .map((l:any)=>({name:l[0],state:l[1],dist:Math.max(approxMiles(lat,lng,l[2],l[3]),1)}))
+      .sort((a,b)=>a.dist-b.dist)
+      .slice(0,8);
+    if(!nearest.length) return null;
+    let weightedDensity = 0;
+    let weightedPop = 0;
+    let totalWeight = 0;
+    let nearestState = nearest[0].state || '';
+    nearest.forEach(n=>{
+      const sp = STATE_POP[n.state];
+      if(!sp) return;
+      const w = 1 / n.dist;
+      totalWeight += w;
+      weightedDensity += sp.density * w;
+      weightedPop += sp.pop * w;
+    });
+    if(!totalWeight) return null;
+    return {
+      lat,
+      lng,
+      density: weightedDensity / totalWeight,
+      state: nearestState,
+      population: Math.round(weightedPop / totalWeight),
+      nearestCity: nearest[0].name,
+      nearestDist: nearest[0].dist,
+    };
+  }
+
+  const REQUIRED_NETWORK_CATS = ['mammogram','dotchiro','dotmd','faa','physical','urgent','lab','drugscreen','dentist','stress','audiology'] as const;
+  function territoryGapSummary() {
+    const counts: Record<string, number> = {};
+    liveResults.forEach((r:any)=>{ counts[r.cat] = (counts[r.cat] || 0) + 1; });
+    const missing = REQUIRED_NETWORK_CATS.filter(c => (counts[c] || 0) === 0);
+    return { counts, missing, covered: REQUIRED_NETWORK_CATS.length - missing.length, total: REQUIRED_NETWORK_CATS.length };
+  }
+
+  function exportLeadershipPackage() {
+    const summary = territoryGapSummary();
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      location: liveLocation || null,
+      totalFacilities: liveResults.length,
+      requiredCategories: REQUIRED_NETWORK_CATS,
+      missingCategories: summary.missing,
+      coverageRatio: `${summary.covered}/${summary.total}`,
+      outreachStatus,
+      outreachNotes,
+      topFacilities: liveResults.slice(0, 30).map((r:any)=>({
+        id: r.id, name: r.name, category: r.cat, distanceKm: Number(r.dist.toFixed(2)),
+        phone: r.phone || '', website: r.website || '', address: r.addr || '',
+      })),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `leadership_package_${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  async function runAutomatedPriceHunt() {
+    if (!pfCity.trim()) return;
+    setPhLoading(true);
+    try {
+      const params = new URLSearchParams({
+        city: pfCity.trim(),
+        state: pfState.trim().toUpperCase(),
+        serviceType: pfServiceType,
+      });
+      const resp = await fetch(`/api/price-hunt?${params.toString()}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setPhResults(data.results || []);
+      setPhExtracted(data.extracted || 0);
+    } catch (e) {
+      console.warn('price hunt failed', e);
+      setPhResults([]);
+      setPhExtracted(0);
+    } finally {
+      setPhLoading(false);
+    }
+  }
+
+  async function runAutomatedOccHunt() {
+    if (!pfCity.trim()) return;
+    setOhLoading(true);
+    try {
+      const params = new URLSearchParams({
+        city: pfCity.trim(),
+        state: pfState.trim().toUpperCase(),
+      });
+      const resp = await fetch(`/api/occ-hunt?${params.toString()}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setOhResults(data.partners || []);
+    } catch (e) {
+      console.warn('occ hunt failed', e);
+      setOhResults([]);
+    } finally {
+      setOhLoading(false);
+    }
+  }
 
   function buildStateLabels(map:L.Map,stateGeo:L.GeoJSON) {
     const labelGrp = L.layerGroup();
@@ -1512,6 +1695,15 @@ out center tags;`;
       <div className="app-body">
         {/* ── SIDEBAR ── */}
         <aside className="sidebar">
+          <div className="hero-card">
+            <div className="hero-title">Occu-Med Network Command</div>
+            <div className="hero-sub">Find occupational providers, compare prices, and build smarter coverage faster.</div>
+            <div className="hero-actions">
+              <button className="hero-btn" onClick={()=>setShowPriceFinder(true)}>Area Prices</button>
+              <button className="hero-btn" onClick={()=>setShowPopDensity(v=>!v)}>Population Overlay</button>
+              <button className="hero-btn" onClick={()=>setShowUploadModal(true)}>My Clinics</button>
+            </div>
+          </div>
           <div className="sb-section">
             <div className="sb-lbl">SERVICE METRIC</div>
             {ALL_METRICS.map(m=>(
@@ -1543,6 +1735,10 @@ out center tags;`;
             <div className="tog-row">
               <span className="tog-lbl">Population density</span>
               <label className="tog-switch"><input type="checkbox" checked={showPopDensity} onChange={e=>setShowPopDensity(e.target.checked)}/><span className="tog-slider"/></label>
+            </div>
+            <div className="tog-row">
+              <span className="tog-lbl">State color fill</span>
+              <label className="tog-switch"><input type="checkbox" checked={showStateColors} onChange={e=>setShowStateColors(e.target.checked)}/><span className="tog-slider"/></label>
             </div>
             <div className="tog-row">
               <span className="tog-lbl">70mi radius ring</span>
@@ -1591,6 +1787,17 @@ out center tags;`;
         {/* ── MAP ── */}
         <div className="map-wrap">
           <div id="map" ref={mapDivRef}/>
+          {localPopInfo&&(
+            <div className="local-pop-card">
+              <div className="local-pop-title">Local population estimate</div>
+              <div className="local-pop-row"><span>Density</span><strong>{Math.round(localPopInfo.density).toLocaleString()}/mi²</strong></div>
+              <div className="local-pop-row"><span>State baseline</span><strong>{localPopInfo.state}</strong></div>
+              <div className="local-pop-row"><span>Population context</span><strong>{localPopInfo.population.toLocaleString()}</strong></div>
+              <div className="local-pop-row"><span>Nearest city</span><strong>{localPopInfo.nearestCity}</strong></div>
+              <div className="local-pop-row"><span>Distance</span><strong>{localPopInfo.nearestDist.toFixed(1)} mi</strong></div>
+              <div className="local-pop-meta">{localPopInfo.lat.toFixed(4)}, {localPopInfo.lng.toFixed(4)}</div>
+            </div>
+          )}
           {showTZ&&(
             <div className="tz-legend">
               {TZ_INFO.map(tz=>(
@@ -1649,12 +1856,46 @@ out center tags;`;
             <div className="lp-inner">
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
                 <span className="lp-title">📡 LIVE HEALTHCARE FINDER</span>
-                <button className="rp-close" onClick={()=>setLiveOpen(false)}>✕</button>
+                <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                  <button
+                    onClick={exportOutreachCsv}
+                    style={{fontSize:8,padding:'4px 7px',borderRadius:4,border:'1px solid rgba(52,211,153,0.28)',background:'rgba(52,211,153,0.1)',color:'#34d399',fontFamily:"'IBM Plex Mono',monospace",cursor:'pointer'}}
+                  >
+                    EXPORT CSV
+                  </button>
+                  <button className="rp-close" onClick={()=>setLiveOpen(false)}>✕</button>
+                </div>
+              </div>
+              <div style={{display:'flex',gap:6}}>
+                <button
+                  onClick={exportLeadershipPackage}
+                  style={{fontSize:8,padding:'4px 7px',borderRadius:4,border:'1px solid rgba(56,189,248,0.28)',background:'rgba(56,189,248,0.1)',color:'#38bdf8',fontFamily:"'IBM Plex Mono',monospace",cursor:'pointer'}}
+                >
+                  LEADERSHIP EXPORT
+                </button>
               </div>
               <div style={{fontSize:10,color:'#3d5478',lineHeight:1.5}}>
                 {liveHint||`${liveResults.length} facilit${liveResults.length===1?'y':'ies'}${liveLocation?' · '+liveLocation:''}`}
                 {liveMirror&&<div style={{fontSize:9,color:'#2d4060',marginTop:3}}>{liveMirror}</div>}
               </div>
+              {(() => {
+                const gap = territoryGapSummary();
+                return (
+                  <div style={{padding:'7px 9px',borderRadius:6,background:'rgba(15,33,63,0.45)',border:'1px solid rgba(103,232,249,0.16)'}}>
+                    <div style={{fontSize:8.5,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:'0.08em',color:'#67e8f9',marginBottom:4}}>TERRITORY GAP ANALYSIS</div>
+                    <div style={{fontSize:9,color:'#8fb3d8',marginBottom:4}}>Coverage: <strong style={{color:'#cfe9ff'}}>{gap.covered}/{gap.total}</strong> required categories in current map radius.</div>
+                    {gap.missing.length>0 ? (
+                      <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                        {gap.missing.map(cat=>(
+                          <span key={cat} style={{fontSize:8,padding:'2px 5px',borderRadius:999,background:'rgba(239,68,68,0.12)',border:'1px solid rgba(239,68,68,0.28)',color:'#fca5a5'}}>
+                            Missing: {CATS[cat]?.lbl || cat}
+                          </span>
+                        ))}
+                      </div>
+                    ) : <div style={{fontSize:9,color:'#34d399'}}>All required categories covered in this search area.</div>}
+                  </div>
+                );
+              })()}
               <div style={{display:'flex',alignItems:'center',gap:6}}>
                 <span style={{fontSize:9.5,color:'#3d5478',whiteSpace:'nowrap'}}>Radius:</span>
                 <input type="range" min={2} max={50} value={liveRadius} onChange={e=>setLiveRadius(Number(e.target.value))} onMouseUp={()=>{ if(lastRadiusRef.current) doLiveSearch(lastRadiusRef.current.lat,lastRadiusRef.current.lng); }}/>
@@ -1700,6 +1941,25 @@ out center tags;`;
                       <a href={gm} target="_blank" rel="noopener" className="lp-act pri" onClick={e=>e.stopPropagation()}>Google Maps ↗</a>
                       {r.website&&<a href={r.website} target="_blank" rel="noopener" className="lp-act" onClick={e=>e.stopPropagation()}>Website ↗</a>}
                       {r.phone&&<a href={`tel:${r.phone}`} className="lp-act" onClick={e=>e.stopPropagation()}>Call</a>}
+                    </div>
+                    <div style={{marginTop:6,display:'grid',gap:5}} onClick={e=>e.stopPropagation()}>
+                      <select
+                        value={outreachStatus[String(r.id)]||'new'}
+                        onChange={e=>updateOutreachStatus(r.id,e.target.value)}
+                        style={{fontSize:9,padding:'4px 6px',borderRadius:4,background:'rgba(7,20,42,0.7)',border:'1px solid rgba(103,232,249,0.2)',color:'#9cc7eb'}}
+                      >
+                        <option value="new">New</option>
+                        <option value="contacted">Contacted</option>
+                        <option value="interested">Interested</option>
+                        <option value="contracting">Contracting</option>
+                        <option value="closed">Closed</option>
+                      </select>
+                      <textarea
+                        value={outreachNotes[String(r.id)]||''}
+                        onChange={e=>updateOutreachNote(r.id,e.target.value)}
+                        placeholder="Outreach note..."
+                        style={{minHeight:46,resize:'vertical',fontSize:9,padding:'6px 7px',borderRadius:4,background:'rgba(7,20,42,0.6)',border:'1px solid rgba(103,232,249,0.18)',color:'#cce7ff'}}
+                      />
                     </div>
                   </div>
                 );
@@ -1792,8 +2052,8 @@ out center tags;`;
               )}
 
               {/* Tab bar */}
-              <div style={{display:'flex',gap:0,marginBottom:14,borderBottom:'1px solid rgba(20,50,100,0.5)'}}>
-                {([['providers','📋 PROVIDERS','#67e8f9'],['compare','💰 COMPARE PRICES','#34d399'],['areaPrices','📊 AREA PRICES','#a78bfa'],['report','⭐ REPORT A PRICE','#fbbf24']] as const).map(([tab,label,col])=>(
+                  <div style={{display:'flex',gap:0,marginBottom:14,borderBottom:'1px solid rgba(20,50,100,0.5)',flexWrap:'wrap'}}>
+                {([['providers','📋 PROVIDERS','#67e8f9'],['compare','💰 COMPARE PRICES','#34d399'],['areaPrices','📊 AREA PRICES','#a78bfa'],['priceHunt','🎯 PRICE HUNT','#f97316'],['occHunt','🩺 OCC HUNT','#38bdf8'],['report','⭐ REPORT A PRICE','#fbbf24']] as const).map(([tab,label,col])=>(
                   <button key={tab} onClick={()=>setPfTab(tab)} style={{
                     padding:'7px 16px',background:'transparent',border:'none',
                     borderBottom:`2px solid ${pfTab===tab?col:'transparent'}`,
@@ -2045,6 +2305,127 @@ out center tags;`;
                   </>}
                 </>;
               })()}
+
+              {/* ── PRICE HUNT TAB ── */}
+              {!pfLoading && pfTab==='priceHunt' && (
+                <>
+                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
+                    PRICE HUNT RESULTS{pfLocation&&<> · <span style={{color:'#f97316'}}>{pfLocation.toUpperCase()}</span></>}
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:8}}>
+                    <button
+                      onClick={runAutomatedPriceHunt}
+                      disabled={phLoading || !pfCity.trim()}
+                      style={{fontSize:9,padding:'6px 10px',borderRadius:5,border:'1px solid rgba(249,115,22,0.4)',background:'rgba(249,115,22,0.14)',color:'#f97316',fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,cursor:'pointer',opacity:phLoading?0.6:1}}
+                    >
+                      {phLoading ? 'HUNTING…' : 'RUN AUTOMATED HUNT'}
+                    </button>
+                    <span style={{fontSize:9,color:'#fbbf24',fontFamily:"'IBM Plex Mono',monospace"}}>{phExtracted} extracted prices</span>
+                  </div>
+                  <div style={{fontSize:10,color:'#4a6080',lineHeight:1.6,marginBottom:10}}>
+                    Focused on clinics likely to post self-pay or transparent pricing. Use <strong style={{color:'#fbbf24'}}>FIND PRICE</strong> to jump directly to web search pages.
+                  </div>
+                  {phResults.length>0 && (
+                    <div style={{display:'grid',gap:6,marginBottom:10}}>
+                      {phResults.map((r:any,idx:number)=>(
+                        <div key={idx} style={{background:'rgba(251,191,36,0.08)',border:'1px solid rgba(251,191,36,0.22)',borderRadius:6,padding:'9px 10px'}}>
+                          <div style={{fontSize:11,fontWeight:700,color:'#ffe5a6',marginBottom:5}}>{r.name}</div>
+                          {(r.matches||[]).slice(0,2).map((m:any,mi:number)=>(
+                            <div key={mi} style={{marginBottom:6,padding:'6px',borderRadius:5,background:'rgba(7,20,42,0.5)',border:'1px solid rgba(251,191,36,0.18)'}}>
+                              <div style={{fontSize:9,color:'#fbbf24',marginBottom:3,fontFamily:"'IBM Plex Mono',monospace"}}>
+                                {(m.hits?.[0]?.value)||'Price mention found'}
+                              </div>
+                              <div style={{fontSize:8.5,color:'#9bb7d8',lineHeight:1.5,marginBottom:3}}>{(m.hits?.[0]?.context)||''}</div>
+                              <a href={m.url} target="_blank" rel="noopener noreferrer" style={{fontSize:8,color:'#67e8f9'}}>Source ↗</a>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                    {pfClinics.slice(0,15).map((c,i)=>(
+                      <div key={i} style={{background:'rgba(249,115,22,0.08)',border:'1px solid rgba(249,115,22,0.22)',borderRadius:6,padding:'9px 10px'}}>
+                        <div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center'}}>
+                          <div>
+                            <div style={{fontSize:11,fontWeight:700,color:'#ffd7bf'}}>{c.name}</div>
+                            <div style={{fontSize:9,color:'#c58b73'}}>{c.taxonomy||'Provider'}</div>
+                          </div>
+                          <a href={c.searchUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:8,padding:'4px 8px',borderRadius:4,background:'rgba(249,115,22,0.14)',border:'1px solid rgba(249,115,22,0.3)',color:'#f97316',textDecoration:'none',fontFamily:"'IBM Plex Mono',monospace",fontWeight:700}}>
+                            FIND PRICE ↗
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                    {pfClinics.length===0 && <div style={{fontSize:10,color:'#4a6080'}}>Run a provider search first, then use Price Hunt.</div>}
+                  </div>
+                </>
+              )}
+
+              {/* ── OCC HUNT TAB ── */}
+              {!pfLoading && pfTab==='occHunt' && (
+                <>
+                  <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
+                    OCC-HEALTH PARTNER HUNT{pfLocation&&<> · <span style={{color:'#38bdf8'}}>{pfLocation.toUpperCase()}</span></>}
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:8}}>
+                    <button
+                      onClick={runAutomatedOccHunt}
+                      disabled={ohLoading || !pfCity.trim()}
+                      style={{fontSize:9,padding:'6px 10px',borderRadius:5,border:'1px solid rgba(56,189,248,0.35)',background:'rgba(56,189,248,0.12)',color:'#38bdf8',fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,cursor:'pointer',opacity:ohLoading?0.6:1}}
+                    >
+                      {ohLoading ? 'SCORING…' : 'RUN OCC PARTNER HUNT'}
+                    </button>
+                    <span style={{fontSize:9,color:'#67e8f9',fontFamily:"'IBM Plex Mono',monospace"}}>{ohResults.length} partners scored</span>
+                  </div>
+                  {ohResults.length>0 && (
+                    <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:10}}>
+                      {ohResults.slice(0,15).map((c:any,i:number)=>(
+                        <div key={i} style={{background:'rgba(56,189,248,0.08)',border:'1px solid rgba(56,189,248,0.22)',borderRadius:6,padding:'9px 10px'}}>
+                          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
+                            <div>
+                              <div style={{fontSize:11,fontWeight:700,color:'#c9eeff'}}>{c.name}</div>
+                              <div style={{fontSize:9,color:'#6fa7c8'}}>{c.taxonomy||'Provider'}</div>
+                            </div>
+                            <div style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'2px 7px',borderRadius:999,border:'1px solid rgba(56,189,248,0.35)',color:'#38bdf8'}}>
+                              FIT {c.score}/10
+                            </div>
+                          </div>
+                          {Array.isArray(c.reasons) && c.reasons.length>0 && (
+                            <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:6}}>
+                              {c.reasons.slice(0,3).map((r:string,ri:number)=>(
+                                <span key={ri} style={{fontSize:8,padding:'1px 6px',borderRadius:999,border:'1px solid rgba(103,232,249,0.25)',background:'rgba(103,232,249,0.08)',color:'#8ce6ff'}}>
+                                  {r}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                    {pfClinics
+                      .map(c=>({c,score:occHealthScore(c)}))
+                      .sort((a,b)=>b.score-a.score)
+                      .slice(0,20)
+                      .map(({c,score},i)=>(
+                        <div key={i} style={{background:'rgba(56,189,248,0.08)',border:'1px solid rgba(56,189,248,0.22)',borderRadius:6,padding:'9px 10px'}}>
+                          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
+                            <div>
+                              <div style={{fontSize:11,fontWeight:700,color:'#c9eeff'}}>{c.name}</div>
+                              <div style={{fontSize:9,color:'#6fa7c8'}}>{c.taxonomy||'Provider'}</div>
+                            </div>
+                            <div style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'2px 7px',borderRadius:999,border:'1px solid rgba(56,189,248,0.35)',color:'#38bdf8'}}>
+                              FIT {score}/10
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    {pfClinics.length===0 && <div style={{fontSize:10,color:'#4a6080'}}>Run a provider search first, then use OCC Hunt scoring.</div>}
+                  </div>
+                </>
+              )}
 
               {/* ── REPORT A PRICE TAB ── */}
               {!pfLoading && pfTab==='report' && (
