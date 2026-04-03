@@ -260,18 +260,6 @@ async function smartSearch(query: string, limit = 8): Promise<string[]> {
   }
 
   return out.slice(0, limit);
-async function smartSearch(query: string, limit = 5): Promise<string[]> {
-  // Priority: Serper -> Tavily -> DuckDuckGo fallback (no key required)
-  const queries = await geminiExpandQuery(query);
-  for (const q of queries) {
-    const serper = await serperSearch(q, limit);
-    if (serper.length) return serper;
-    const tavily = await tavilySearch(q, limit);
-    if (tavily.length) return tavily;
-    const duck = await duckSearch(q, limit);
-    if (duck.length) return duck;
-  }
-  return [];
 }
 
 function extractPriceHitsFromHtml(html: string): PriceHit[] {
@@ -398,48 +386,6 @@ async function huntPrices(queries: string[]): Promise<HuntFetchResult[]> {
 
   // Return best candidates even when parsing misses explicit prices so users can still click through.
   return ranked.slice(0, 8);
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ");
-  const out: PriceHit[] = [];
-  const regex = /\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?/g;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(cleaned))) {
-    const start = Math.max(0, match.index - 64);
-    const end = Math.min(cleaned.length, match.index + 96);
-    const snippet = cleaned.slice(start, end);
-    const lc = snippet.toLowerCase();
-    if (
-      lc.includes("price") ||
-      lc.includes("cost") ||
-      lc.includes("cash") ||
-      lc.includes("self-pay") ||
-      lc.includes("self pay") ||
-      lc.includes("fee")
-    ) {
-      out.push({ value: match[0].replace(/\s+/g, ""), context: snippet.trim().slice(0, 180) });
-    }
-    if (out.length >= 6) break;
-  }
-  return out;
-}
-
-async function huntPrices(query: string): Promise<Array<{ url: string; hits: PriceHit[] }>> {
-  const urls = await smartSearch(query, 5);
-  const jobs = urls.map(async (url) => {
-    try {
-      const resp = await fetch(url, {
-        headers: { "user-agent": "Mozilla/5.0 (compatible; OccuMedBot/1.0)" },
-        signal: AbortSignal.timeout(9000),
-      });
-      if (!resp.ok) return { url, hits: [] as PriceHit[] };
-      const html = await resp.text();
-      return { url, hits: extractPriceHitsFromHtml(html).slice(0, 3) };
-    } catch {
-      return { url, hits: [] as PriceHit[] };
-    }
-  });
-  const rows = await Promise.all(jobs);
-  return rows.filter((r) => r.hits.length > 0).slice(0, 3);
 }
 
 async function searchNpi(city: string, state: string, taxonomyDesc: string, limit = 20): Promise<NpiResult[]> {
@@ -562,10 +508,10 @@ router.get('/price-hunt', async (req, res) => {
     }
 
     const taxonomies = TAXONOMY_MAP[serviceType] || TAXONOMY_MAP.urgentCare;
-    const batches = await Promise.all(
-      taxonomies.slice(0, 3).map((tax) => searchNpi(city, state, tax, 12).catch(() => [])),
-      taxonomies.slice(0, 2).map((tax) => searchNpi(city, state, tax, 8).catch(() => [])),
-    );
+    const batches = await Promise.all([
+      ...taxonomies.slice(0, 3).map((tax) => searchNpi(city, state, tax, 12).catch(() => [])),
+      ...taxonomies.slice(0, 2).map((tax) => searchNpi(city, state, tax, 8).catch(() => [])),
+    ]);
     const seen = new Set<string>();
     const clinics = batches
       .flat()
@@ -578,7 +524,7 @@ router.get('/price-hunt', async (req, res) => {
       })
       .slice(0, 15);
 
-    const hunted = await Promise.all(
+    const hunted = (await Promise.all(
       clinics.map(async (c) => {
         const queries = buildPriceQueries(c.name, city, state, serviceType);
         const matches = await huntPrices(queries);
@@ -588,15 +534,8 @@ router.get('/price-hunt', async (req, res) => {
           matches,
           hitCount: matches.reduce((n, m) => n + m.hits.length, 0),
         };
-      .slice(0, 8);
-
-    const hunted = await Promise.all(
-      clinics.map(async (c) => {
-        const q = `${c.name} ${city} ${state} price self pay fee schedule`;
-        const matches = await huntPrices(q);
-        return { ...c, matches };
       }),
-    );
+    )).slice(0, 8);
 
     res.json({
       location: `${city}${state ? ', ' + state.toUpperCase() : ''}`,
