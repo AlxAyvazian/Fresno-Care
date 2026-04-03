@@ -29,6 +29,18 @@ const SEARCH_LABEL: Record<string, string> = {
   vaccinations: 'vaccination / immunization clinic',
 };
 
+const PRICE_DOMAINS: Record<string, string[]> = {
+  urgentCare: ["site:sesamecare.com", "site:solvhealth.com", "site:cvs.com", "site:concentra.com", "site:mdsave.com"],
+  dental: ["site:opencare.com", "site:1800dentist.com", "site:affordablecare.com", "site:dentalplans.com"],
+  physicalExam: ["site:sesamecare.com", "site:concentra.com", "site:cvs.com", "site:mdsave.com"],
+  stressTest: ["site:mdsave.com", "site:newchoicehealth.com", "site:healthcarebluebook.com", "site:fairhealthconsumer.org"],
+  mammogram: ["site:mdsave.com", "site:newchoicehealth.com", "site:healthcarebluebook.com"],
+  dotExam: ["site:concentra.com", "site:carenow.com", "site:ohshealth.com", "site:sesamecare.com"],
+  vaccinations: ["site:cvs.com", "site:walgreens.com", "site:costco.com", "site:vaccines.gov"],
+  pharmacy: ["site:goodrx.com", "site:rxsaver.com", "site:costplusdrugs.com", "site:blinkhealth.com"],
+  faamedical: ["site:aopa.org", "site:aeromd.com", "site:mdsave.com", "site:sesamecare.com"],
+};
+
 const OCC_HUNT_TAXONOMIES = [
   "Occupational Medicine",
   "Preventive Medicine",
@@ -228,6 +240,26 @@ async function duckSearch(query: string, limit = 5): Promise<string[]> {
   return [...urls];
 }
 
+async function smartSearch(query: string, limit = 8): Promise<string[]> {
+  const queries = await geminiExpandQuery(query);
+  const out: string[] = [];
+
+  for (const q of queries) {
+    const buckets = await Promise.all([
+      serperSearch(q, limit).catch(() => []),
+      tavilySearch(q, limit).catch(() => []),
+      duckSearch(q, limit).catch(() => []),
+    ]);
+    for (const urls of buckets) {
+      for (const url of urls) {
+        const clean = url.split("#")[0];
+        if (!out.includes(clean)) out.push(clean);
+        if (out.length >= limit) return out.slice(0, limit);
+      }
+    }
+  }
+
+  return out.slice(0, limit);
 async function smartSearch(query: string, limit = 5): Promise<string[]> {
   // Priority: Serper -> Tavily -> DuckDuckGo fallback (no key required)
   const queries = await geminiExpandQuery(query);
@@ -246,6 +278,126 @@ function extractPriceHitsFromHtml(html: string): PriceHit[] {
   const cleaned = html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ");
+  const patterns = [
+    /\$\s?\d{1,4}(?:,\d{3})*(?:\.\d{2})?\s?(?:-|to)\s?\$?\s?\d{1,4}(?:,\d{3})*(?:\.\d{2})?/gi,
+    /(?:starting at|from|cash(?: price)?|self[- ]pay|self pay|fee(?: schedule)?|visit cost|price)[^$]{0,40}\$\s?\d{1,4}(?:,\d{3})*(?:\.\d{2})?/gi,
+    /\$\s?\d{1,4}(?:,\d{3})*(?:\.\d{2})?/g,
+  ];
+  const strongSignals = ["price", "cost", "cash", "self-pay", "self pay", "starting at", "from", "fee", "visit", "uninsured"];
+  const hits: PriceHit[] = [];
+  const seen = new Set<string>();
+
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(cleaned))) {
+      const start = Math.max(0, match.index - 90);
+      const end = Math.min(cleaned.length, match.index + 140);
+      const snippet = cleaned.slice(start, end).trim();
+      const lc = snippet.toLowerCase();
+      if (!strongSignals.some((s) => lc.includes(s))) continue;
+      const value = match[0].replace(/\s+/g, " ").trim();
+      const dedupeKey = `${value}|${snippet.slice(0, 80)}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      hits.push({ value, context: snippet.slice(0, 220) });
+      if (hits.length >= 8) return hits;
+    }
+  }
+  return hits;
+}
+
+type HuntFetchResult = {
+  url: string;
+  hits: PriceHit[];
+  contentType?: string;
+  isPdf?: boolean;
+  blocked?: boolean;
+  likelyTransparentSource?: boolean;
+};
+
+const TRANSPARENT_PRICE_HOSTS = [
+  "mdsave.com",
+  "newchoicehealth.com",
+  "healthcarebluebook.com",
+  "fairhealthconsumer.org",
+  "sesamecare.com",
+  "solvhealth.com",
+  "goodrx.com",
+  "rxsaver.com",
+  "costplusdrugs.com",
+  "blinkhealth.com",
+  "cvs.com",
+  "walgreens.com",
+  "concentra.com",
+];
+
+function isTransparentPriceHost(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return TRANSPARENT_PRICE_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+  } catch {
+    return false;
+  }
+}
+
+function buildPriceQueries(clinicName: string, city: string, state: string, serviceType: string): string[] {
+  const base = `${clinicName} ${city} ${state}`.trim();
+  const domains = PRICE_DOMAINS[serviceType] || [];
+  return [
+    `${base} self pay price`,
+    `${base} cash price`,
+    `${base} fee schedule`,
+    `${base} visit cost`,
+    `${base} price pdf`,
+    `${base} uninsured price`,
+    ...domains.map((d) => `${base} ${d}`),
+  ];
+}
+
+async function fetchPriceSignals(url: string): Promise<HuntFetchResult> {
+  const likelyTransparentSource = isTransparentPriceHost(url);
+  try {
+    const resp = await fetch(url, {
+      headers: { "user-agent": "Mozilla/5.0 (compatible; OccuMedBot/1.0)" },
+      signal: AbortSignal.timeout(10000),
+    });
+    const contentType = resp.headers.get("content-type") || "";
+    if (!resp.ok) return { url, hits: [], contentType, blocked: true, likelyTransparentSource };
+    if (contentType.includes("pdf") || /\.pdf(\?|$)/i.test(url)) {
+      return { url, hits: [], contentType, isPdf: true, likelyTransparentSource };
+    }
+    if (!contentType.includes("text/html")) return { url, hits: [], contentType, likelyTransparentSource };
+    const html = await resp.text();
+    return { url, hits: extractPriceHitsFromHtml(html).slice(0, 5), contentType, likelyTransparentSource };
+  } catch {
+    return { url, hits: [], blocked: true, likelyTransparentSource };
+  }
+}
+
+async function huntPrices(queries: string[]): Promise<HuntFetchResult[]> {
+  const urlSet = new Set<string>();
+  for (const q of queries) {
+    const urls = await smartSearch(q, 6);
+    for (const url of urls) {
+      urlSet.add(url);
+      if (urlSet.size >= 15) break;
+    }
+    if (urlSet.size >= 15) break;
+  }
+  const rows = await Promise.all([...urlSet].map((url) => fetchPriceSignals(url)));
+  const ranked = rows
+    .filter((r) => !r.blocked)
+    .sort((a, b) => {
+      const score = (r: HuntFetchResult) =>
+        (r.hits.length > 0 ? 3 : 0) + (r.isPdf ? 2 : 0) + (r.likelyTransparentSource ? 1 : 0);
+      return score(b) - score(a);
+    });
+
+  // Return best candidates even when parsing misses explicit prices so users can still click through.
+  return ranked.slice(0, 8);
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ");
   const out: PriceHit[] = [];
@@ -411,6 +563,7 @@ router.get('/price-hunt', async (req, res) => {
 
     const taxonomies = TAXONOMY_MAP[serviceType] || TAXONOMY_MAP.urgentCare;
     const batches = await Promise.all(
+      taxonomies.slice(0, 3).map((tax) => searchNpi(city, state, tax, 12).catch(() => [])),
       taxonomies.slice(0, 2).map((tax) => searchNpi(city, state, tax, 8).catch(() => [])),
     );
     const seen = new Set<string>();
@@ -423,6 +576,18 @@ router.get('/price-hunt', async (req, res) => {
         seen.add(k);
         return true;
       })
+      .slice(0, 15);
+
+    const hunted = await Promise.all(
+      clinics.map(async (c) => {
+        const queries = buildPriceQueries(c.name, city, state, serviceType);
+        const matches = await huntPrices(queries);
+        return {
+          ...c,
+          queries,
+          matches,
+          hitCount: matches.reduce((n, m) => n + m.hits.length, 0),
+        };
       .slice(0, 8);
 
     const hunted = await Promise.all(
@@ -439,6 +604,15 @@ router.get('/price-hunt', async (req, res) => {
       clinicCount: hunted.length,
       results: hunted,
       extracted: hunted.reduce((n, c) => n + c.matches.reduce((a, m) => a + m.hits.length, 0), 0),
+      pricingResources: PRICING_RESOURCES,
+      debug: {
+        apiKeys: {
+          serper: Boolean(process.env.SERPER_API_KEY),
+          tavily: Boolean(process.env.TAVILY_API_KEY),
+          gemini: Boolean(process.env.GEMINI_API_KEY),
+        },
+        huntedClinicCount: clinics.length,
+      },
     });
   } catch (err) {
     console.error('price-hunt error', err);

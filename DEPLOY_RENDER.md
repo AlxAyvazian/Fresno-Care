@@ -75,6 +75,10 @@ Then expose that URL to the frontend through a `VITE_...` environment variable a
 If you see that exact error in Render, it means Render cannot read the file from the branch/path you selected.
 
 1. Confirm this file exists at repo root on the selected branch:
+   - `render.yaml`
+2. In Render’s Blueprint screen:
+   - **Branch** should match the branch that contains the file.
+   - **Blueprint Path** should be exactly `render.yaml` (with the dot).
    - `render.yaml` (and this repo also includes `render.yml` for compatibility)
 2. In Render’s Blueprint screen:
    - **Branch** should match the branch that contains the file.

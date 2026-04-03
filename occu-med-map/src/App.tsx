@@ -682,6 +682,12 @@ export default function App() {
   const [pfLocation, setPfLocation] = useState('');
   const [pfDone, setPfDone] = useState(false);
   const [pfTab, setPfTab] = useState<'providers'|'compare'|'areaPrices'|'priceHunt'|'occHunt'|'report'>('providers');
+  const [pfNetworks, setPfNetworks] = useState<any[]>([]);
+  const [pfResources, setPfResources] = useState<any[]>([]);
+  const [phLoading, setPhLoading] = useState(false);
+  const [phResults, setPhResults] = useState<any[]>([]);
+  const [phExtracted, setPhExtracted] = useState(0);
+  const [phDebug, setPhDebug] = useState<any>(null);
   const [phLoading, setPhLoading] = useState(false);
   const [phResults, setPhResults] = useState<any[]>([]);
   const [phExtracted, setPhExtracted] = useState(0);
@@ -713,40 +719,24 @@ export default function App() {
     setPfError('');
     setPfClinics([]);
     setPfDone(false);
+    setPfNetworks([]);
+    setPfResources([]);
     try {
-      const taxonomies = PF_TAXONOMY_MAP[pfServiceType] || ['Family Medicine'];
-      const searches = [
-        ...taxonomies.slice(0, 2).map(t => pfSearchNpi(pfCity, pfState, t).catch((): any[] => [])),
-        pfSearchNpi(pfCity, pfState, 'Federally Qualified Health Center').catch((): any[] => []),
-      ];
-      const allResults = await Promise.all(searches);
-      const seen = new Set<string>();
-      const clinics: typeof pfClinics = [];
-      for (const batch of allResults) {
-        for (const r of batch) {
-          const nm = r.basic?.organization_name || `${r.basic?.first_name||''} ${r.basic?.last_name||''}`.trim();
-          if (!nm || seen.has(nm.toLowerCase())) continue;
-          seen.add(nm.toLowerCase());
-          const addr = r.addresses?.[0];
-          const address = addr ? `${addr.address_1}, ${addr.city}, ${addr.state} ${(addr.postal_code||'').slice(0,5)}` : '';
-          const taxonomy = r.taxonomies?.find((t:any)=>t.primary)?.desc || r.taxonomies?.[0]?.desc || '';
-          const isFqhc = taxonomy.toLowerCase().includes('federally qualified');
-          clinics.push({
-            name: nm,
-            address,
-            phone: addr?.telephone_number || '',
-            taxonomy,
-            isFqhc,
-            npiUrl: `https://npiregistry.cms.hhs.gov/provider-view/${r.basic?.npi||''}`,
-            searchUrl: `https://www.google.com/search?q=${encodeURIComponent(nm+' '+(addr?.city||'')+' '+(addr?.state||'')+' price cost')}`,
-          });
-        }
-      }
-      clinics.sort((a, b) => (b.isFqhc ? 1 : 0) - (a.isFqhc ? 1 : 0));
-      setPfClinics(clinics.slice(0, 20));
-      setPfLocation(`${pfCity.trim()}${pfState.trim() ? ', '+pfState.trim().toUpperCase() : ''}`);
+      const params = new URLSearchParams({
+        city: pfCity.trim(),
+        state: pfState.trim().toUpperCase(),
+        serviceType: pfServiceType,
+      });
+      const resp = await fetch(`/api/price-finder?${params.toString()}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setPfClinics(data.clinics || []);
+      setPfNetworks(data.networks || []);
+      setPfResources(data.pricingResources || []);
+      setPfLocation(data.location || `${pfCity}${pfState ? ', ' + pfState.toUpperCase() : ''}`);
       setPfTab('providers');
       setPfDone(true);
+      runAutomatedPriceHunt();
     } catch (e: any) {
       setPfError(e.message || 'Search failed. Please try again.');
     } finally {
@@ -1027,10 +1017,12 @@ export default function App() {
       const data = await resp.json();
       setPhResults(data.results || []);
       setPhExtracted(data.extracted || 0);
+      setPhDebug(data.debug || null);
     } catch (e) {
       console.warn('price hunt failed', e);
       setPhResults([]);
       setPhExtracted(0);
+      setPhDebug(null);
     } finally {
       setPhLoading(false);
     }
@@ -2170,7 +2162,7 @@ out center tags;`;
                   {/* Transparent pricing networks */}
                   <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>TRANSPARENT-PRICING NETWORKS</div>
                   <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:18}}>
-                    {(PF_NETWORKS[pfServiceType]||PF_NETWORKS.urgentCare).map((n,i)=>(
+                    {(pfNetworks.length ? pfNetworks : (PF_NETWORKS[pfServiceType]||PF_NETWORKS.urgentCare)).map((n,i)=>(
                       <a key={i} href={n.url} target="_blank" rel="noopener noreferrer" style={{
                         background:'rgba(10,24,48,0.5)',border:'1px solid rgba(20,50,100,0.5)',
                         borderRadius:6,padding:'9px 11px',textDecoration:'none',display:'block',
@@ -2187,7 +2179,7 @@ out center tags;`;
                   {/* Research tools */}
                   <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>PRICING RESEARCH TOOLS</div>
                   <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                    {PF_RESOURCES.map((r,i)=>(
+                    {(pfResources.length ? pfResources : PF_RESOURCES).map((r,i)=>(
                       <a key={i} href={r.url} target="_blank" rel="noopener noreferrer" style={{
                         flex:'1 1 180px',background:'rgba(6,182,212,0.05)',border:'1px solid rgba(6,182,212,0.15)',
                         borderRadius:6,padding:'8px 11px',textDecoration:'none',display:'block',
@@ -2325,11 +2317,37 @@ out center tags;`;
                   <div style={{fontSize:10,color:'#4a6080',lineHeight:1.6,marginBottom:10}}>
                     Focused on clinics likely to post self-pay or transparent pricing. Use <strong style={{color:'#fbbf24'}}>FIND PRICE</strong> to jump directly to web search pages.
                   </div>
+                  {phDebug && (
+                    <div style={{background:'rgba(56,189,248,0.06)',border:'1px solid rgba(56,189,248,0.18)',borderRadius:6,padding:'8px 10px',marginBottom:10,fontSize:8.5,color:'#8ecae6',fontFamily:"'IBM Plex Mono', monospace"}}>
+                      serper={String(phDebug.apiKeys?.serper)} · tavily={String(phDebug.apiKeys?.tavily)} · gemini={String(phDebug.apiKeys?.gemini)} · clinics={phDebug.huntedClinicCount}
+                    </div>
+                  )}
                   {phResults.length>0 && (
                     <div style={{display:'grid',gap:6,marginBottom:10}}>
                       {phResults.map((r:any,idx:number)=>(
                         <div key={idx} style={{background:'rgba(251,191,36,0.08)',border:'1px solid rgba(251,191,36,0.22)',borderRadius:6,padding:'9px 10px'}}>
                           <div style={{fontSize:11,fontWeight:700,color:'#ffe5a6',marginBottom:5}}>{r.name}</div>
+                          {(r.matches||[]).map((m:any,mi:number)=>(
+                            <div key={mi} style={{marginBottom:6,padding:'6px',borderRadius:5,background:'rgba(7,20,42,0.5)',border:'1px solid rgba(251,191,36,0.18)'}}>
+                              <div style={{ fontSize: 8, color: '#67e8f9', marginBottom: 5 }}>
+                                <a href={m.url} target="_blank" rel="noopener noreferrer" style={{ color: '#67e8f9' }}>{m.url}</a>
+                              </div>
+                              {m.isPdf && (
+                                <div style={{ fontSize: 8.5, color: '#fbbf24', marginBottom: 4 }}>
+                                  PDF found — likely pricing document or fee schedule
+                                </div>
+                              )}
+                              {!m.isPdf && (!m.hits || m.hits.length === 0) && (
+                                <div style={{ fontSize: 8.5, color: '#93c5fd', marginBottom: 4 }}>
+                                  No extractable price text found yet{m.likelyTransparentSource ? ' (transparent pricing source)' : ''} — open link to verify posted prices.
+                                </div>
+                              )}
+                              {(m.hits || []).map((hit:any,hi:number)=>(
+                                <div key={hi} style={{ marginBottom: 6 }}>
+                                  <div style={{fontSize:9,color:'#fbbf24',marginBottom:3,fontFamily:"'IBM Plex Mono',monospace"}}>{hit.value}</div>
+                                  <div style={{fontSize:8.5,color:'#9bb7d8',lineHeight:1.5}}>{hit.context}</div>
+                                </div>
+                              ))}
                           {(r.matches||[]).slice(0,2).map((m:any,mi:number)=>(
                             <div key={mi} style={{marginBottom:6,padding:'6px',borderRadius:5,background:'rgba(7,20,42,0.5)',border:'1px solid rgba(251,191,36,0.18)'}}>
                               <div style={{fontSize:9,color:'#fbbf24',marginBottom:3,fontFamily:"'IBM Plex Mono',monospace"}}>
