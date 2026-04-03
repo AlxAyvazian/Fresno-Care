@@ -29,6 +29,15 @@ const SEARCH_LABEL: Record<string, string> = {
   vaccinations: 'vaccination / immunization clinic',
 };
 
+const OCC_HUNT_TAXONOMIES = [
+  "Occupational Medicine",
+  "Preventive Medicine",
+  "Family Medicine",
+  "Internal Medicine",
+  "Chiropractor",
+  "Urgent Care",
+];
+
 // Known transparent-pricing clinic networks by type
 const TRANSPARENT_NETWORKS: Record<string, Array<{name:string;desc:string;url:string;tag:string}>> = {
   urgentCare: [
@@ -116,6 +125,171 @@ interface NpiResult {
   taxonomies: Array<{code: string; desc: string; primary: boolean}>;
 }
 
+interface PriceHit {
+  value: string;
+  context: string;
+}
+
+async function serperSearch(query: string, limit = 5): Promise<string[]> {
+  const key = process.env.SERPER_API_KEY;
+  if (!key) return [];
+  try {
+    const resp = await fetch("https://google.serper.dev/search", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+      },
+      body: JSON.stringify({ q: query, num: limit }),
+      signal: AbortSignal.timeout(9000),
+    });
+    if (!resp.ok) return [];
+    const data = (await resp.json()) as { organic?: Array<{ link?: string }> };
+    return (data.organic || []).map((r) => r.link || "").filter((u) => /^https?:\/\//.test(u)).slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
+async function tavilySearch(query: string, limit = 5): Promise<string[]> {
+  const key = process.env.TAVILY_API_KEY;
+  if (!key) return [];
+  try {
+    const resp = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        api_key: key,
+        query,
+        max_results: limit,
+        search_depth: "basic",
+        include_raw_content: false,
+      }),
+      signal: AbortSignal.timeout(9000),
+    });
+    if (!resp.ok) return [];
+    const data = (await resp.json()) as { results?: Array<{ url?: string }> };
+    return (data.results || []).map((r) => r.url || "").filter((u) => /^https?:\/\//.test(u)).slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
+async function geminiExpandQuery(query: string): Promise<string[]> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return [query];
+  try {
+    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(key)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: `Return JSON only: {"queries":["q1","q2","q3"]}. Rewrite this clinic price-hunt search query into up to 3 concise web-search queries focused on posted self-pay prices: ${query}`,
+          }],
+        }],
+      }),
+      signal: AbortSignal.timeout(9000),
+    });
+    if (!resp.ok) return [query];
+    const data = (await resp.json()) as any;
+    const txt: string =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "";
+    const jsonStart = txt.indexOf("{");
+    const jsonEnd = txt.lastIndexOf("}");
+    if (jsonStart < 0 || jsonEnd <= jsonStart) return [query];
+    const parsed = JSON.parse(txt.slice(jsonStart, jsonEnd + 1)) as { queries?: string[] };
+    const queries = (parsed.queries || []).map((q) => String(q || "").trim()).filter(Boolean);
+    return queries.length ? queries.slice(0, 3) : [query];
+  } catch {
+    return [query];
+  }
+}
+
+async function duckSearch(query: string, limit = 5): Promise<string[]> {
+  const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const resp = await fetch(url, {
+    headers: { "user-agent": "Mozilla/5.0 (compatible; OccuMedBot/1.0)" },
+    signal: AbortSignal.timeout(9000),
+  });
+  if (!resp.ok) return [];
+  const html = await resp.text();
+  const urls = new Set<string>();
+  const re = /uddg=([^"&]+)|href="(https?:\/\/[^"]+)"/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) && urls.size < limit) {
+    const raw = m[1] ? decodeURIComponent(m[1]) : m[2];
+    if (!raw) continue;
+    if (!/^https?:\/\//i.test(raw)) continue;
+    if (raw.includes("duckduckgo.com")) continue;
+    urls.add(raw);
+  }
+  return [...urls];
+}
+
+async function smartSearch(query: string, limit = 5): Promise<string[]> {
+  // Priority: Serper -> Tavily -> DuckDuckGo fallback (no key required)
+  const queries = await geminiExpandQuery(query);
+  for (const q of queries) {
+    const serper = await serperSearch(q, limit);
+    if (serper.length) return serper;
+    const tavily = await tavilySearch(q, limit);
+    if (tavily.length) return tavily;
+    const duck = await duckSearch(q, limit);
+    if (duck.length) return duck;
+  }
+  return [];
+}
+
+function extractPriceHitsFromHtml(html: string): PriceHit[] {
+  const cleaned = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ");
+  const out: PriceHit[] = [];
+  const regex = /\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(cleaned))) {
+    const start = Math.max(0, match.index - 64);
+    const end = Math.min(cleaned.length, match.index + 96);
+    const snippet = cleaned.slice(start, end);
+    const lc = snippet.toLowerCase();
+    if (
+      lc.includes("price") ||
+      lc.includes("cost") ||
+      lc.includes("cash") ||
+      lc.includes("self-pay") ||
+      lc.includes("self pay") ||
+      lc.includes("fee")
+    ) {
+      out.push({ value: match[0].replace(/\s+/g, ""), context: snippet.trim().slice(0, 180) });
+    }
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+
+async function huntPrices(query: string): Promise<Array<{ url: string; hits: PriceHit[] }>> {
+  const urls = await smartSearch(query, 5);
+  const jobs = urls.map(async (url) => {
+    try {
+      const resp = await fetch(url, {
+        headers: { "user-agent": "Mozilla/5.0 (compatible; OccuMedBot/1.0)" },
+        signal: AbortSignal.timeout(9000),
+      });
+      if (!resp.ok) return { url, hits: [] as PriceHit[] };
+      const html = await resp.text();
+      return { url, hits: extractPriceHitsFromHtml(html).slice(0, 3) };
+    } catch {
+      return { url, hits: [] as PriceHit[] };
+    }
+  });
+  const rows = await Promise.all(jobs);
+  return rows.filter((r) => r.hits.length > 0).slice(0, 3);
+}
+
 async function searchNpi(city: string, state: string, taxonomyDesc: string, limit = 20): Promise<NpiResult[]> {
   const params = new URLSearchParams({
     version: '2.1',
@@ -154,6 +328,19 @@ function formatNpiResult(r: NpiResult, serviceType: string) {
     npiUrl: `https://npiregistry.cms.hhs.gov/provider-view/${r.basic?.npi || ''}`,
     searchUrl: `https://www.google.com/search?q=${encodeURIComponent(name + ' ' + (addr?.city || '') + ' ' + (addr?.state || '') + ' pricing cost')}`,
   };
+}
+
+function occHuntScore(c: ReturnType<typeof formatNpiResult>) {
+  const txt = `${c.name} ${c.taxonomy}`.toLowerCase();
+  let score = 0;
+  const reasons: string[] = [];
+  if (txt.includes("occupational")) { score += 5; reasons.push("Occupational taxonomy"); }
+  if (txt.includes("urgent")) { score += 2; reasons.push("Urgent care capability"); }
+  if (txt.includes("family medicine") || txt.includes("internal medicine")) { score += 1; reasons.push("Primary care compatible"); }
+  if (txt.includes("chiropr")) { score += 2; reasons.push("DOT/chiro potential"); }
+  if (txt.includes("aerospace") || txt.includes("aviation")) { score += 2; reasons.push("FAA potential"); }
+  if (c.isFqhc) { score += 1; reasons.push("FQHC / sliding scale"); }
+  return { score: Math.min(score, 10), reasons };
 }
 
 router.get('/price-finder', async (req, res) => {
@@ -209,6 +396,90 @@ router.get('/price-finder', async (req, res) => {
   } catch (err) {
     console.error('price-finder error', err);
     res.status(500).json({ error: 'Search failed. Please try again.' });
+  }
+});
+
+router.get('/price-hunt', async (req, res) => {
+  try {
+    const city = String(req.query.city || '').trim();
+    const state = String(req.query.state || '').trim();
+    const serviceType = String(req.query.serviceType || 'urgentCare');
+    if (!city) {
+      res.status(400).json({ error: 'city is required' });
+      return;
+    }
+
+    const taxonomies = TAXONOMY_MAP[serviceType] || TAXONOMY_MAP.urgentCare;
+    const batches = await Promise.all(
+      taxonomies.slice(0, 2).map((tax) => searchNpi(city, state, tax, 8).catch(() => [])),
+    );
+    const seen = new Set<string>();
+    const clinics = batches
+      .flat()
+      .map((r) => formatNpiResult(r, serviceType))
+      .filter((c) => {
+        const k = c.name.toLowerCase();
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .slice(0, 8);
+
+    const hunted = await Promise.all(
+      clinics.map(async (c) => {
+        const q = `${c.name} ${city} ${state} price self pay fee schedule`;
+        const matches = await huntPrices(q);
+        return { ...c, matches };
+      }),
+    );
+
+    res.json({
+      location: `${city}${state ? ', ' + state.toUpperCase() : ''}`,
+      serviceType,
+      clinicCount: hunted.length,
+      results: hunted,
+      extracted: hunted.reduce((n, c) => n + c.matches.reduce((a, m) => a + m.hits.length, 0), 0),
+    });
+  } catch (err) {
+    console.error('price-hunt error', err);
+    res.status(500).json({ error: 'Price hunt failed. Please try again.' });
+  }
+});
+
+router.get('/occ-hunt', async (req, res) => {
+  try {
+    const city = String(req.query.city || '').trim();
+    const state = String(req.query.state || '').trim();
+    if (!city) {
+      res.status(400).json({ error: 'city is required' });
+      return;
+    }
+
+    const batches = await Promise.all(
+      OCC_HUNT_TAXONOMIES.slice(0, 4).map((tax) => searchNpi(city, state, tax, 15).catch(() => [])),
+    );
+    const seen = new Set<string>();
+    const ranked = batches
+      .flat()
+      .map((r) => formatNpiResult(r, "physicalExam"))
+      .filter((c) => {
+        const k = c.name.toLowerCase();
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .map((c) => ({ ...c, ...occHuntScore(c) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 25);
+
+    res.json({
+      location: `${city}${state ? ', ' + state.toUpperCase() : ''}`,
+      count: ranked.length,
+      partners: ranked,
+    });
+  } catch (err) {
+    console.error('occ-hunt error', err);
+    res.status(500).json({ error: 'OCC hunt failed. Please try again.' });
   }
 });
 
