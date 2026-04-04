@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: occu-med-map
+    name: network-map
     runtime: node
     plan: free
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/occu-med-map build && pnpm --filter @workspace/api-server build
