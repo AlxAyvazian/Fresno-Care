@@ -658,9 +658,9 @@ export default function App() {
   const [dropCenter, setDropCenter] = useState<{lat:number;lng:number}|null>(null);
   const [dropRadiusMiles, setDropRadiusMiles] = useState(25);
   const [dropFacilityType, setDropFacilityType] = useState('all');
-  const [dropUi, setDropUi] = useState({panelOpen:false, exportLoading:false, status:''});
   const [outreachNotes, setOutreachNotes] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_notes')||'{}'); } catch { return {}; } });
   const [outreachStatus, setOutreachStatus] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_status')||'{}'); } catch { return {}; } });
+  const [dropUi, setDropUi] = useState({panelOpen:false, exportLoading:false, status:''});
   const lastRadiusRef = useRef<{lat:number;lng:number}|null>(null);
 
   function updateOutreachNote(id:any, value:string) {
