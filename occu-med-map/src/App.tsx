@@ -10,6 +10,7 @@ import {
   PROCEDURE_RATES, STATE_COST_INDEX, STATE_COST_TIER,
   adjustedPrice, tierColor,
 } from './lib/procedurePrices';
+import { buildCitiesInRadius, buildFacilityRows, queryFacilitiesInRadius } from './lib/radiusExtractor';
 
 // ── FIPS → state abbreviation lookup ────────────────────────────────────────
 const FIPS2CODE: Record<string,string> = {
@@ -593,6 +594,8 @@ export default function App() {
   const liveGrpRef = useRef<L.LayerGroup|null>(null);
   const liveCircleRef = useRef<L.Circle|null>(null);
   const livePinRef = useRef<L.Marker|null>(null);
+  const dropCircleRef = useRef<L.Circle|null>(null);
+  const dropPinRef = useRef<L.Marker|null>(null);
   const popDensityLayerRef = useRef<L.LayerGroup|null>(null);
   const clinicLayerRef = useRef<L.LayerGroup|null>(null);
   const rawStateFeaturesRef = useRef<any[]>([]);
@@ -652,8 +655,13 @@ export default function App() {
   const [liveHighlightId, setLiveHighlightId] = useState<any>(null);
   const [liveHint, setLiveHint] = useState('Click anywhere on the map to search for facilities');
   const [liveMirror, setLiveMirror] = useState('');
+  const [dropCenter, setDropCenter] = useState<{lat:number;lng:number}|null>(null);
+  const [dropRadiusMiles, setDropRadiusMiles] = useState(25);
+  const [dropFacilityType, setDropFacilityType] = useState('all');
+  const [dropIncludeFacilities, setDropIncludeFacilities] = useState(true);
   const [outreachNotes, setOutreachNotes] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_notes')||'{}'); } catch { return {}; } });
   const [outreachStatus, setOutreachStatus] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_status')||'{}'); } catch { return {}; } });
+  const [dropUi, setDropUi] = useState({panelOpen:false, exportLoading:false, status:''});
   const lastRadiusRef = useRef<{lat:number;lng:number}|null>(null);
 
   function updateOutreachNote(id:any, value:string) {
@@ -797,6 +805,94 @@ export default function App() {
     a.remove();
   }
 
+  function drawDropRadius(lat:number,lng:number,radiusMiles:number) {
+    const map = mapRef.current;
+    if (!map) return;
+    if (dropCircleRef.current) { try { map.removeLayer(dropCircleRef.current); } catch {} }
+    if (dropPinRef.current) { try { map.removeLayer(dropPinRef.current); } catch {} }
+    const meters = Math.max(radiusMiles, 0.1) * 1609.34;
+    dropCircleRef.current = L.circle([lat, lng], {
+      radius: meters,
+      color: '#ef4444',
+      weight: 2,
+      opacity: 0.95,
+      fillColor: '#ef4444',
+      fillOpacity: 0.1,
+      className: 'drop-radius-ring',
+    }).addTo(map);
+    dropPinRef.current = L.marker([lat,lng], {
+      icon: L.divIcon({
+        className: '',
+        html: '<div style="width:14px;height:14px;border-radius:50%;background:#ef4444;border:2px solid #fff;box-shadow:0 0 0 4px rgba(239,68,68,0.26),0 0 16px rgba(239,68,68,0.72);"></div>',
+        iconSize:[14,14],
+        iconAnchor:[7,7],
+      }),
+      zIndexOffset: 3500,
+      interactive: false,
+    }).addTo(map);
+  }
+
+  async function exportRadiusWorkbook() {
+    if (!dropCenter) { alert('Click the map first to set a radius center.'); return; }
+    setDropUi(prev=>({...prev, exportLoading:true, status:'Preparing city and facility extraction…'}));
+    try {
+      const cities = buildCitiesInRadius(dropCenter, dropRadiusMiles);
+
+      let facilities:any[] = [];
+      if (dropIncludeFacilities) {
+        const facilitiesRaw = await queryFacilitiesInRadius({
+          lat: dropCenter.lat,
+          lng: dropCenter.lng,
+          radiusMiles: dropRadiusMiles,
+          endpoints: OVERPASS_ENDPOINTS,
+          classifyFacility,
+          onStatus: (msg) => setDropUi(prev=>({...prev, status:msg})),
+        });
+        if (facilitiesRaw.length) {
+          setLiveResults(facilitiesRaw.map((r:any)=>({
+            ...r,
+            dist: haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng),
+          })));
+        }
+        facilities = buildFacilityRows(dropCenter, facilitiesRaw, dropFacilityType, CATS as any);
+      }
+
+      const wb = XLSX.utils.book_new();
+      const wsCities = XLSX.utils.json_to_sheet(cities.length ? cities : [{
+        city: 'No cities in radius',
+        state: '',
+        distanceMiles: '',
+        populationEstimate: '',
+      }]);
+      XLSX.utils.book_append_sheet(wb, wsCities, 'Cities');
+      const wsFacilities = XLSX.utils.json_to_sheet(dropIncludeFacilities
+        ? (facilities.length ? facilities : [{
+          name: 'No facilities available',
+          type: dropFacilityType === 'all' ? 'All types' : (CATS[dropFacilityType]?.lbl || dropFacilityType),
+          distanceMiles: '',
+          address: '',
+          phone: '',
+          website: '',
+        }])
+        : [{
+          name: 'Facilities not requested',
+          type: 'Exported cities only',
+          distanceMiles: '',
+          address: '',
+          phone: '',
+          website: '',
+        }]
+      );
+      XLSX.utils.book_append_sheet(wb, wsFacilities, 'Facilities');
+      XLSX.writeFile(wb, `radius_extract_${new Date().toISOString().slice(0,10)}.xlsx`);
+      setDropUi(prev=>({...prev, status:`Done: ${cities.length} cities/towns${dropIncludeFacilities?` and ${facilities.length} facilities`:''} exported.`}));
+    } catch (e:any) {
+      setDropUi(prev=>({...prev, status:`Export failed: ${e?.message || 'unknown error'}`}));
+    } finally {
+      setDropUi(prev=>({...prev, exportLoading:false}));
+    }
+  }
+
   // Stats
   const totalCities = LOCS.length;
   const statesCount = Object.keys(SD).length;
@@ -855,6 +951,9 @@ export default function App() {
     map.on('click',(e:L.LeafletMouseEvent)=>{
       const est = estimateLocalPopulationDensity(e.latlng.lat, e.latlng.lng);
       if (est) setLocalPopInfo(est);
+      setDropCenter({lat:e.latlng.lat,lng:e.latlng.lng});
+      setDropUi(prev=>({...prev, panelOpen:true, status:''}));
+      drawDropRadius(e.latlng.lat, e.latlng.lng, dropRadiusMiles);
       if(liveOpenRef.current) {
         doLiveSearch(e.latlng.lat, e.latlng.lng);
       }
@@ -868,6 +967,13 @@ export default function App() {
 
   const liveOpenRef = useRef(false);
   useEffect(()=>{ liveOpenRef.current = liveOpen; },[liveOpen]);
+  const showStateColorsRef = useRef(showStateColors);
+  useEffect(()=>{ showStateColorsRef.current = showStateColors; },[showStateColors]);
+  useEffect(()=>{
+    if(!dropCenter) return;
+    drawDropRadius(dropCenter.lat, dropCenter.lng, dropRadiusMiles);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[dropCenter, dropRadiusMiles]);
 
   const labelLayerRef = useRef<L.LayerGroup|null>(null);
 
@@ -893,7 +999,7 @@ export default function App() {
             const postal = f.properties.postal;
             layer.on({
               mouseover:(e:any)=>{ e.target.setStyle({weight:2,opacity:0.9}); },
-              mouseout:(e:any)=>{ stateGeo.resetStyle(e.target); },
+              mouseout:(e:any)=>{ e.target.setStyle(sStyle(postal, metricRef.current)); },
               click:(e:any)=>{
                 L.popup({maxWidth:340,className:''})
                   .setLatLng(e.latlng)
@@ -923,7 +1029,7 @@ export default function App() {
   function sStyle(postal:string,m:string):L.PathOptions {
     const d=SD[postal];
     if(!d) return{fillColor:'#0a1830',fillOpacity:0.38,weight:1,color:'rgba(99,179,237,0.15)',opacity:0.6};
-    if(!showStateColors) return {fillColor:'#11243f',fillOpacity:0.12,weight:1,color:'rgba(161,209,255,0.25)',opacity:0.8};
+    if(!showStateColorsRef.current) return {fillColor:'#11243f',fillOpacity:0.12,weight:1,color:'rgba(161,209,255,0.25)',opacity:0.8};
     const v=getVal(d,m);
     const col=DCOL[v]||'#3d5478';
     return{fillColor:col,fillOpacity:0.25,weight:1,color:col,opacity:0.45};
@@ -1669,6 +1775,7 @@ out center tags;`;
         <div className="hdr-actions">
           <button className={`hdr-btn${rpOpen?' active':''}`} onClick={()=>setRpOpen(o=>!o)}>◎ COVERAGE</button>
           <button className={`hdr-btn${liveOpen?' active':''}`} onClick={()=>setLiveOpen(o=>!o)}>📡 LIVE FINDER</button>
+          <button className={`hdr-btn${dropUi.panelOpen?' active':''}`} style={{color:'#fca5a5'}} onClick={()=>setDropUi(prev=>({...prev, panelOpen:!prev.panelOpen}))}>⭕ RADIUS TOOL</button>
           <button className="hdr-btn" onClick={()=>setShowDir(true)}>📁 DIRECTORIES</button>
           <button className={`hdr-btn${showPriceFinder?' active':''}`} style={{color:'#34d399'}} onClick={()=>setShowPriceFinder(o=>!o)}>💲 PRICE FINDER</button>
           <button className="hdr-btn" style={{color:'#f472b6'}} onClick={()=>setShowUploadModal(true)}>
@@ -1785,6 +1892,58 @@ out center tags;`;
               <div className="local-pop-row"><span>Nearest city</span><strong>{localPopInfo.nearestCity}</strong></div>
               <div className="local-pop-row"><span>Distance</span><strong>{localPopInfo.nearestDist.toFixed(1)} mi</strong></div>
               <div className="local-pop-meta">{localPopInfo.lat.toFixed(4)}, {localPopInfo.lng.toFixed(4)}</div>
+            </div>
+          )}
+          {dropUi.panelOpen&&(
+            <div className="local-pop-card" style={{top: dropCenter ? 184 : 96, borderColor:'rgba(252,165,165,0.35)', boxShadow:'0 10px 30px rgba(239,68,68,0.16)'}}>
+              <div className="local-pop-title" style={{color:'#fecaca'}}>Radius extractor</div>
+              <div className="local-pop-meta" style={{marginBottom:8,color:'#fca5a5'}}>Click map to move the center point</div>
+              <div style={{display:'grid',gap:6}}>
+                <div>
+                  <div style={{fontSize:9,color:'#fda4af',marginBottom:3}}>Radius (miles)</div>
+                  <input
+                    type="number"
+                    min={0.1}
+                    step={0.1}
+                    value={dropRadiusMiles}
+                    onChange={e=>setDropRadiusMiles(Math.max(0.1, Number(e.target.value)||0.1))}
+                    className="drivetime-input"
+                  />
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:'#fda4af',marginBottom:3}}>Facility type for export</div>
+                  <select className="rp-select" value={dropFacilityType} onChange={e=>setDropFacilityType(e.target.value)}>
+                    <option value="all">All facilities</option>
+                    <option value="hospital">Hospital</option>
+                    <option value="clinic">Clinic</option>
+                    <option value="dentist">Dental</option>
+                    <option value="stress">Cardio / Stress Test</option>
+                    <option value="doctor">Doctor / GP</option>
+                    <option value="pharmacy">Pharmacy</option>
+                    {Object.entries(CATS).filter(([k])=>!['hospital','clinic','dentist','stress','doctor','pharmacy'].includes(k)).map(([cat,c])=>(
+                      <option key={cat} value={cat}>{c.lbl}</option>
+                    ))}
+                  </select>
+                </div>
+                <label style={{display:'flex',alignItems:'center',gap:6,fontSize:9,color:'#fecaca',cursor:'pointer'}}>
+                  <input
+                    type="checkbox"
+                    checked={dropIncludeFacilities}
+                    onChange={e=>setDropIncludeFacilities(e.target.checked)}
+                  />
+                  Include facilities in export
+                </label>
+                {dropCenter&&<div style={{fontSize:9,color:'#fecaca'}}>Center: {dropCenter.lat.toFixed(4)}, {dropCenter.lng.toFixed(4)}</div>}
+                {dropUi.status&&<div style={{fontSize:9,color:'#fca5a5',lineHeight:1.4}}>{dropUi.status}</div>}
+                <div style={{display:'flex',gap:6}}>
+                  <button className="drivetime-btn" disabled={dropUi.exportLoading||!dropCenter} onClick={exportRadiusWorkbook} style={{background:'rgba(239,68,68,0.16)',borderColor:'rgba(252,165,165,0.4)',color:'#fecaca'}}>
+                    {dropUi.exportLoading ? 'Extracting…' : 'Extract to Excel'}
+                  </button>
+                  <button className="drivetime-btn" onClick={()=>setDropUi(prev=>({...prev, panelOpen:false}))} style={{background:'rgba(148,163,184,0.15)',borderColor:'rgba(148,163,184,0.35)',color:'#cbd5e1',maxWidth:88}}>
+                    Hide
+                  </button>
+                </div>
+              </div>
             </div>
           )}
           {showTZ&&(
