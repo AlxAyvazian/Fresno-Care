@@ -253,6 +253,11 @@ function haversine(lat1:number,lng1:number,lat2:number,lng2:number):number {
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 function fmtDist(m:number):string { return m<1000?Math.round(m)+'m':((m/1609.34).toFixed(1)+' mi'); }
+function estimateCityPopulationByTier(tier:number, state:string) {
+  const baseByTier:Record<number, number> = {1:900000, 2:250000, 3:75000, 4:20000};
+  const densityFactor = STATE_POP[state]?.density ? Math.max(0.65, Math.min(1.6, STATE_POP[state].density / 250)) : 1;
+  return Math.round((baseByTier[tier] || 20000) * densityFactor);
+}
 
 function calcDrive(lat1:number,lng1:number,lat2:number,lng2:number) {
   const R=3958.8,dL=(lat2-lat1)*Math.PI/180,dN=(lng2-lng1)*Math.PI/180;
@@ -593,6 +598,8 @@ export default function App() {
   const liveGrpRef = useRef<L.LayerGroup|null>(null);
   const liveCircleRef = useRef<L.Circle|null>(null);
   const livePinRef = useRef<L.Marker|null>(null);
+  const dropCircleRef = useRef<L.Circle|null>(null);
+  const dropPinRef = useRef<L.Marker|null>(null);
   const popDensityLayerRef = useRef<L.LayerGroup|null>(null);
   const clinicLayerRef = useRef<L.LayerGroup|null>(null);
   const rawStateFeaturesRef = useRef<any[]>([]);
@@ -652,6 +659,12 @@ export default function App() {
   const [liveHighlightId, setLiveHighlightId] = useState<any>(null);
   const [liveHint, setLiveHint] = useState('Click anywhere on the map to search for facilities');
   const [liveMirror, setLiveMirror] = useState('');
+  const [dropCenter, setDropCenter] = useState<{lat:number;lng:number}|null>(null);
+  const [dropRadiusMiles, setDropRadiusMiles] = useState(25);
+  const [dropFacilityType, setDropFacilityType] = useState('all');
+  const [dropPanelOpen, setDropPanelOpen] = useState(false);
+  const [dropExportLoading, setDropExportLoading] = useState(false);
+  const [dropStatus, setDropStatus] = useState('');
   const [outreachNotes, setOutreachNotes] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_notes')||'{}'); } catch { return {}; } });
   const [outreachStatus, setOutreachStatus] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_status')||'{}'); } catch { return {}; } });
   const lastRadiusRef = useRef<{lat:number;lng:number}|null>(null);
@@ -797,6 +810,139 @@ export default function App() {
     a.remove();
   }
 
+  function drawDropRadius(lat:number,lng:number,radiusMiles:number) {
+    const map = mapRef.current;
+    if (!map) return;
+    if (dropCircleRef.current) { try { map.removeLayer(dropCircleRef.current); } catch {} }
+    if (dropPinRef.current) { try { map.removeLayer(dropPinRef.current); } catch {} }
+    const meters = Math.max(radiusMiles, 0.1) * 1609.34;
+    dropCircleRef.current = L.circle([lat, lng], {
+      radius: meters,
+      color: '#ef4444',
+      weight: 2,
+      opacity: 0.95,
+      fillColor: '#ef4444',
+      fillOpacity: 0.1,
+      className: 'drop-radius-ring',
+    }).addTo(map);
+    dropPinRef.current = L.marker([lat,lng], {
+      icon: L.divIcon({
+        className: '',
+        html: '<div style="width:14px;height:14px;border-radius:50%;background:#ef4444;border:2px solid #fff;box-shadow:0 0 0 4px rgba(239,68,68,0.26),0 0 16px rgba(239,68,68,0.72);"></div>',
+        iconSize:[14,14],
+        iconAnchor:[7,7],
+      }),
+      zIndexOffset: 3500,
+      interactive: false,
+    }).addTo(map);
+  }
+
+  async function queryFacilitiesInRadius(lat:number,lng:number,radiusMiles:number) {
+    const r = Math.max(radiusMiles, 0.1) * 1609.34;
+    const q=`[out:json][timeout:30];(
+  node["amenity"="hospital"](around:${r},${lat},${lng});
+  node["amenity"="clinic"](around:${r},${lat},${lng});
+  node["amenity"="doctors"](around:${r},${lat},${lng});
+  node["amenity"="pharmacy"](around:${r},${lat},${lng});
+  node["amenity"="dentist"](around:${r},${lat},${lng});
+  node["amenity"="urgent_care"](around:${r},${lat},${lng});
+  node["amenity"="nursing_home"](around:${r},${lat},${lng});
+  node["healthcare"](around:${r},${lat},${lng});
+  way["healthcare"](around:${r},${lat},${lng});
+  way["amenity"="hospital"](around:${r},${lat},${lng});
+  way["amenity"="clinic"](around:${r},${lat},${lng});
+  node["office"="physician"](around:${r},${lat},${lng});
+  node["office"="medical"](around:${r},${lat},${lng});
+  node["shop"="optician"](around:${r},${lat},${lng});
+  node["shop"="chemist"](around:${r},${lat},${lng});
+);
+out center tags;`;
+    for(let i=0;i<OVERPASS_ENDPOINTS.length;i++) {
+      try {
+        setDropStatus(`Searching facilities (mirror ${i+1}/${OVERPASS_ENDPOINTS.length})…`);
+        const controller=new AbortController();
+        const timer=setTimeout(()=>controller.abort(),9000);
+        const res=await fetch(OVERPASS_ENDPOINTS[i],{method:'POST',body:'data='+encodeURIComponent(q),signal:controller.signal});
+        clearTimeout(timer);
+        if(!res.ok) continue;
+        const data=await res.json();
+        if(!data||!Array.isArray(data.elements)) continue;
+        const seen:Record<string,boolean>={};
+        return data.elements.map((el:any)=>{
+          const la=el.lat||(el.center&&el.center.lat);
+          const lo=el.lon||(el.center&&el.center.lon);
+          if(!la||!lo) return null;
+          const t=el.tags||{};
+          const nm=t.name||t['name:en']||t.operator||'Unnamed Facility';
+          const key=nm.toLowerCase()+'|'+Math.round(la*500)+'|'+Math.round(lo*500);
+          if(seen[key]) return null; seen[key]=true;
+          const ad=[t['addr:housenumber'],t['addr:street'],t['addr:city']].filter(Boolean).join(' ');
+          return{id:el.id,lat:la,lng:lo,name:nm,cat:classifyFacility(t),addr:ad,phone:t.phone||t['contact:phone']||'',website:t.website||t['contact:website']||''};
+        }).filter(Boolean);
+      } catch {}
+    }
+    return [];
+  }
+
+  async function exportRadiusWorkbook() {
+    if (!dropCenter) { alert('Click the map first to set a radius center.'); return; }
+    setDropExportLoading(true);
+    setDropStatus('Preparing city and facility extraction…');
+    try {
+      const cities = LOCS
+        .map((l:any)=>({
+          city: l[0],
+          state: l[1],
+          distanceMiles: Number(approxMiles(dropCenter.lat, dropCenter.lng, l[2], l[3]).toFixed(2)),
+          populationEstimate: estimateCityPopulationByTier(l[4], l[1]),
+        }))
+        .filter((c:any)=>c.distanceMiles <= dropRadiusMiles)
+        .sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
+
+      const facilitiesRaw = await queryFacilitiesInRadius(dropCenter.lat, dropCenter.lng, dropRadiusMiles);
+      if (facilitiesRaw.length) {
+        setLiveResults(facilitiesRaw.map((r:any)=>({
+          ...r,
+          dist: haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng),
+        })));
+      }
+      const filteredFacilities = facilitiesRaw
+        .filter((r:any)=>dropFacilityType === 'all' ? true : r.cat === dropFacilityType);
+      const facilities = filteredFacilities.map((r:any)=>({
+        name: r.name,
+        type: CATS[r.cat]?.lbl || r.cat,
+        distanceMiles: Number((haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng) / 1609.34).toFixed(2)),
+        address: r.addr || '',
+        phone: r.phone || '',
+        website: r.website || '',
+      })).sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
+
+      const wb = XLSX.utils.book_new();
+      const wsCities = XLSX.utils.json_to_sheet(cities.length ? cities : [{
+        city: 'No cities in radius',
+        state: '',
+        distanceMiles: '',
+        populationEstimate: '',
+      }]);
+      XLSX.utils.book_append_sheet(wb, wsCities, 'Cities');
+      const wsFacilities = XLSX.utils.json_to_sheet(facilities.length ? facilities : [{
+        name: 'No facilities available',
+        type: dropFacilityType === 'all' ? 'All types' : (CATS[dropFacilityType]?.lbl || dropFacilityType),
+        distanceMiles: '',
+        address: '',
+        phone: '',
+        website: '',
+      }]);
+      XLSX.utils.book_append_sheet(wb, wsFacilities, 'Facilities');
+      XLSX.writeFile(wb, `radius_extract_${new Date().toISOString().slice(0,10)}.xlsx`);
+      setDropStatus(`Done: ${cities.length} cities/towns and ${facilities.length} facilities exported.`);
+    } catch (e:any) {
+      setDropStatus(`Export failed: ${e?.message || 'unknown error'}`);
+    } finally {
+      setDropExportLoading(false);
+    }
+  }
+
   // Stats
   const totalCities = LOCS.length;
   const statesCount = Object.keys(SD).length;
@@ -855,6 +1001,10 @@ export default function App() {
     map.on('click',(e:L.LeafletMouseEvent)=>{
       const est = estimateLocalPopulationDensity(e.latlng.lat, e.latlng.lng);
       if (est) setLocalPopInfo(est);
+      setDropCenter({lat:e.latlng.lat,lng:e.latlng.lng});
+      setDropPanelOpen(true);
+      setDropStatus('');
+      drawDropRadius(e.latlng.lat, e.latlng.lng, dropRadiusMiles);
       if(liveOpenRef.current) {
         doLiveSearch(e.latlng.lat, e.latlng.lng);
       }
@@ -868,6 +1018,11 @@ export default function App() {
 
   const liveOpenRef = useRef(false);
   useEffect(()=>{ liveOpenRef.current = liveOpen; },[liveOpen]);
+  useEffect(()=>{
+    if(!dropCenter) return;
+    drawDropRadius(dropCenter.lat, dropCenter.lng, dropRadiusMiles);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[dropCenter, dropRadiusMiles]);
 
   const labelLayerRef = useRef<L.LayerGroup|null>(null);
 
@@ -893,7 +1048,7 @@ export default function App() {
             const postal = f.properties.postal;
             layer.on({
               mouseover:(e:any)=>{ e.target.setStyle({weight:2,opacity:0.9}); },
-              mouseout:(e:any)=>{ stateGeo.resetStyle(e.target); },
+              mouseout:(e:any)=>{ e.target.setStyle(sStyle(postal, metricRef.current)); },
               click:(e:any)=>{
                 L.popup({maxWidth:340,className:''})
                   .setLatLng(e.latlng)
@@ -1669,6 +1824,7 @@ out center tags;`;
         <div className="hdr-actions">
           <button className={`hdr-btn${rpOpen?' active':''}`} onClick={()=>setRpOpen(o=>!o)}>◎ COVERAGE</button>
           <button className={`hdr-btn${liveOpen?' active':''}`} onClick={()=>setLiveOpen(o=>!o)}>📡 LIVE FINDER</button>
+          <button className={`hdr-btn${dropPanelOpen?' active':''}`} style={{color:'#fca5a5'}} onClick={()=>setDropPanelOpen(o=>!o)}>⭕ RADIUS TOOL</button>
           <button className="hdr-btn" onClick={()=>setShowDir(true)}>📁 DIRECTORIES</button>
           <button className={`hdr-btn${showPriceFinder?' active':''}`} style={{color:'#34d399'}} onClick={()=>setShowPriceFinder(o=>!o)}>💲 PRICE FINDER</button>
           <button className="hdr-btn" style={{color:'#f472b6'}} onClick={()=>setShowUploadModal(true)}>
@@ -1785,6 +1941,50 @@ out center tags;`;
               <div className="local-pop-row"><span>Nearest city</span><strong>{localPopInfo.nearestCity}</strong></div>
               <div className="local-pop-row"><span>Distance</span><strong>{localPopInfo.nearestDist.toFixed(1)} mi</strong></div>
               <div className="local-pop-meta">{localPopInfo.lat.toFixed(4)}, {localPopInfo.lng.toFixed(4)}</div>
+            </div>
+          )}
+          {dropPanelOpen&&(
+            <div className="local-pop-card" style={{top: dropCenter ? 184 : 96, borderColor:'rgba(252,165,165,0.35)', boxShadow:'0 10px 30px rgba(239,68,68,0.16)'}}>
+              <div className="local-pop-title" style={{color:'#fecaca'}}>Radius extractor</div>
+              <div className="local-pop-meta" style={{marginBottom:8,color:'#fca5a5'}}>Click map to move the center point</div>
+              <div style={{display:'grid',gap:6}}>
+                <div>
+                  <div style={{fontSize:9,color:'#fda4af',marginBottom:3}}>Radius (miles)</div>
+                  <input
+                    type="number"
+                    min={0.1}
+                    step={0.1}
+                    value={dropRadiusMiles}
+                    onChange={e=>setDropRadiusMiles(Math.max(0.1, Number(e.target.value)||0.1))}
+                    className="drivetime-input"
+                  />
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:'#fda4af',marginBottom:3}}>Facility type for export</div>
+                  <select className="rp-select" value={dropFacilityType} onChange={e=>setDropFacilityType(e.target.value)}>
+                    <option value="all">All facilities</option>
+                    <option value="hospital">Hospital</option>
+                    <option value="clinic">Clinic</option>
+                    <option value="dentist">Dental</option>
+                    <option value="stress">Cardio / Stress Test</option>
+                    <option value="doctor">Doctor / GP</option>
+                    <option value="pharmacy">Pharmacy</option>
+                    {Object.entries(CATS).filter(([k])=>!['hospital','clinic','dentist','stress','doctor','pharmacy'].includes(k)).map(([cat,c])=>(
+                      <option key={cat} value={cat}>{c.lbl}</option>
+                    ))}
+                  </select>
+                </div>
+                {dropCenter&&<div style={{fontSize:9,color:'#fecaca'}}>Center: {dropCenter.lat.toFixed(4)}, {dropCenter.lng.toFixed(4)}</div>}
+                {dropStatus&&<div style={{fontSize:9,color:'#fca5a5',lineHeight:1.4}}>{dropStatus}</div>}
+                <div style={{display:'flex',gap:6}}>
+                  <button className="drivetime-btn" disabled={dropExportLoading||!dropCenter} onClick={exportRadiusWorkbook} style={{background:'rgba(239,68,68,0.16)',borderColor:'rgba(252,165,165,0.4)',color:'#fecaca'}}>
+                    {dropExportLoading ? 'Extracting…' : 'Extract to Excel'}
+                  </button>
+                  <button className="drivetime-btn" onClick={()=>setDropPanelOpen(false)} style={{background:'rgba(148,163,184,0.15)',borderColor:'rgba(148,163,184,0.35)',color:'#cbd5e1',maxWidth:88}}>
+                    Hide
+                  </button>
+                </div>
+              </div>
             </div>
           )}
           {showTZ&&(
