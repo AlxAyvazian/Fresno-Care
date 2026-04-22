@@ -951,6 +951,13 @@ out center tags;`;
   const [mapReady, setMapReady] = useState(false);
   const [localPopInfo, setLocalPopInfo] = useState<null|{lat:number;lng:number;density:number;state:string;population:number;nearestCity:string;nearestDist:number}>(null);
 
+  function handleDropClick(lat:number, lng:number) {
+    setDropCenter({lat, lng});
+    setDropPanelOpen(true);
+    setDropStatus('');
+    drawDropRadius(lat, lng, dropRadiusMiles);
+  }
+
   // ── Import shared price reports from URL on first load ────────────────────
   useEffect(()=>{
     const params = new URLSearchParams(window.location.search);
@@ -1001,10 +1008,7 @@ out center tags;`;
     map.on('click',(e:L.LeafletMouseEvent)=>{
       const est = estimateLocalPopulationDensity(e.latlng.lat, e.latlng.lng);
       if (est) setLocalPopInfo(est);
-      setDropCenter({lat:e.latlng.lat,lng:e.latlng.lng});
-      setDropPanelOpen(true);
-      setDropStatus('');
-      drawDropRadius(e.latlng.lat, e.latlng.lng, dropRadiusMiles);
+      handleDropClick(e.latlng.lat, e.latlng.lng);
       if(liveOpenRef.current) {
         doLiveSearch(e.latlng.lat, e.latlng.lng);
       }
