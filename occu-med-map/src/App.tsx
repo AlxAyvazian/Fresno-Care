@@ -663,6 +663,7 @@ export default function App() {
   const [dropCenter, setDropCenter] = useState<{lat:number;lng:number}|null>(null);
   const [dropRadiusMiles, setDropRadiusMiles] = useState(25);
   const [dropFacilityType, setDropFacilityType] = useState('all');
+  const [dropIncludeFacilities, setDropIncludeFacilities] = useState(true);
   const [outreachNotes, setOutreachNotes] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_notes')||'{}'); } catch { return {}; } });
   const [outreachStatus, setOutreachStatus] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_status')||'{}'); } catch { return {}; } });
   const [dropUi, setDropUi] = useState({panelOpen:false, exportLoading:false, status:''});
@@ -842,21 +843,24 @@ export default function App() {
     try {
       const cities = buildCitiesInRadius(dropCenter, dropRadiusMiles);
 
-      const facilitiesRaw = await queryFacilitiesInRadius({
-        lat: dropCenter.lat,
-        lng: dropCenter.lng,
-        radiusMiles: dropRadiusMiles,
-        endpoints: OVERPASS_ENDPOINTS,
-        classifyFacility,
-        onStatus: (msg) => setDropUi(prev=>({...prev, status:msg})),
-      });
-      if (facilitiesRaw.length) {
-        setLiveResults(facilitiesRaw.map((r:any)=>({
-          ...r,
-          dist: haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng),
-        })));
+      let facilities:any[] = [];
+      if (dropIncludeFacilities) {
+        const facilitiesRaw = await queryFacilitiesInRadius({
+          lat: dropCenter.lat,
+          lng: dropCenter.lng,
+          radiusMiles: dropRadiusMiles,
+          endpoints: OVERPASS_ENDPOINTS,
+          classifyFacility,
+          onStatus: (msg) => setDropUi(prev=>({...prev, status:msg})),
+        });
+        if (facilitiesRaw.length) {
+          setLiveResults(facilitiesRaw.map((r:any)=>({
+            ...r,
+            dist: haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng),
+          })));
+        }
+        facilities = buildFacilityRows(dropCenter, facilitiesRaw, dropFacilityType, CATS as any);
       }
-      const facilities = buildFacilityRows(dropCenter, facilitiesRaw, dropFacilityType, CATS as any);
 
       const wb = XLSX.utils.book_new();
       const wsCities = XLSX.utils.json_to_sheet(cities.length ? cities : [{
@@ -866,17 +870,27 @@ export default function App() {
         populationEstimate: '',
       }]);
       XLSX.utils.book_append_sheet(wb, wsCities, 'Cities');
-      const wsFacilities = XLSX.utils.json_to_sheet(facilities.length ? facilities : [{
-        name: 'No facilities available',
-        type: dropFacilityType === 'all' ? 'All types' : (CATS[dropFacilityType]?.lbl || dropFacilityType),
-        distanceMiles: '',
-        address: '',
-        phone: '',
-        website: '',
-      }]);
+      const wsFacilities = XLSX.utils.json_to_sheet(dropIncludeFacilities
+        ? (facilities.length ? facilities : [{
+          name: 'No facilities available',
+          type: dropFacilityType === 'all' ? 'All types' : (CATS[dropFacilityType]?.lbl || dropFacilityType),
+          distanceMiles: '',
+          address: '',
+          phone: '',
+          website: '',
+        }])
+        : [{
+          name: 'Facilities not requested',
+          type: 'Exported cities only',
+          distanceMiles: '',
+          address: '',
+          phone: '',
+          website: '',
+        }]
+      );
       XLSX.utils.book_append_sheet(wb, wsFacilities, 'Facilities');
       XLSX.writeFile(wb, `radius_extract_${new Date().toISOString().slice(0,10)}.xlsx`);
-      setDropUi(prev=>({...prev, status:`Done: ${cities.length} cities/towns and ${facilities.length} facilities exported.`}));
+      setDropUi(prev=>({...prev, status:`Done: ${cities.length} cities/towns${dropIncludeFacilities?` and ${facilities.length} facilities`:''} exported.`}));
     } catch (e:any) {
       setDropUi(prev=>({...prev, status:`Export failed: ${e?.message || 'unknown error'}`}));
     } finally {
@@ -1916,6 +1930,14 @@ out center tags;`;
                     ))}
                   </select>
                 </div>
+                <label style={{display:'flex',alignItems:'center',gap:6,fontSize:9,color:'#fecaca',cursor:'pointer'}}>
+                  <input
+                    type="checkbox"
+                    checked={dropIncludeFacilities}
+                    onChange={e=>setDropIncludeFacilities(e.target.checked)}
+                  />
+                  Include facilities in export
+                </label>
                 {dropCenter&&<div style={{fontSize:9,color:'#fecaca'}}>Center: {dropCenter.lat.toFixed(4)}, {dropCenter.lng.toFixed(4)}</div>}
                 {dropUi.status&&<div style={{fontSize:9,color:'#fca5a5',lineHeight:1.4}}>{dropUi.status}</div>}
                 <div style={{display:'flex',gap:6}}>
