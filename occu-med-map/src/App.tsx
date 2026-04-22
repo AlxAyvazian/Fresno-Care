@@ -254,6 +254,11 @@ function haversine(lat1:number,lng1:number,lat2:number,lng2:number):number {
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 function fmtDist(m:number):string { return m<1000?Math.round(m)+'m':((m/1609.34).toFixed(1)+' mi'); }
+function estimateCityPopulationByTier(tier:number, state:string) {
+  const baseByTier:Record<number, number> = {1:900000, 2:250000, 3:75000, 4:20000};
+  const densityFactor = STATE_POP[state]?.density ? Math.max(0.65, Math.min(1.6, STATE_POP[state].density / 250)) : 1;
+  return Math.round((baseByTier[tier] || 20000) * densityFactor);
+}
 
 function calcDrive(lat1:number,lng1:number,lat2:number,lng2:number) {
   const R=3958.8,dL=(lat2-lat1)*Math.PI/180,dN=(lng2-lng1)*Math.PI/180;
@@ -1996,6 +2001,41 @@ out center tags;`;
                   style={{fontSize:8,padding:'4px 7px',borderRadius:4,border:'1px solid rgba(56,189,248,0.28)',background:'rgba(56,189,248,0.1)',color:'#38bdf8',fontFamily:"'IBM Plex Mono',monospace",cursor:'pointer'}}
                 >
                   LEADERSHIP EXPORT
+                </button>
+              </div>
+              <div style={{padding:'8px 9px',border:'1px solid rgba(239,68,68,0.3)',borderRadius:6,background:'rgba(239,68,68,0.08)',display:'grid',gap:6}}>
+                <div style={{fontSize:8.5,color:'#fca5a5',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:'0.08em'}}>RADIUS EXTRACTOR</div>
+                <div style={{fontSize:9.5,color:'#fca5a5'}}>Drop-click anywhere on the map to place a red center + glowing radius.</div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                  <div>
+                    <div style={{fontSize:8,color:'#fecaca',marginBottom:3}}>Radius (miles)</div>
+                    <input
+                      type="number"
+                      min={0.1}
+                      step={0.1}
+                      value={dropRadiusMiles}
+                      onChange={e=>setDropRadiusMiles(Math.max(0.1, Number(e.target.value)||0.1))}
+                      className="drivetime-input"
+                    />
+                  </div>
+                  <div>
+                    <div style={{fontSize:8,color:'#fecaca',marginBottom:3}}>Facility type</div>
+                    <select className="rp-select" value={dropFacilityType} onChange={e=>setDropFacilityType(e.target.value)}>
+                      <option value="all">All Facilities</option>
+                      {Object.entries(CATS).map(([cat,c])=>(
+                        <option key={cat} value={cat}>{c.lbl}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div style={{fontSize:9,color:'#fecaca'}}>
+                  {dropCenter ? `Center: ${dropCenter.lat.toFixed(4)}, ${dropCenter.lng.toFixed(4)}` : 'No center selected yet.'}
+                </div>
+                <button
+                  onClick={exportRadiusWorkbook}
+                  style={{fontSize:9,padding:'6px 9px',borderRadius:4,border:'1px solid rgba(252,165,165,0.45)',background:'rgba(239,68,68,0.18)',color:'#fecaca',fontFamily:"'IBM Plex Mono',monospace",cursor:'pointer',fontWeight:700}}
+                >
+                  EXPORT CITIES + POPULATION + FACILITIES (XLSX)
                 </button>
               </div>
               <div style={{fontSize:10,color:'#3d5478',lineHeight:1.5}}>
