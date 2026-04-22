@@ -253,6 +253,11 @@ function haversine(lat1:number,lng1:number,lat2:number,lng2:number):number {
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 function fmtDist(m:number):string { return m<1000?Math.round(m)+'m':((m/1609.34).toFixed(1)+' mi'); }
+function estimateCityPopulationByTier(tier:number, state:string) {
+  const baseByTier:Record<number, number> = {1:900000, 2:250000, 3:75000, 4:20000};
+  const densityFactor = STATE_POP[state]?.density ? Math.max(0.65, Math.min(1.6, STATE_POP[state].density / 250)) : 1;
+  return Math.round((baseByTier[tier] || 20000) * densityFactor);
+}
 
 function calcDrive(lat1:number,lng1:number,lat2:number,lng2:number) {
   const R=3958.8,dL=(lat2-lat1)*Math.PI/180,dN=(lng2-lng1)*Math.PI/180;
@@ -593,6 +598,8 @@ export default function App() {
   const liveGrpRef = useRef<L.LayerGroup|null>(null);
   const liveCircleRef = useRef<L.Circle|null>(null);
   const livePinRef = useRef<L.Marker|null>(null);
+  const dropCircleRef = useRef<L.Circle|null>(null);
+  const dropPinRef = useRef<L.Marker|null>(null);
   const popDensityLayerRef = useRef<L.LayerGroup|null>(null);
   const clinicLayerRef = useRef<L.LayerGroup|null>(null);
   const rawStateFeaturesRef = useRef<any[]>([]);
@@ -652,6 +659,9 @@ export default function App() {
   const [liveHighlightId, setLiveHighlightId] = useState<any>(null);
   const [liveHint, setLiveHint] = useState('Click anywhere on the map to search for facilities');
   const [liveMirror, setLiveMirror] = useState('');
+  const [dropCenter, setDropCenter] = useState<{lat:number;lng:number}|null>(null);
+  const [dropRadiusMiles, setDropRadiusMiles] = useState(25);
+  const [dropFacilityType, setDropFacilityType] = useState('all');
   const [outreachNotes, setOutreachNotes] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_notes')||'{}'); } catch { return {}; } });
   const [outreachStatus, setOutreachStatus] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_status')||'{}'); } catch { return {}; } });
   const lastRadiusRef = useRef<{lat:number;lng:number}|null>(null);
@@ -797,6 +807,77 @@ export default function App() {
     a.remove();
   }
 
+  function drawDropRadius(lat:number,lng:number,radiusMiles:number) {
+    const map = mapRef.current;
+    if (!map) return;
+    if (dropCircleRef.current) { try { map.removeLayer(dropCircleRef.current); } catch {} }
+    if (dropPinRef.current) { try { map.removeLayer(dropPinRef.current); } catch {} }
+    const meters = Math.max(radiusMiles, 0.1) * 1609.34;
+    dropCircleRef.current = L.circle([lat, lng], {
+      radius: meters,
+      color: '#ef4444',
+      weight: 2,
+      opacity: 0.95,
+      fillColor: '#ef4444',
+      fillOpacity: 0.1,
+      className: 'drop-radius-ring',
+    }).addTo(map);
+    dropPinRef.current = L.marker([lat,lng], {
+      icon: L.divIcon({
+        className: '',
+        html: '<div style="width:14px;height:14px;border-radius:50%;background:#ef4444;border:2px solid #fff;box-shadow:0 0 0 4px rgba(239,68,68,0.26),0 0 16px rgba(239,68,68,0.72);"></div>',
+        iconSize:[14,14],
+        iconAnchor:[7,7],
+      }),
+      zIndexOffset: 3500,
+      interactive: false,
+    }).addTo(map);
+  }
+
+  function exportRadiusWorkbook() {
+    if (!dropCenter) { alert('Click the map first to set a radius center.'); return; }
+    const cities = LOCS
+      .map((l:any)=>({
+        city: l[0],
+        state: l[1],
+        distanceMiles: Number(approxMiles(dropCenter.lat, dropCenter.lng, l[2], l[3]).toFixed(2)),
+        populationEstimate: estimateCityPopulationByTier(l[4], l[1]),
+      }))
+      .filter((c:any)=>c.distanceMiles <= dropRadiusMiles)
+      .sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
+
+    const facilitiesRaw = liveResults
+      .filter((r:any)=>haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng) <= dropRadiusMiles * 1609.34)
+      .filter((r:any)=>dropFacilityType === 'all' ? true : r.cat === dropFacilityType);
+    const facilities = facilitiesRaw.map((r:any)=>({
+      name: r.name,
+      type: CATS[r.cat]?.lbl || r.cat,
+      distanceMiles: Number((haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng) / 1609.34).toFixed(2)),
+      address: r.addr || '',
+      phone: r.phone || '',
+      website: r.website || '',
+    })).sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
+
+    const wb = XLSX.utils.book_new();
+    const wsCities = XLSX.utils.json_to_sheet(cities.length ? cities : [{
+      city: 'No cities in radius',
+      state: '',
+      distanceMiles: '',
+      populationEstimate: '',
+    }]);
+    XLSX.utils.book_append_sheet(wb, wsCities, 'Cities');
+    const wsFacilities = XLSX.utils.json_to_sheet(facilities.length ? facilities : [{
+      name: 'No facilities available',
+      type: dropFacilityType === 'all' ? 'All types' : (CATS[dropFacilityType]?.lbl || dropFacilityType),
+      distanceMiles: '',
+      address: '',
+      phone: '',
+      website: '',
+    }]);
+    XLSX.utils.book_append_sheet(wb, wsFacilities, 'Facilities');
+    XLSX.writeFile(wb, `radius_extract_${new Date().toISOString().slice(0,10)}.xlsx`);
+  }
+
   // Stats
   const totalCities = LOCS.length;
   const statesCount = Object.keys(SD).length;
@@ -855,6 +936,8 @@ export default function App() {
     map.on('click',(e:L.LeafletMouseEvent)=>{
       const est = estimateLocalPopulationDensity(e.latlng.lat, e.latlng.lng);
       if (est) setLocalPopInfo(est);
+      setDropCenter({lat:e.latlng.lat,lng:e.latlng.lng});
+      drawDropRadius(e.latlng.lat, e.latlng.lng, dropRadiusMiles);
       if(liveOpenRef.current) {
         doLiveSearch(e.latlng.lat, e.latlng.lng);
       }
@@ -868,6 +951,11 @@ export default function App() {
 
   const liveOpenRef = useRef(false);
   useEffect(()=>{ liveOpenRef.current = liveOpen; },[liveOpen]);
+  useEffect(()=>{
+    if(!dropCenter) return;
+    drawDropRadius(dropCenter.lat, dropCenter.lng, dropRadiusMiles);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[dropCenter, dropRadiusMiles]);
 
   const labelLayerRef = useRef<L.LayerGroup|null>(null);
 
@@ -1861,6 +1949,41 @@ out center tags;`;
                   style={{fontSize:8,padding:'4px 7px',borderRadius:4,border:'1px solid rgba(56,189,248,0.28)',background:'rgba(56,189,248,0.1)',color:'#38bdf8',fontFamily:"'IBM Plex Mono',monospace",cursor:'pointer'}}
                 >
                   LEADERSHIP EXPORT
+                </button>
+              </div>
+              <div style={{padding:'8px 9px',border:'1px solid rgba(239,68,68,0.3)',borderRadius:6,background:'rgba(239,68,68,0.08)',display:'grid',gap:6}}>
+                <div style={{fontSize:8.5,color:'#fca5a5',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:'0.08em'}}>RADIUS EXTRACTOR</div>
+                <div style={{fontSize:9.5,color:'#fca5a5'}}>Drop-click anywhere on the map to place a red center + glowing radius.</div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                  <div>
+                    <div style={{fontSize:8,color:'#fecaca',marginBottom:3}}>Radius (miles)</div>
+                    <input
+                      type="number"
+                      min={0.1}
+                      step={0.1}
+                      value={dropRadiusMiles}
+                      onChange={e=>setDropRadiusMiles(Math.max(0.1, Number(e.target.value)||0.1))}
+                      className="drivetime-input"
+                    />
+                  </div>
+                  <div>
+                    <div style={{fontSize:8,color:'#fecaca',marginBottom:3}}>Facility type</div>
+                    <select className="rp-select" value={dropFacilityType} onChange={e=>setDropFacilityType(e.target.value)}>
+                      <option value="all">All Facilities</option>
+                      {Object.entries(CATS).map(([cat,c])=>(
+                        <option key={cat} value={cat}>{c.lbl}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div style={{fontSize:9,color:'#fecaca'}}>
+                  {dropCenter ? `Center: ${dropCenter.lat.toFixed(4)}, ${dropCenter.lng.toFixed(4)}` : 'No center selected yet.'}
+                </div>
+                <button
+                  onClick={exportRadiusWorkbook}
+                  style={{fontSize:9,padding:'6px 9px',borderRadius:4,border:'1px solid rgba(252,165,165,0.45)',background:'rgba(239,68,68,0.18)',color:'#fecaca',fontFamily:"'IBM Plex Mono',monospace",cursor:'pointer',fontWeight:700}}
+                >
+                  EXPORT CITIES + POPULATION + FACILITIES (XLSX)
                 </button>
               </div>
               <div style={{fontSize:10,color:'#3d5478',lineHeight:1.5}}>
