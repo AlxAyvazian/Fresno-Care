@@ -958,6 +958,8 @@ export default function App() {
 
   const liveOpenRef = useRef(false);
   useEffect(()=>{ liveOpenRef.current = liveOpen; },[liveOpen]);
+  const showStateColorsRef = useRef(showStateColors);
+  useEffect(()=>{ showStateColorsRef.current = showStateColors; },[showStateColors]);
   useEffect(()=>{
     if(!dropCenter) return;
     drawDropRadius(dropCenter.lat, dropCenter.lng, dropRadiusMiles);
@@ -1018,7 +1020,7 @@ export default function App() {
   function sStyle(postal:string,m:string):L.PathOptions {
     const d=SD[postal];
     if(!d) return{fillColor:'#0a1830',fillOpacity:0.38,weight:1,color:'rgba(99,179,237,0.15)',opacity:0.6};
-    if(!showStateColors) return {fillColor:'#11243f',fillOpacity:0.12,weight:1,color:'rgba(161,209,255,0.25)',opacity:0.8};
+    if(!showStateColorsRef.current) return {fillColor:'#11243f',fillOpacity:0.12,weight:1,color:'rgba(161,209,255,0.25)',opacity:0.8};
     const v=getVal(d,m);
     const col=DCOL[v]||'#3d5478';
     return{fillColor:col,fillOpacity:0.25,weight:1,color:col,opacity:0.45};
