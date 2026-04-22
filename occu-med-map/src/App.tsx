@@ -10,6 +10,7 @@ import {
   PROCEDURE_RATES, STATE_COST_INDEX, STATE_COST_TIER,
   adjustedPrice, tierColor,
 } from './lib/procedurePrices';
+import { buildCitiesInRadius, buildFacilityRows, queryFacilitiesInRadius } from './lib/radiusExtractor';
 
 // ── FIPS → state abbreviation lookup ────────────────────────────────────────
 const FIPS2CODE: Record<string,string> = {
@@ -664,6 +665,7 @@ export default function App() {
   const [dropFacilityType, setDropFacilityType] = useState('all');
   const [outreachNotes, setOutreachNotes] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_notes')||'{}'); } catch { return {}; } });
   const [outreachStatus, setOutreachStatus] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_status')||'{}'); } catch { return {}; } });
+  const [dropUi, setDropUi] = useState({panelOpen:false, exportLoading:false, status:''});
   const lastRadiusRef = useRef<{lat:number;lng:number}|null>(null);
 
   function updateOutreachNote(id:any, value:string) {
@@ -834,48 +836,52 @@ export default function App() {
     }).addTo(map);
   }
 
-  function exportRadiusWorkbook() {
+  async function exportRadiusWorkbook() {
     if (!dropCenter) { alert('Click the map first to set a radius center.'); return; }
-    const cities = LOCS
-      .map((l:any)=>({
-        city: l[0],
-        state: l[1],
-        distanceMiles: Number(approxMiles(dropCenter.lat, dropCenter.lng, l[2], l[3]).toFixed(2)),
-        populationEstimate: estimateCityPopulationByTier(l[4], l[1]),
-      }))
-      .filter((c:any)=>c.distanceMiles <= dropRadiusMiles)
-      .sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
+    setDropUi(prev=>({...prev, exportLoading:true, status:'Preparing city and facility extraction…'}));
+    try {
+      const cities = buildCitiesInRadius(dropCenter, dropRadiusMiles);
 
-    const facilitiesRaw = liveResults
-      .filter((r:any)=>haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng) <= dropRadiusMiles * 1609.34)
-      .filter((r:any)=>dropFacilityType === 'all' ? true : r.cat === dropFacilityType);
-    const facilities = facilitiesRaw.map((r:any)=>({
-      name: r.name,
-      type: CATS[r.cat]?.lbl || r.cat,
-      distanceMiles: Number((haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng) / 1609.34).toFixed(2)),
-      address: r.addr || '',
-      phone: r.phone || '',
-      website: r.website || '',
-    })).sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
+      const facilitiesRaw = await queryFacilitiesInRadius({
+        lat: dropCenter.lat,
+        lng: dropCenter.lng,
+        radiusMiles: dropRadiusMiles,
+        endpoints: OVERPASS_ENDPOINTS,
+        classifyFacility,
+        onStatus: (msg) => setDropUi(prev=>({...prev, status:msg})),
+      });
+      if (facilitiesRaw.length) {
+        setLiveResults(facilitiesRaw.map((r:any)=>({
+          ...r,
+          dist: haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng),
+        })));
+      }
+      const facilities = buildFacilityRows(dropCenter, facilitiesRaw, dropFacilityType, CATS as any);
 
-    const wb = XLSX.utils.book_new();
-    const wsCities = XLSX.utils.json_to_sheet(cities.length ? cities : [{
-      city: 'No cities in radius',
-      state: '',
-      distanceMiles: '',
-      populationEstimate: '',
-    }]);
-    XLSX.utils.book_append_sheet(wb, wsCities, 'Cities');
-    const wsFacilities = XLSX.utils.json_to_sheet(facilities.length ? facilities : [{
-      name: 'No facilities available',
-      type: dropFacilityType === 'all' ? 'All types' : (CATS[dropFacilityType]?.lbl || dropFacilityType),
-      distanceMiles: '',
-      address: '',
-      phone: '',
-      website: '',
-    }]);
-    XLSX.utils.book_append_sheet(wb, wsFacilities, 'Facilities');
-    XLSX.writeFile(wb, `radius_extract_${new Date().toISOString().slice(0,10)}.xlsx`);
+      const wb = XLSX.utils.book_new();
+      const wsCities = XLSX.utils.json_to_sheet(cities.length ? cities : [{
+        city: 'No cities in radius',
+        state: '',
+        distanceMiles: '',
+        populationEstimate: '',
+      }]);
+      XLSX.utils.book_append_sheet(wb, wsCities, 'Cities');
+      const wsFacilities = XLSX.utils.json_to_sheet(facilities.length ? facilities : [{
+        name: 'No facilities available',
+        type: dropFacilityType === 'all' ? 'All types' : (CATS[dropFacilityType]?.lbl || dropFacilityType),
+        distanceMiles: '',
+        address: '',
+        phone: '',
+        website: '',
+      }]);
+      XLSX.utils.book_append_sheet(wb, wsFacilities, 'Facilities');
+      XLSX.writeFile(wb, `radius_extract_${new Date().toISOString().slice(0,10)}.xlsx`);
+      setDropUi(prev=>({...prev, status:`Done: ${cities.length} cities/towns and ${facilities.length} facilities exported.`}));
+    } catch (e:any) {
+      setDropUi(prev=>({...prev, status:`Export failed: ${e?.message || 'unknown error'}`}));
+    } finally {
+      setDropUi(prev=>({...prev, exportLoading:false}));
+    }
   }
 
   // Stats
@@ -937,6 +943,7 @@ export default function App() {
       const est = estimateLocalPopulationDensity(e.latlng.lat, e.latlng.lng);
       if (est) setLocalPopInfo(est);
       setDropCenter({lat:e.latlng.lat,lng:e.latlng.lng});
+      setDropUi(prev=>({...prev, panelOpen:true, status:''}));
       drawDropRadius(e.latlng.lat, e.latlng.lng, dropRadiusMiles);
       if(liveOpenRef.current) {
         doLiveSearch(e.latlng.lat, e.latlng.lng);
@@ -981,7 +988,7 @@ export default function App() {
             const postal = f.properties.postal;
             layer.on({
               mouseover:(e:any)=>{ e.target.setStyle({weight:2,opacity:0.9}); },
-              mouseout:(e:any)=>{ stateGeo.resetStyle(e.target); },
+              mouseout:(e:any)=>{ e.target.setStyle(sStyle(postal, metricRef.current)); },
               click:(e:any)=>{
                 L.popup({maxWidth:340,className:''})
                   .setLatLng(e.latlng)
@@ -1757,6 +1764,7 @@ out center tags;`;
         <div className="hdr-actions">
           <button className={`hdr-btn${rpOpen?' active':''}`} onClick={()=>setRpOpen(o=>!o)}>◎ COVERAGE</button>
           <button className={`hdr-btn${liveOpen?' active':''}`} onClick={()=>setLiveOpen(o=>!o)}>📡 LIVE FINDER</button>
+          <button className={`hdr-btn${dropUi.panelOpen?' active':''}`} style={{color:'#fca5a5'}} onClick={()=>setDropUi(prev=>({...prev, panelOpen:!prev.panelOpen}))}>⭕ RADIUS TOOL</button>
           <button className="hdr-btn" onClick={()=>setShowDir(true)}>📁 DIRECTORIES</button>
           <button className={`hdr-btn${showPriceFinder?' active':''}`} style={{color:'#34d399'}} onClick={()=>setShowPriceFinder(o=>!o)}>💲 PRICE FINDER</button>
           <button className="hdr-btn" style={{color:'#f472b6'}} onClick={()=>setShowUploadModal(true)}>
@@ -1873,6 +1881,50 @@ out center tags;`;
               <div className="local-pop-row"><span>Nearest city</span><strong>{localPopInfo.nearestCity}</strong></div>
               <div className="local-pop-row"><span>Distance</span><strong>{localPopInfo.nearestDist.toFixed(1)} mi</strong></div>
               <div className="local-pop-meta">{localPopInfo.lat.toFixed(4)}, {localPopInfo.lng.toFixed(4)}</div>
+            </div>
+          )}
+          {dropUi.panelOpen&&(
+            <div className="local-pop-card" style={{top: dropCenter ? 184 : 96, borderColor:'rgba(252,165,165,0.35)', boxShadow:'0 10px 30px rgba(239,68,68,0.16)'}}>
+              <div className="local-pop-title" style={{color:'#fecaca'}}>Radius extractor</div>
+              <div className="local-pop-meta" style={{marginBottom:8,color:'#fca5a5'}}>Click map to move the center point</div>
+              <div style={{display:'grid',gap:6}}>
+                <div>
+                  <div style={{fontSize:9,color:'#fda4af',marginBottom:3}}>Radius (miles)</div>
+                  <input
+                    type="number"
+                    min={0.1}
+                    step={0.1}
+                    value={dropRadiusMiles}
+                    onChange={e=>setDropRadiusMiles(Math.max(0.1, Number(e.target.value)||0.1))}
+                    className="drivetime-input"
+                  />
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:'#fda4af',marginBottom:3}}>Facility type for export</div>
+                  <select className="rp-select" value={dropFacilityType} onChange={e=>setDropFacilityType(e.target.value)}>
+                    <option value="all">All facilities</option>
+                    <option value="hospital">Hospital</option>
+                    <option value="clinic">Clinic</option>
+                    <option value="dentist">Dental</option>
+                    <option value="stress">Cardio / Stress Test</option>
+                    <option value="doctor">Doctor / GP</option>
+                    <option value="pharmacy">Pharmacy</option>
+                    {Object.entries(CATS).filter(([k])=>!['hospital','clinic','dentist','stress','doctor','pharmacy'].includes(k)).map(([cat,c])=>(
+                      <option key={cat} value={cat}>{c.lbl}</option>
+                    ))}
+                  </select>
+                </div>
+                {dropCenter&&<div style={{fontSize:9,color:'#fecaca'}}>Center: {dropCenter.lat.toFixed(4)}, {dropCenter.lng.toFixed(4)}</div>}
+                {dropUi.status&&<div style={{fontSize:9,color:'#fca5a5',lineHeight:1.4}}>{dropUi.status}</div>}
+                <div style={{display:'flex',gap:6}}>
+                  <button className="drivetime-btn" disabled={dropUi.exportLoading||!dropCenter} onClick={exportRadiusWorkbook} style={{background:'rgba(239,68,68,0.16)',borderColor:'rgba(252,165,165,0.4)',color:'#fecaca'}}>
+                    {dropUi.exportLoading ? 'Extracting…' : 'Extract to Excel'}
+                  </button>
+                  <button className="drivetime-btn" onClick={()=>setDropUi(prev=>({...prev, panelOpen:false}))} style={{background:'rgba(148,163,184,0.15)',borderColor:'rgba(148,163,184,0.35)',color:'#cbd5e1',maxWidth:88}}>
+                    Hide
+                  </button>
+                </div>
+              </div>
             </div>
           )}
           {showTZ&&(
