@@ -10,6 +10,7 @@ import {
   PROCEDURE_RATES, STATE_COST_INDEX, STATE_COST_TIER,
   adjustedPrice, tierColor,
 } from './lib/procedurePrices';
+import { buildCitiesInRadius, buildFacilityRows, queryFacilitiesInRadius } from './lib/radiusExtractor';
 
 // ── FIPS → state abbreviation lookup ────────────────────────────────────────
 const FIPS2CODE: Record<string,string> = {
@@ -253,38 +254,6 @@ function haversine(lat1:number,lng1:number,lat2:number,lng2:number):number {
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 function fmtDist(m:number):string { return m<1000?Math.round(m)+'m':((m/1609.34).toFixed(1)+' mi'); }
-function estimateCityPopulationByTier(tier:number, state:string) {
-  const baseByTier:Record<number, number> = {1:900000, 2:250000, 3:75000, 4:20000};
-  const densityFactor = STATE_POP[state]?.density ? Math.max(0.65, Math.min(1.6, STATE_POP[state].density / 250)) : 1;
-  return Math.round((baseByTier[tier] || 20000) * densityFactor);
-}
-function buildCitiesInRadius(center:{lat:number;lng:number}, radiusMiles:number) {
-  return LOCS
-    .map((l:any)=>({
-      city: l[0],
-      state: l[1],
-      distanceMiles: Number(approxMiles(center.lat, center.lng, l[2], l[3]).toFixed(2)),
-      populationEstimate: estimateCityPopulationByTier(l[4], l[1]),
-    }))
-    .filter((c:any)=>c.distanceMiles <= radiusMiles)
-    .sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
-}
-function buildFacilityRows(
-  center:{lat:number;lng:number},
-  facilitiesRaw:any[],
-  dropFacilityType:string
-) {
-  const filteredFacilities = facilitiesRaw
-    .filter((r:any)=>dropFacilityType === 'all' ? true : r.cat === dropFacilityType);
-  return filteredFacilities.map((r:any)=>({
-    name: r.name,
-    type: CATS[r.cat]?.lbl || r.cat,
-    distanceMiles: Number((haversine(center.lat, center.lng, r.lat, r.lng) / 1609.34).toFixed(2)),
-    address: r.addr || '',
-    phone: r.phone || '',
-    website: r.website || '',
-  })).sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
-}
 
 function calcDrive(lat1:number,lng1:number,lat2:number,lng2:number) {
   const R=3958.8,dL=(lat2-lat1)*Math.PI/180,dN=(lng2-lng1)*Math.PI/180;
@@ -862,67 +831,27 @@ export default function App() {
     }).addTo(map);
   }
 
-  async function queryFacilitiesInRadius(lat:number,lng:number,radiusMiles:number) {
-    const r = Math.max(radiusMiles, 0.1) * 1609.34;
-    const q=`[out:json][timeout:30];(
-  node["amenity"="hospital"](around:${r},${lat},${lng});
-  node["amenity"="clinic"](around:${r},${lat},${lng});
-  node["amenity"="doctors"](around:${r},${lat},${lng});
-  node["amenity"="pharmacy"](around:${r},${lat},${lng});
-  node["amenity"="dentist"](around:${r},${lat},${lng});
-  node["amenity"="urgent_care"](around:${r},${lat},${lng});
-  node["amenity"="nursing_home"](around:${r},${lat},${lng});
-  node["healthcare"](around:${r},${lat},${lng});
-  way["healthcare"](around:${r},${lat},${lng});
-  way["amenity"="hospital"](around:${r},${lat},${lng});
-  way["amenity"="clinic"](around:${r},${lat},${lng});
-  node["office"="physician"](around:${r},${lat},${lng});
-  node["office"="medical"](around:${r},${lat},${lng});
-  node["shop"="optician"](around:${r},${lat},${lng});
-  node["shop"="chemist"](around:${r},${lat},${lng});
-);
-out center tags;`;
-    for(let i=0;i<OVERPASS_ENDPOINTS.length;i++) {
-      try {
-        setDropUi(prev=>({...prev, status:`Searching facilities (mirror ${i+1}/${OVERPASS_ENDPOINTS.length})…`}));
-        const controller=new AbortController();
-        const timer=setTimeout(()=>controller.abort(),9000);
-        const res=await fetch(OVERPASS_ENDPOINTS[i],{method:'POST',body:'data='+encodeURIComponent(q),signal:controller.signal});
-        clearTimeout(timer);
-        if(!res.ok) continue;
-        const data=await res.json();
-        if(!data||!Array.isArray(data.elements)) continue;
-        const seen:Record<string,boolean>={};
-        return data.elements.map((el:any)=>{
-          const la=el.lat||(el.center&&el.center.lat);
-          const lo=el.lon||(el.center&&el.center.lon);
-          if(!la||!lo) return null;
-          const t=el.tags||{};
-          const nm=t.name||t['name:en']||t.operator||'Unnamed Facility';
-          const key=nm.toLowerCase()+'|'+Math.round(la*500)+'|'+Math.round(lo*500);
-          if(seen[key]) return null; seen[key]=true;
-          const ad=[t['addr:housenumber'],t['addr:street'],t['addr:city']].filter(Boolean).join(' ');
-          return{id:el.id,lat:la,lng:lo,name:nm,cat:classifyFacility(t),addr:ad,phone:t.phone||t['contact:phone']||'',website:t.website||t['contact:website']||''};
-        }).filter(Boolean);
-      } catch {}
-    }
-    return [];
-  }
-
   async function exportRadiusWorkbook() {
     if (!dropCenter) { alert('Click the map first to set a radius center.'); return; }
     setDropUi(prev=>({...prev, exportLoading:true, status:'Preparing city and facility extraction…'}));
     try {
       const cities = buildCitiesInRadius(dropCenter, dropRadiusMiles);
 
-      const facilitiesRaw = await queryFacilitiesInRadius(dropCenter.lat, dropCenter.lng, dropRadiusMiles);
+      const facilitiesRaw = await queryFacilitiesInRadius({
+        lat: dropCenter.lat,
+        lng: dropCenter.lng,
+        radiusMiles: dropRadiusMiles,
+        endpoints: OVERPASS_ENDPOINTS,
+        classifyFacility,
+        onStatus: (msg) => setDropUi(prev=>({...prev, status:msg})),
+      });
       if (facilitiesRaw.length) {
         setLiveResults(facilitiesRaw.map((r:any)=>({
           ...r,
           dist: haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng),
         })));
       }
-      const facilities = buildFacilityRows(dropCenter, facilitiesRaw, dropFacilityType);
+      const facilities = buildFacilityRows(dropCenter, facilitiesRaw, dropFacilityType, CATS as any);
 
       const wb = XLSX.utils.book_new();
       const wsCities = XLSX.utils.json_to_sheet(cities.length ? cities : [{
@@ -957,12 +886,6 @@ out center tags;`;
 
   const [mapReady, setMapReady] = useState(false);
   const [localPopInfo, setLocalPopInfo] = useState<null|{lat:number;lng:number;density:number;state:string;population:number;nearestCity:string;nearestDist:number}>(null);
-
-  function handleDropClick(lat:number, lng:number) {
-    setDropCenter({lat, lng});
-    setDropUi(prev=>({...prev, panelOpen:true, status:''}));
-    drawDropRadius(lat, lng, dropRadiusMiles);
-  }
 
   // ── Import shared price reports from URL on first load ────────────────────
   useEffect(()=>{
@@ -1014,7 +937,9 @@ out center tags;`;
     map.on('click',(e:L.LeafletMouseEvent)=>{
       const est = estimateLocalPopulationDensity(e.latlng.lat, e.latlng.lng);
       if (est) setLocalPopInfo(est);
-      handleDropClick(e.latlng.lat, e.latlng.lng);
+      setDropCenter({lat:e.latlng.lat,lng:e.latlng.lng});
+      setDropUi(prev=>({...prev, panelOpen:true, status:''}));
+      drawDropRadius(e.latlng.lat, e.latlng.lng, dropRadiusMiles);
       if(liveOpenRef.current) {
         doLiveSearch(e.latlng.lat, e.latlng.lng);
       }
