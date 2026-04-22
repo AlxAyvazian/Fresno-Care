@@ -258,6 +258,33 @@ function estimateCityPopulationByTier(tier:number, state:string) {
   const densityFactor = STATE_POP[state]?.density ? Math.max(0.65, Math.min(1.6, STATE_POP[state].density / 250)) : 1;
   return Math.round((baseByTier[tier] || 20000) * densityFactor);
 }
+function buildCitiesInRadius(center:{lat:number;lng:number}, radiusMiles:number) {
+  return LOCS
+    .map((l:any)=>({
+      city: l[0],
+      state: l[1],
+      distanceMiles: Number(approxMiles(center.lat, center.lng, l[2], l[3]).toFixed(2)),
+      populationEstimate: estimateCityPopulationByTier(l[4], l[1]),
+    }))
+    .filter((c:any)=>c.distanceMiles <= radiusMiles)
+    .sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
+}
+function buildFacilityRows(
+  center:{lat:number;lng:number},
+  facilitiesRaw:any[],
+  dropFacilityType:string
+) {
+  const filteredFacilities = facilitiesRaw
+    .filter((r:any)=>dropFacilityType === 'all' ? true : r.cat === dropFacilityType);
+  return filteredFacilities.map((r:any)=>({
+    name: r.name,
+    type: CATS[r.cat]?.lbl || r.cat,
+    distanceMiles: Number((haversine(center.lat, center.lng, r.lat, r.lng) / 1609.34).toFixed(2)),
+    address: r.addr || '',
+    phone: r.phone || '',
+    website: r.website || '',
+  })).sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
+}
 
 function calcDrive(lat1:number,lng1:number,lat2:number,lng2:number) {
   const R=3958.8,dL=(lat2-lat1)*Math.PI/180,dN=(lng2-lng1)*Math.PI/180;
@@ -662,9 +689,7 @@ export default function App() {
   const [dropCenter, setDropCenter] = useState<{lat:number;lng:number}|null>(null);
   const [dropRadiusMiles, setDropRadiusMiles] = useState(25);
   const [dropFacilityType, setDropFacilityType] = useState('all');
-  const [dropPanelOpen, setDropPanelOpen] = useState(false);
-  const [dropExportLoading, setDropExportLoading] = useState(false);
-  const [dropStatus, setDropStatus] = useState('');
+  const [dropUi, setDropUi] = useState({panelOpen:false, exportLoading:false, status:''});
   const [outreachNotes, setOutreachNotes] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_notes')||'{}'); } catch { return {}; } });
   const [outreachStatus, setOutreachStatus] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_status')||'{}'); } catch { return {}; } });
   const lastRadiusRef = useRef<{lat:number;lng:number}|null>(null);
@@ -859,7 +884,7 @@ export default function App() {
 out center tags;`;
     for(let i=0;i<OVERPASS_ENDPOINTS.length;i++) {
       try {
-        setDropStatus(`Searching facilities (mirror ${i+1}/${OVERPASS_ENDPOINTS.length})…`);
+        setDropUi(prev=>({...prev, status:`Searching facilities (mirror ${i+1}/${OVERPASS_ENDPOINTS.length})…`}));
         const controller=new AbortController();
         const timer=setTimeout(()=>controller.abort(),9000);
         const res=await fetch(OVERPASS_ENDPOINTS[i],{method:'POST',body:'data='+encodeURIComponent(q),signal:controller.signal});
@@ -886,18 +911,9 @@ out center tags;`;
 
   async function exportRadiusWorkbook() {
     if (!dropCenter) { alert('Click the map first to set a radius center.'); return; }
-    setDropExportLoading(true);
-    setDropStatus('Preparing city and facility extraction…');
+    setDropUi(prev=>({...prev, exportLoading:true, status:'Preparing city and facility extraction…'}));
     try {
-      const cities = LOCS
-        .map((l:any)=>({
-          city: l[0],
-          state: l[1],
-          distanceMiles: Number(approxMiles(dropCenter.lat, dropCenter.lng, l[2], l[3]).toFixed(2)),
-          populationEstimate: estimateCityPopulationByTier(l[4], l[1]),
-        }))
-        .filter((c:any)=>c.distanceMiles <= dropRadiusMiles)
-        .sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
+      const cities = buildCitiesInRadius(dropCenter, dropRadiusMiles);
 
       const facilitiesRaw = await queryFacilitiesInRadius(dropCenter.lat, dropCenter.lng, dropRadiusMiles);
       if (facilitiesRaw.length) {
@@ -906,16 +922,7 @@ out center tags;`;
           dist: haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng),
         })));
       }
-      const filteredFacilities = facilitiesRaw
-        .filter((r:any)=>dropFacilityType === 'all' ? true : r.cat === dropFacilityType);
-      const facilities = filteredFacilities.map((r:any)=>({
-        name: r.name,
-        type: CATS[r.cat]?.lbl || r.cat,
-        distanceMiles: Number((haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng) / 1609.34).toFixed(2)),
-        address: r.addr || '',
-        phone: r.phone || '',
-        website: r.website || '',
-      })).sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
+      const facilities = buildFacilityRows(dropCenter, facilitiesRaw, dropFacilityType);
 
       const wb = XLSX.utils.book_new();
       const wsCities = XLSX.utils.json_to_sheet(cities.length ? cities : [{
@@ -935,11 +942,11 @@ out center tags;`;
       }]);
       XLSX.utils.book_append_sheet(wb, wsFacilities, 'Facilities');
       XLSX.writeFile(wb, `radius_extract_${new Date().toISOString().slice(0,10)}.xlsx`);
-      setDropStatus(`Done: ${cities.length} cities/towns and ${facilities.length} facilities exported.`);
+      setDropUi(prev=>({...prev, status:`Done: ${cities.length} cities/towns and ${facilities.length} facilities exported.`}));
     } catch (e:any) {
-      setDropStatus(`Export failed: ${e?.message || 'unknown error'}`);
+      setDropUi(prev=>({...prev, status:`Export failed: ${e?.message || 'unknown error'}`}));
     } finally {
-      setDropExportLoading(false);
+      setDropUi(prev=>({...prev, exportLoading:false}));
     }
   }
 
@@ -953,8 +960,7 @@ out center tags;`;
 
   function handleDropClick(lat:number, lng:number) {
     setDropCenter({lat, lng});
-    setDropPanelOpen(true);
-    setDropStatus('');
+    setDropUi(prev=>({...prev, panelOpen:true, status:''}));
     drawDropRadius(lat, lng, dropRadiusMiles);
   }
 
@@ -1828,7 +1834,7 @@ out center tags;`;
         <div className="hdr-actions">
           <button className={`hdr-btn${rpOpen?' active':''}`} onClick={()=>setRpOpen(o=>!o)}>◎ COVERAGE</button>
           <button className={`hdr-btn${liveOpen?' active':''}`} onClick={()=>setLiveOpen(o=>!o)}>📡 LIVE FINDER</button>
-          <button className={`hdr-btn${dropPanelOpen?' active':''}`} style={{color:'#fca5a5'}} onClick={()=>setDropPanelOpen(o=>!o)}>⭕ RADIUS TOOL</button>
+          <button className={`hdr-btn${dropUi.panelOpen?' active':''}`} style={{color:'#fca5a5'}} onClick={()=>setDropUi(prev=>({...prev, panelOpen:!prev.panelOpen}))}>⭕ RADIUS TOOL</button>
           <button className="hdr-btn" onClick={()=>setShowDir(true)}>📁 DIRECTORIES</button>
           <button className={`hdr-btn${showPriceFinder?' active':''}`} style={{color:'#34d399'}} onClick={()=>setShowPriceFinder(o=>!o)}>💲 PRICE FINDER</button>
           <button className="hdr-btn" style={{color:'#f472b6'}} onClick={()=>setShowUploadModal(true)}>
@@ -1947,7 +1953,7 @@ out center tags;`;
               <div className="local-pop-meta">{localPopInfo.lat.toFixed(4)}, {localPopInfo.lng.toFixed(4)}</div>
             </div>
           )}
-          {dropPanelOpen&&(
+          {dropUi.panelOpen&&(
             <div className="local-pop-card" style={{top: dropCenter ? 184 : 96, borderColor:'rgba(252,165,165,0.35)', boxShadow:'0 10px 30px rgba(239,68,68,0.16)'}}>
               <div className="local-pop-title" style={{color:'#fecaca'}}>Radius extractor</div>
               <div className="local-pop-meta" style={{marginBottom:8,color:'#fca5a5'}}>Click map to move the center point</div>
@@ -1979,12 +1985,12 @@ out center tags;`;
                   </select>
                 </div>
                 {dropCenter&&<div style={{fontSize:9,color:'#fecaca'}}>Center: {dropCenter.lat.toFixed(4)}, {dropCenter.lng.toFixed(4)}</div>}
-                {dropStatus&&<div style={{fontSize:9,color:'#fca5a5',lineHeight:1.4}}>{dropStatus}</div>}
+                {dropUi.status&&<div style={{fontSize:9,color:'#fca5a5',lineHeight:1.4}}>{dropUi.status}</div>}
                 <div style={{display:'flex',gap:6}}>
-                  <button className="drivetime-btn" disabled={dropExportLoading||!dropCenter} onClick={exportRadiusWorkbook} style={{background:'rgba(239,68,68,0.16)',borderColor:'rgba(252,165,165,0.4)',color:'#fecaca'}}>
-                    {dropExportLoading ? 'Extracting…' : 'Extract to Excel'}
+                  <button className="drivetime-btn" disabled={dropUi.exportLoading||!dropCenter} onClick={exportRadiusWorkbook} style={{background:'rgba(239,68,68,0.16)',borderColor:'rgba(252,165,165,0.4)',color:'#fecaca'}}>
+                    {dropUi.exportLoading ? 'Extracting…' : 'Extract to Excel'}
                   </button>
-                  <button className="drivetime-btn" onClick={()=>setDropPanelOpen(false)} style={{background:'rgba(148,163,184,0.15)',borderColor:'rgba(148,163,184,0.35)',color:'#cbd5e1',maxWidth:88}}>
+                  <button className="drivetime-btn" onClick={()=>setDropUi(prev=>({...prev, panelOpen:false}))} style={{background:'rgba(148,163,184,0.15)',borderColor:'rgba(148,163,184,0.35)',color:'#cbd5e1',maxWidth:88}}>
                     Hide
                   </button>
                 </div>
