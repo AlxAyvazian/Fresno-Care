@@ -372,21 +372,53 @@ function classifyFacility(tags:any):string {
   return 'clinic';
 }
 
-function geocodeQuery(q:string):{lat:number;lng:number;display:string;city:string;state:string;zip:string}|null {
-  const qNorm=q.replace(/,/g,' ').replace(/\s+/g,' ').trim();
-  const results=localSearch(qNorm,1);
+function normalizeLookupQuery(q:string):{normalized:string;stateCode:string|null} {
+  const cleaned=q.replace(/,/g,' ').replace(/\s+/g,' ').trim();
+  const tokens=cleaned.split(' ');
+  if(!tokens.length) return {normalized:cleaned,stateCode:null};
+  const last=tokens[tokens.length-1].toLowerCase();
+  const stateCode=last.length===2?last.toUpperCase():(NAME2CODE[last]||null);
+  if(stateCode) {
+    tokens[tokens.length-1]=stateCode;
+    return {normalized:tokens.join(' '),stateCode};
+  }
+  return {normalized:cleaned,stateCode:null};
+}
+
+async function geocodeQuery(q:string):Promise<{lat:number;lng:number;display:string;city:string;state:string;zip:string}|null> {
+  const {normalized:qNorm,stateCode}=normalizeLookupQuery(q);
+  const results=localSearch(qNorm,8);
   if(results.length) {
-    const l=results[0];
-    return{lat:l[2],lng:l[3],display:`${l[0]}, ${l[1]}`,city:l[0],state:l[1],zip:''};
+    const best=stateCode ? (results.find(l=>l[1]===stateCode) || results[0]) : results[0];
+    return{lat:best[2],lng:best[3],display:`${best[0]}, ${best[1]}`,city:best[0],state:best[1],zip:''};
   }
   const ql=qNorm.toLowerCase();
   if(EXTRA_COORDS[ql]) {
     const [lat,lng]=EXTRA_COORDS[ql];
     const parts=ql.split(' ');
     const city=parts.join(' ').replace(/ [a-z]{2}$/,'').replace(/^./,s=>s.toUpperCase());
-    return{lat,lng,display:city,city,state:'',zip:''};
+    return{lat,lng,display:city,city,state:stateCode||'',zip:''};
   }
-  return null;
+  try {
+    const resp=await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=us&limit=1&q=${encodeURIComponent(qNorm)}`);
+    if(!resp.ok) return null;
+    const data=await resp.json() as Array<{lat:string;lon:string;display_name?:string;address?:{city?:string;town?:string;village?:string;municipality?:string;state?:string;postcode?:string;}}>;
+    if(!data?.length) return null;
+    const hit=data[0];
+    const addr=hit.address||{};
+    const city=addr.city||addr.town||addr.village||addr.municipality||qNorm.replace(/ [A-Z]{2}$/,'');
+    const state=addr.state? (NAME2CODE[addr.state.toLowerCase()]||stateCode||'') : (stateCode||'');
+    return{
+      lat:Number(hit.lat),
+      lng:Number(hit.lon),
+      display:hit.display_name||`${city}${state?`, ${state}`:''}`,
+      city,
+      state,
+      zip:addr.postcode||'',
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ── Build popup HTML ──────────────────────────────────────────────────────────
@@ -471,9 +503,40 @@ interface ReportData {
   nearby:{name:string;state:string;dist:number;v:number}[];
   recommendation:number;isGeo:boolean;
   prov:number|null;wait:number|null;tier:number|null;
+  queryCity:string;queryState:string;
 }
 
-function generateReportHtml(data:ReportData):string {
+interface VerifiedProviderRef {
+  name:string;
+  npi:string;
+  taxonomy:string;
+  address:string;
+  phone:string;
+  detailsUrl:string;
+}
+
+interface EvidencePayload {
+  providers:VerifiedProviderRef[];
+  fetchedAt:string;
+  querySummary:string;
+  sourceLinks:{label:string;url:string}[];
+  warning:string;
+}
+
+function examTaxonomyHint(examKey:string):string {
+  const map:Record<string,string>={
+    dental:'Dentist',
+    pharmacy:'Pharmacy',
+    vision:'Optometrist',
+    audiology:'Audiologist',
+    dot:'Occupational Medicine',
+    urgentCare:'Urgent Care',
+    primaryCare:'Family Medicine',
+  };
+  return map[examKey] || 'Clinic/Center';
+}
+
+function generateReportHtml(data:ReportData,evidence:EvidencePayload|null):string {
   const {locName,stateCode,examKey,scores,nearby,recommendation,isGeo,prov,wait,tier}=data;
   const today=new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
   const examLabel=MLBL[examKey]||'All Services';
@@ -500,6 +563,13 @@ function generateReportHtml(data:ReportData):string {
     <td style="padding:5px 10px 5px 0;font-size:11px;color:${DCOL[n.v]};font-weight:700">${DLBL[n.v]}</td>
     <td style="padding:5px 0;font-size:11px;color:#64748b;font-family:monospace">~${n.dist} mi</td>
   </tr>`).join('');
+  const evidenceRows=(evidence?.providers||[]).map((p,i)=>`<tr>
+    <td style="padding:6px 10px 6px 0;font-size:11px;color:#0f172a">${i+1}. ${p.name}</td>
+    <td style="padding:6px 10px 6px 0;font-size:10px;color:#334155">${p.taxonomy}</td>
+    <td style="padding:6px 10px 6px 0;font-size:10px;color:#334155">${p.address}</td>
+    <td style="padding:6px 0;font-size:10px;color:#1d4ed8"><a href="${p.detailsUrl}" target="_blank" rel="noopener noreferrer">${p.npi}</a></td>
+  </tr>`).join('');
+  const evidenceLinks=(evidence?.sourceLinks||[]).map(s=>`<li style="margin:2px 0"><a href="${s.url}" target="_blank" rel="noopener noreferrer">${s.label}</a></li>`).join('');
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Coverage Assessment — ${locName}</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
@@ -568,7 +638,7 @@ function generateReportHtml(data:ReportData):string {
   <div class="section">
     <div class="section-title">Operational Recommendation</div>
     <div class="rec-box" style="background:${col}08;border-left-color:${col}">${recText[ps.v]||recText[3]}</div>
-    ${isGeo?'<div class="geo-note">◈ Scores derived from real public data: HRSA Workforce Data, HRSA HPSA Q4 FY2025, USDA Rural-Urban Continuum, 2020 Census, Chartis 2026 Rural Health Report. Verify with direct provider outreach.</div>':''}
+    ${isGeo?'<div class="geo-note">◈ Geocoded estimate shown. Use the verified provider evidence section below for source-backed outreach targets.</div>':''}
   </div>
   <div class="section">
     <div class="section-title">Full Service Scorecard</div>
@@ -577,6 +647,19 @@ function generateReportHtml(data:ReportData):string {
   ${nearbyRows?`<div class="section">
     <div class="section-title">Nearest Alternative Markets</div>
     <table><tr><th>Location</th><th>Difficulty</th><th>Distance</th></tr>${nearbyRows}</table>
+  </div>`:''}
+  ${evidence?`<div class="section">
+    <div class="section-title">Verified Provider Evidence (No Medicare/Medicaid Claims Proxies)</div>
+    <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:8px;">
+      Query: ${evidence.querySummary}<br/>
+      Retrieved: ${evidence.fetchedAt}<br/>
+      ${evidence.warning?`<span style="color:#b45309">${evidence.warning}</span>`:''}
+    </div>
+    ${evidenceRows?`<table><tr><th>Provider</th><th>Specialty</th><th>Address</th><th>NPI</th></tr>${evidenceRows}</table>`:'<div style="font-size:11px;color:#475569">No NPI providers returned for this exact city/state query. Expand location or exam taxonomy and rerun.</div>'}
+    <div style="margin-top:10px;font-size:11px;color:#334155;">
+      <strong>References:</strong>
+      <ul style="margin:6px 0 0 18px">${evidenceLinks}</ul>
+    </div>
   </div>`:''}
   <div class="footer">
     <div class="footer-brand">OCCU-MED · NETWORK MANAGEMENT SYSTEM · CONFIDENTIAL</div>
@@ -1464,7 +1547,7 @@ export default function App() {
     setLastGeoResult({lat:loc[2],lng:loc[3],display:`${loc[0]}, ${loc[1]}`,city:loc[0],state:loc[1],zip:''});
   }
 
-  function runLookup() {
+  async function runLookup() {
     const inputVal=rpCity.trim();
     if(!inputVal){ alert('Please enter a city, address, or ZIP code.'); return; }
     setRpSuggestions([]);
@@ -1480,7 +1563,7 @@ export default function App() {
     if(!match) match=LOCS.find(l=>l[0].toLowerCase().includes(query));
     if(match){ renderDatasetMatch(match); return; }
     let geo=lastGeoResult;
-    if(!geo||!inputVal.toLowerCase().includes((geo.city||'').toLowerCase())) geo=geocodeQuery(inputVal);
+    if(!geo||!inputVal.toLowerCase().includes((geo.city||'').toLowerCase())) geo=await geocodeQuery(inputVal);
     setLastGeoResult(null);
     if(!geo){ setRpResult(<div style={{fontSize:'11px',color:'#3d5478',textAlign:'center',padding:'14px 0'}}>LOCATION NOT FOUND.<br/>Try city + state abbreviation, e.g. "Sweetwater TX".</div>); return; }
     renderGeocodedResult(geo);
@@ -1494,7 +1577,7 @@ export default function App() {
     const nearby=findNearby(lat,lng,match,rpExam);
     const scores=ALL_METRICS.map(mk=>({key:mk,v:getVal(match,mk)}));
     const nearbyData=LOCS.filter(l=>l!==match&&l[4]<=2).map(l=>{const dist=approxMiles(l[2],l[3],lat,lng);return{name:l[0],state:l[1],dist,v:getVal(l,rpExam)};}).filter(l=>l.dist<250&&l.dist>0).sort((a,b)=>a.dist-b.dist).slice(0,4);
-    const rd:ReportData={locName:`${name}, ${state}`,stateCode:state,examKey:rpExam,scores,nearby:nearbyData,recommendation:v,isGeo:false,prov,wait,tier};
+    const rd:ReportData={locName:`${name}, ${state}`,stateCode:state,examKey:rpExam,scores,nearby:nearbyData,recommendation:v,isGeo:false,prov,wait,tier,queryCity:name,queryState:state};
     setLastReportData(rd);
     const map=mapRef.current;
     if(map) { map.flyTo([lat,lng],tier<=2?9:11,{duration:1.2}); drawRadiusCircle(lat,lng); }
@@ -1538,7 +1621,7 @@ export default function App() {
     const nearby=findNearby(lat,lng,null,rpExam);
     const scores=ALL_METRICS.map(mk=>({key:mk,v:estimateDifficultyFromNeighbors(lat,lng,mk)}));
     const nearbyData=LOCS.filter(l=>l[4]<=2).map(l=>{const dist=approxMiles(l[2],l[3],lat,lng);return{name:l[0],state:l[1],dist,v:getVal(l,rpExam)};}).filter(l=>l.dist<250&&l.dist>0).sort((a,b)=>a.dist-b.dist).slice(0,4);
-    const rd:ReportData={locName:`${city||display}${state?', '+state:''}`,stateCode:state||'',examKey:rpExam,scores,nearby:nearbyData,recommendation:v,isGeo:true,prov:stD?stD.prov:null,wait:stD?stD.wait:null,tier:null};
+    const rd:ReportData={locName:`${city||display}${state?', '+state:''}`,stateCode:state||'',examKey:rpExam,scores,nearby:nearbyData,recommendation:v,isGeo:true,prov:stD?stD.prov:null,wait:stD?stD.wait:null,tier:null,queryCity:city||display,queryState:state||''};
     setLastReportData(rd);
     const map=mapRef.current;
     if(map){ map.flyTo([lat,lng],11,{duration:1.2}); drawRadiusCircle(lat,lng); }
@@ -1618,8 +1701,62 @@ export default function App() {
     setPinnedCities(prev=>[...prev,match]);
   }
 
-  function doExportReport(rd:ReportData) {
-    const html=generateReportHtml(rd);
+  async function fetchVerifiedEvidence(rd:ReportData):Promise<EvidencePayload|null> {
+    const city=(rd.queryCity||'').trim();
+    const state=(rd.queryState||'').trim().toUpperCase();
+    if(!city||!state) return null;
+    const taxonomy=examTaxonomyHint(rd.examKey);
+    const params=new URLSearchParams({
+      version:'2.1',
+      city,
+      state,
+      taxonomy_description:taxonomy,
+      enumeration_type:'NPI-2',
+      limit:'10',
+    });
+    const sourceUrl=`https://npiregistry.cms.hhs.gov/api/?${params.toString()}`;
+    try {
+      const resp=await fetch(sourceUrl,{signal:AbortSignal.timeout(12000)});
+      if(!resp.ok) throw new Error(`NPI HTTP ${resp.status}`);
+      const data=await resp.json() as {results?:any[]};
+      const providers=(data.results||[]).map((r:any)=>{
+        const basic=r.basic||{};
+        const tax=(r.taxonomies||[]).find((t:any)=>t.primary)||r.taxonomies?.[0]||{};
+        const addr=(r.addresses||[]).find((a:any)=>a.address_purpose==='LOCATION')||r.addresses?.[0]||{};
+        const npi=String(r.number||'');
+        return {
+          name:basic.organization_name || [basic.first_name,basic.last_name].filter(Boolean).join(' ') || 'Unknown',
+          npi,
+          taxonomy:tax.desc || taxonomy,
+          address:[addr.address_1,addr.city,addr.state,addr.postal_code].filter(Boolean).join(', '),
+          phone:addr.telephone_number || '',
+          detailsUrl:npi?`https://npiregistry.cms.hhs.gov/provider-view/${npi}`:'https://npiregistry.cms.hhs.gov/',
+        } as VerifiedProviderRef;
+      });
+      return {
+        providers,
+        fetchedAt:new Date().toISOString(),
+        querySummary:`${city}, ${state} · ${MLBL[rd.examKey]||rd.examKey} · taxonomy hint "${taxonomy}"`,
+        sourceLinks:[
+          {label:'NPPES NPI Registry API',url:sourceUrl},
+          {label:'NPPES Provider Search',url:'https://npiregistry.cms.hhs.gov/search'},
+        ],
+        warning:providers.length?'':'No exact providers returned by NPPES for this city/state and taxonomy filter.',
+      };
+    } catch (e:any) {
+      return {
+        providers:[],
+        fetchedAt:new Date().toISOString(),
+        querySummary:`${city}, ${state} · ${MLBL[rd.examKey]||rd.examKey} · taxonomy hint "${taxonomy}"`,
+        sourceLinks:[{label:'NPPES NPI Registry API',url:sourceUrl}],
+        warning:`Live NPPES lookup failed: ${e?.message||'unknown error'}`,
+      };
+    }
+  }
+
+  async function doExportReport(rd:ReportData) {
+    const evidence=await fetchVerifiedEvidence(rd);
+    const html=generateReportHtml(rd,evidence);
     const name=`OccuMed_Coverage_${rd.locName.replace(/[^a-z0-9]/gi,'_')}.html`;
     setPdfHtml(html);
     setPdfDlName(name);
