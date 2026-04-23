@@ -274,6 +274,13 @@ function approxMiles(lat1:number,lng1:number,lat2:number,lng2:number):number {
   return Math.round(Math.sqrt(dlat*dlat+dlng*dlng)*69);
 }
 
+function isLikelyUsCoord(lat:number,lng:number):boolean {
+  const inLower48 = lat>=24.3 && lat<=49.6 && lng>=-125.0 && lng<=-66.7;
+  const inAlaska = lat>=51.2 && lat<=71.6 && lng>=-170.0 && lng<=-129.5;
+  const inHawaii = lat>=18.8 && lat<=22.5 && lng>=-160.8 && lng<=-154.6;
+  return inLower48 || inAlaska || inHawaii;
+}
+
 function localSearch(q:string,limit=8):typeof LOCS {
   const ql=q.toLowerCase().replace(/,/g,' ').replace(/\s+/g,' ').trim();
   const results:typeof LOCS=[];
@@ -739,6 +746,8 @@ export default function App() {
   const [liveResults, setLiveResults] = useState<any[]>([]);
   const [liveFilter, setLiveFilter] = useState<string>('all');
   const [liveTextFilter, setLiveTextFilter] = useState('');
+  const [liveRegionFilter, setLiveRegionFilter] = useState<'all'|'us'|'intl'>('all');
+  const [liveSort, setLiveSort] = useState<'distance'|'name'>('distance');
   const [liveLocation, setLiveLocation] = useState('');
   const [liveRadius, setLiveRadius] = useState(10);
   const [liveAutoPin, setLiveAutoPin] = useState(true);
@@ -1883,15 +1892,28 @@ out center tags;`;
     });
   }
 
-  useEffect(()=>{
+  function filterAndSortLiveResults(results:any[]) {
     const q=liveTextFilter.trim().toLowerCase();
-    const filteredByType=liveFilter==='all'?liveResults:liveResults.filter(r=>r.cat===liveFilter);
-    const filtered=q
-      ? filteredByType.filter(r=>`${r.name||''} ${r.addr||''} ${r.cat||''}`.toLowerCase().includes(q))
-      : filteredByType;
+    const filtered=results
+      .filter(r=>liveFilter==='all' ? true : r.cat===liveFilter)
+      .filter(r=>q ? `${r.name||''} ${r.addr||''} ${r.cat||''}`.toLowerCase().includes(q) : true)
+      .filter(r=>{
+        if(liveRegionFilter==='all') return true;
+        const isUs=isLikelyUsCoord(r.lat, r.lng);
+        return liveRegionFilter==='us' ? isUs : !isUs;
+      });
+    const sorted=[...filtered].sort((a,b)=>{
+      if(liveSort==='name') return String(a.name||'').localeCompare(String(b.name||''));
+      return (a.dist||0)-(b.dist||0);
+    });
+    return sorted;
+  }
+
+  useEffect(()=>{
+    const filtered=filterAndSortLiveResults(liveResults);
     renderLiveMarkers(filtered.length?filtered:liveResults);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[liveFilter, liveTextFilter, liveResults]);
+  },[liveFilter, liveTextFilter, liveResults, liveRegionFilter, liveSort]);
 
   function lpFly(lat:number,lng:number,id:any) {
     const map=mapRef.current;
@@ -2248,12 +2270,26 @@ out center tags;`;
                 value={liveTextFilter}
                 onChange={e=>setLiveTextFilter(e.target.value)}
               />
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                <select className="rp-select" value={liveRegionFilter} onChange={e=>setLiveRegionFilter(e.target.value as any)}>
+                  <option value="all">All Regions</option>
+                  <option value="us">US Only</option>
+                  <option value="intl">International Only</option>
+                </select>
+                <select className="rp-select" value={liveSort} onChange={e=>setLiveSort(e.target.value as any)}>
+                  <option value="distance">Sort: Distance</option>
+                  <option value="name">Sort: Name</option>
+                </select>
+              </div>
               {/* Filter chips */}
               <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
                 <button className={`lp-chip${liveFilter==='all'?' on':''}`} onClick={()=>setLiveFilter('all')}>All</button>
                 {Object.entries(CATS).map(([cat,c])=>(
                   <button key={cat} className={`lp-chip${liveFilter===cat?' on':''}`} onClick={()=>setLiveFilter(cat)}>{c.ico} {c.lbl}</button>
                 ))}
+              </div>
+              <div style={{fontSize:9,color:'#8fb3d8'}}>
+                Showing {filterAndSortLiveResults(liveResults).length} of {liveResults.length} providers
               </div>
               <div className={`lp-loading${liveLoading?' show':''}`}>
                 <div className="lp-spin"/>
@@ -2268,9 +2304,7 @@ out center tags;`;
                   <br/><button style={{marginTop:8,padding:'4px 12px',borderRadius:3,background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',color:'#ef4444',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,cursor:'pointer'}} onClick={()=>{if(lastRadiusRef.current)doLiveSearch(lastRadiusRef.current.lat,lastRadiusRef.current.lng);}}>↺ RETRY</button>
                 </div>
               )}
-              {(liveFilter==='all'?liveResults:liveResults.filter(r=>r.cat===liveFilter))
-                .filter((r:any)=>!liveTextFilter.trim()||`${r.name||''} ${r.addr||''} ${r.cat||''}`.toLowerCase().includes(liveTextFilter.trim().toLowerCase()))
-                .map((r:any)=>{
+              {filterAndSortLiveResults(liveResults).map((r:any)=>{
                 const c=CATS[r.cat]||CATS.clinic;
                 const gm=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.name+(r.addr?' '+r.addr:''))}`;
                 return (
