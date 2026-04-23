@@ -738,8 +738,10 @@ export default function App() {
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveResults, setLiveResults] = useState<any[]>([]);
   const [liveFilter, setLiveFilter] = useState<string>('all');
+  const [liveTextFilter, setLiveTextFilter] = useState('');
   const [liveLocation, setLiveLocation] = useState('');
   const [liveRadius, setLiveRadius] = useState(10);
+  const [liveAutoPin, setLiveAutoPin] = useState(true);
   const [liveHighlightId, setLiveHighlightId] = useState<any>(null);
   const [liveHint, setLiveHint] = useState('Click anywhere on the map to search for facilities');
   const [liveMirror, setLiveMirror] = useState('');
@@ -1042,7 +1044,8 @@ export default function App() {
       setDropCenter({lat:e.latlng.lat,lng:e.latlng.lng});
       setDropUi(prev=>({...prev, panelOpen:true, status:''}));
       drawDropRadius(e.latlng.lat, e.latlng.lng, dropRadiusMiles);
-      if(liveOpenRef.current) {
+      if(liveOpenRef.current || liveAutoPinRef.current) {
+        if(liveAutoPinRef.current && !liveOpenRef.current) setLiveOpen(true);
         doLiveSearch(e.latlng.lat, e.latlng.lng);
       }
     });
@@ -1055,6 +1058,8 @@ export default function App() {
 
   const liveOpenRef = useRef(false);
   useEffect(()=>{ liveOpenRef.current = liveOpen; },[liveOpen]);
+  const liveAutoPinRef = useRef(true);
+  useEffect(()=>{ liveAutoPinRef.current = liveAutoPin; },[liveAutoPin]);
   const showStateColorsRef = useRef(showStateColors);
   useEffect(()=>{ showStateColorsRef.current = showStateColors; },[showStateColors]);
   useEffect(()=>{
@@ -1879,10 +1884,14 @@ out center tags;`;
   }
 
   useEffect(()=>{
-    const filtered=liveFilter==='all'?liveResults:liveResults.filter(r=>r.cat===liveFilter);
+    const q=liveTextFilter.trim().toLowerCase();
+    const filteredByType=liveFilter==='all'?liveResults:liveResults.filter(r=>r.cat===liveFilter);
+    const filtered=q
+      ? filteredByType.filter(r=>`${r.name||''} ${r.addr||''} ${r.cat||''}`.toLowerCase().includes(q))
+      : filteredByType;
     renderLiveMarkers(filtered.length?filtered:liveResults);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[liveFilter]);
+  },[liveFilter, liveTextFilter, liveResults]);
 
   function lpFly(lat:number,lng:number,id:any) {
     const map=mapRef.current;
@@ -2226,6 +2235,19 @@ out center tags;`;
                 <input type="range" min={2} max={50} value={liveRadius} onChange={e=>setLiveRadius(Number(e.target.value))} onMouseUp={()=>{ if(lastRadiusRef.current) doLiveSearch(lastRadiusRef.current.lat,lastRadiusRef.current.lng); }}/>
                 <span style={{fontFamily:'IBM Plex Mono,monospace',fontSize:10,color:'#67e8f9',whiteSpace:'nowrap'}}>{liveRadius} km</span>
               </div>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,padding:'6px 8px',borderRadius:8,background:'rgba(125,211,252,0.06)',border:'1px solid rgba(125,211,252,0.18)'}}>
+                <label style={{display:'flex',alignItems:'center',gap:6,fontSize:9.5,color:'#9cc7eb',cursor:'pointer'}}>
+                  <input type="checkbox" checked={liveAutoPin} onChange={e=>setLiveAutoPin(e.target.checked)} />
+                  Auto search on pin drop
+                </label>
+                <span style={{fontSize:9,color:'#67e8f9',fontFamily:"'IBM Plex Mono',monospace"}}>Global</span>
+              </div>
+              <input
+                className="rp-input"
+                placeholder="Filter providers by name, address, or type..."
+                value={liveTextFilter}
+                onChange={e=>setLiveTextFilter(e.target.value)}
+              />
               {/* Filter chips */}
               <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
                 <button className={`lp-chip${liveFilter==='all'?' on':''}`} onClick={()=>setLiveFilter('all')}>All</button>
@@ -2246,7 +2268,9 @@ out center tags;`;
                   <br/><button style={{marginTop:8,padding:'4px 12px',borderRadius:3,background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',color:'#ef4444',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,cursor:'pointer'}} onClick={()=>{if(lastRadiusRef.current)doLiveSearch(lastRadiusRef.current.lat,lastRadiusRef.current.lng);}}>↺ RETRY</button>
                 </div>
               )}
-              {(liveFilter==='all'?liveResults:liveResults.filter(r=>r.cat===liveFilter)).map((r:any)=>{
+              {(liveFilter==='all'?liveResults:liveResults.filter(r=>r.cat===liveFilter))
+                .filter((r:any)=>!liveTextFilter.trim()||`${r.name||''} ${r.addr||''} ${r.cat||''}`.toLowerCase().includes(liveTextFilter.trim().toLowerCase()))
+                .map((r:any)=>{
                 const c=CATS[r.cat]||CATS.clinic;
                 const gm=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.name+(r.addr?' '+r.addr:''))}`;
                 return (
