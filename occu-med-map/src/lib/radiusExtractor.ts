@@ -30,22 +30,33 @@ export function buildCitiesInRadius(center:{lat:number;lng:number}, radiusMiles:
     .sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
 }
 
+export type FacilityResult = {
+  id: number | string;
+  lat: number;
+  lng: number;
+  name: string;
+  cat: string;
+  addr: string;
+  phone: string;
+  website: string;
+};
+
 export function buildFacilityRows(
   center:{lat:number;lng:number},
-  facilitiesRaw:any[],
+  facilitiesRaw:FacilityResult[],
   dropFacilityType:string,
-  catLabels:Record<string, {lbl:string}>
+  catLabels:Record<string, {lbl?:string}>
 ) {
   const filteredFacilities = facilitiesRaw
-    .filter((r:any)=>dropFacilityType === 'all' ? true : r.cat === dropFacilityType);
-  return filteredFacilities.map((r:any)=>({
+    .filter((r)=>dropFacilityType === 'all' ? true : r.cat === dropFacilityType);
+  return filteredFacilities.map((r)=>({
     name: r.name,
     type: catLabels[r.cat]?.lbl || r.cat,
     distanceMiles: Number((haversine(center.lat, center.lng, r.lat, r.lng) / 1609.34).toFixed(2)),
     address: r.addr || '',
     phone: r.phone || '',
     website: r.website || '',
-  })).sort((a:any,b:any)=>a.distanceMiles-b.distanceMiles);
+  })).sort((a,b)=>a.distanceMiles-b.distanceMiles);
 }
 
 export async function queryFacilitiesInRadius(params:{
@@ -55,7 +66,7 @@ export async function queryFacilitiesInRadius(params:{
   endpoints:string[];
   classifyFacility:(tags:any)=>string;
   onStatus?:(msg:string)=>void;
-}) {
+}): Promise<FacilityResult[]> {
   const { lat, lng, radiusMiles, endpoints, classifyFacility, onStatus } = params;
   const r = Math.max(radiusMiles, 0.1) * 1609.34;
   const q=`[out:json][timeout:30];(
@@ -80,14 +91,19 @@ out center tags;`;
     try {
       onStatus?.(`Searching facilities (mirror ${i+1}/${endpoints.length})…`);
       const controller=new AbortController();
-      const timer=setTimeout(()=>controller.abort(),9000);
-      const res=await fetch(endpoints[i],{method:'POST',body:'data='+encodeURIComponent(q),signal:controller.signal});
+      const timer=setTimeout(()=>controller.abort(),14000);
+      const res=await fetch(endpoints[i],{
+        method:'POST',
+        body:'data='+encodeURIComponent(q),
+        signal:controller.signal,
+        headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},
+      });
       clearTimeout(timer);
       if(!res.ok) continue;
       const data=await res.json();
       if(!data||!Array.isArray(data.elements)) continue;
       const seen:Record<string,boolean>={};
-      return data.elements.map((el:any)=>{
+      const rows: FacilityResult[] = data.elements.map((el:any)=>{
         const la=el.lat||(el.center&&el.center.lat);
         const lo=el.lon||(el.center&&el.center.lon);
         if(!la||!lo) return null;
@@ -97,7 +113,8 @@ out center tags;`;
         if(seen[key]) return null; seen[key]=true;
         const ad=[t['addr:housenumber'],t['addr:street'],t['addr:city']].filter(Boolean).join(' ');
         return{id:el.id,lat:la,lng:lo,name:nm,cat:classifyFacility(t),addr:ad,phone:t.phone||t['contact:phone']||'',website:t.website||t['contact:website']||''};
-      }).filter(Boolean);
+      }).filter((row: FacilityResult | null): row is FacilityResult => Boolean(row));
+      if(rows.length>0) return rows;
     } catch {}
   }
   return [];

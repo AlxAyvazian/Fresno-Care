@@ -10,7 +10,7 @@ import {
   PROCEDURE_RATES, STATE_COST_INDEX, STATE_COST_TIER,
   adjustedPrice, tierColor,
 } from './lib/procedurePrices';
-import { buildCitiesInRadius, buildFacilityRows, queryFacilitiesInRadius } from './lib/radiusExtractor';
+import { buildCitiesInRadius, buildFacilityRows, queryFacilitiesInRadius, type FacilityResult } from './lib/radiusExtractor';
 
 // ── FIPS → state abbreviation lookup ────────────────────────────────────────
 const FIPS2CODE: Record<string,string> = {
@@ -58,6 +58,7 @@ const OVERPASS_ENDPOINTS = [
   'https://corsproxy.io/?https://overpass-api.de/api/interpreter',
   'https://corsproxy.io/?https://overpass.kumi.systems/api/interpreter'
 ];
+const RADIUS_COLORS = ['#f43f5e','#f97316','#facc15','#22c55e','#06b6d4','#3b82f6','#a855f7','#ec4899'];
 
 const CATS: Record<string,{ico:string;col:string;lbl:string}> = {
   hospital:{ico:'🏥',col:'#ef4444',lbl:'Hospital'},
@@ -693,6 +694,7 @@ export default function App() {
   const dropPinRef = useRef<L.Marker|null>(null);
   const popDensityLayerRef = useRef<L.LayerGroup|null>(null);
   const clinicLayerRef = useRef<L.LayerGroup|null>(null);
+  const savedRadiusLayerRef = useRef<L.LayerGroup|null>(null);
   const rawStateFeaturesRef = useRef<any[]>([]);
   const clinicFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -758,6 +760,8 @@ export default function App() {
   const [dropRadiusMiles, setDropRadiusMiles] = useState(25);
   const [dropFacilityType, setDropFacilityType] = useState('all');
   const [dropIncludeFacilities, setDropIncludeFacilities] = useState(true);
+  const [savedRadii, setSavedRadii] = useState<Array<{id:number;lat:number;lng:number;radiusMiles:number;color:string}>>([]);
+  const [showGlowPoints, setShowGlowPoints] = useState(true);
   const [outreachNotes, setOutreachNotes] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_notes')||'{}'); } catch { return {}; } });
   const [outreachStatus, setOutreachStatus] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_status')||'{}'); } catch { return {}; } });
   const [dropUi, setDropUi] = useState({panelOpen:false, exportLoading:false, status:''});
@@ -931,15 +935,23 @@ export default function App() {
     }).addTo(map);
   }
 
+  function saveCurrentRadius() {
+    if (!dropCenter) return;
+    setSavedRadii(prev=>{
+      const color = RADIUS_COLORS[prev.length % RADIUS_COLORS.length];
+      return [{id:Date.now(),lat:dropCenter.lat,lng:dropCenter.lng,radiusMiles:dropRadiusMiles,color}, ...prev].slice(0, 24);
+    });
+  }
+
   async function exportRadiusWorkbook() {
     if (!dropCenter) { alert('Click the map first to set a radius center.'); return; }
     setDropUi(prev=>({...prev, exportLoading:true, status:'Preparing city and facility extraction…'}));
     try {
       const cities = buildCitiesInRadius(dropCenter, dropRadiusMiles);
 
-      let facilities:any[] = [];
+      let facilities: ReturnType<typeof buildFacilityRows> = [];
       if (dropIncludeFacilities) {
-        const facilitiesRaw = await queryFacilitiesInRadius({
+        const facilitiesRaw: FacilityResult[] = await queryFacilitiesInRadius({
           lat: dropCenter.lat,
           lng: dropCenter.lng,
           radiusMiles: dropRadiusMiles,
@@ -948,12 +960,12 @@ export default function App() {
           onStatus: (msg) => setDropUi(prev=>({...prev, status:msg})),
         });
         if (facilitiesRaw.length) {
-          setLiveResults(facilitiesRaw.map((r:any)=>({
+          setLiveResults(facilitiesRaw.map((r)=>({
             ...r,
             dist: haversine(dropCenter.lat, dropCenter.lng, r.lat, r.lng),
           })));
         }
-        facilities = buildFacilityRows(dropCenter, facilitiesRaw, dropFacilityType, CATS as any);
+        facilities = buildFacilityRows(dropCenter, facilitiesRaw, dropFacilityType, CATS);
       }
 
       const wb = XLSX.utils.book_new();
@@ -962,7 +974,7 @@ export default function App() {
         state: '',
         distanceMiles: '',
         populationEstimate: '',
-      }]);
+      }], {header:['city','state','distanceMiles','populationEstimate']});
       XLSX.utils.book_append_sheet(wb, wsCities, 'Cities');
       const wsFacilities = XLSX.utils.json_to_sheet(dropIncludeFacilities
         ? (facilities.length ? facilities : [{
@@ -981,7 +993,7 @@ export default function App() {
           phone: '',
           website: '',
         }]
-      );
+      , {header:['name','type','distanceMiles','address','phone','website']});
       XLSX.utils.book_append_sheet(wb, wsFacilities, 'Facilities');
       XLSX.writeFile(wb, `radius_extract_${new Date().toISOString().slice(0,10)}.xlsx`);
       setDropUi(prev=>({...prev, status:`Done: ${cities.length} cities/towns${dropIncludeFacilities?` and ${facilities.length} facilities`:''} exported.`}));
@@ -1324,7 +1336,7 @@ export default function App() {
       const mk = L.marker([c.lat, c.lng], {
         icon: L.divIcon({
           className: '',
-          html: `<div style="width:18px;height:18px;border-radius:50%;background:${col};box-shadow:0 0 10px ${col},0 0 20px ${col}66,0 0 4px rgba(0,0,0,0.6);animation:clinic-pulse 2s ease-in-out ${(i*0.15).toFixed(1)}s infinite;cursor:pointer;"></div>`,
+          html: `<div style="width:18px;height:18px;border-radius:50%;background:${col};${showGlowPoints?`box-shadow:0 0 10px ${col},0 0 20px ${col}66,0 0 4px rgba(0,0,0,0.6);animation:clinic-pulse 2s ease-in-out ${(i*0.15).toFixed(1)}s infinite;`:'box-shadow:0 0 0 1px rgba(255,255,255,0.35);'}cursor:pointer;"></div>`,
           iconSize: [18,18], iconAnchor: [9,9],
         }),
         zIndexOffset: 2000,
@@ -1344,7 +1356,7 @@ export default function App() {
     grp.addTo(map);
     clinicLayerRef.current = grp;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[uploadedClinics, showUploadedClinics, uploadColor]);
+  },[uploadedClinics, showUploadedClinics, uploadColor, showGlowPoints]);
 
   async function handleClinicUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -1418,6 +1430,40 @@ export default function App() {
     if(showLabels) lyr.addTo(map); else map.removeLayer(lyr);
   },[showLabels]);
 
+  useEffect(()=>{
+    const map = mapRef.current;
+    if(!map) return;
+    if(savedRadiusLayerRef.current) {
+      try { map.removeLayer(savedRadiusLayerRef.current); } catch {}
+      savedRadiusLayerRef.current = null;
+    }
+    if(!savedRadii.length) return;
+    const grp = L.layerGroup();
+    savedRadii.forEach((r, idx)=>{
+      L.circle([r.lat,r.lng],{
+        radius: Math.max(r.radiusMiles,0.1)*1609.34,
+        color: r.color,
+        weight: 2,
+        opacity: 0.88,
+        fillColor: r.color,
+        fillOpacity: 0.06,
+        dashArray: '8 5',
+        interactive: false,
+      }).addTo(grp);
+      L.marker([r.lat,r.lng],{
+        icon:L.divIcon({
+          className:'',
+          html:`<div style="width:10px;height:10px;border-radius:50%;background:${r.color};border:2px solid #fff;box-shadow:${showGlowPoints?`0 0 0 3px ${r.color}55,0 0 12px ${r.color}aa`:'0 0 0 2px rgba(255,255,255,0.5)'};"></div>`,
+          iconSize:[10,10],iconAnchor:[5,5],
+        }),
+        interactive:false,
+        zIndexOffset: 2800 - idx,
+      }).addTo(grp);
+    });
+    grp.addTo(map);
+    savedRadiusLayerRef.current = grp;
+  },[savedRadii, showGlowPoints]);
+
   // ── Re-style states when metric changes ─────────────────────────────────
   useEffect(()=>{
     if(!stateGeoRef.current) return;
@@ -1446,7 +1492,7 @@ export default function App() {
       const borderW = tier<=2 ? 2 : 1.5;
       const icon = L.divIcon({
         className:'',
-        html:`<div style="width:${r*2}px;height:${r*2}px;border-radius:50%;background:${col};border:${borderW}px solid rgba(255,255,255,${tier===1?0.8:0.5});box-shadow:0 0 ${r+4}px ${col}55,0 1px 4px rgba(0,0,0,0.6);cursor:pointer;"></div>`,
+        html:`<div style="width:${r*2}px;height:${r*2}px;border-radius:50%;background:${col};border:${borderW}px solid rgba(255,255,255,${tier===1?0.8:0.5});${showGlowPoints?`box-shadow:0 0 ${r+4}px ${col}55,0 1px 4px rgba(0,0,0,0.6);`:'box-shadow:0 0 0 1px rgba(255,255,255,0.2);'}cursor:pointer;"></div>`,
         iconSize:[r*2,r*2],iconAnchor:[r,r]
       });
       const mk = L.marker([lat,lng],{icon,zIndexOffset:tier===1?300:tier===2?200:tier===3?100:50});
@@ -1458,7 +1504,7 @@ export default function App() {
       cityLayer.addLayer(mk);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[metric,filterDiff,mapReady]);
+  },[metric,filterDiff,mapReady,showGlowPoints]);
 
   // ── Timezone layer ────────────────────────────────────────────────────────
   useEffect(()=>{
@@ -1873,7 +1919,7 @@ out center tags;`;
     filtered.forEach((r:any,i:number)=>{
       const c=CATS[r.cat]||CATS.clinic;
       const gmUrl=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.name+(r.addr?' '+r.addr:''))}`;
-      const mk=L.marker([r.lat,r.lng],{icon:L.divIcon({className:'',html:`<div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(4,10,22,0.92);border:2px solid ${c.col};box-shadow:0 0 8px ${c.col}44,0 2px 6px rgba(0,0,0,0.6);font-size:13px;cursor:pointer;">${c.ico}</div>`,iconSize:[28,28],iconAnchor:[14,14]}),zIndexOffset:1000+i});
+      const mk=L.marker([r.lat,r.lng],{icon:L.divIcon({className:'',html:`<div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(4,10,22,0.92);border:2px solid ${c.col};${showGlowPoints?`box-shadow:0 0 8px ${c.col}44,0 2px 6px rgba(0,0,0,0.6);`:'box-shadow:0 0 0 1px rgba(255,255,255,0.18);'}font-size:13px;cursor:pointer;">${c.ico}</div>`,iconSize:[28,28],iconAnchor:[14,14]}),zIndexOffset:1000+i});
       mk.bindPopup(`<div style="font-family:Inter,sans-serif;padding:10px 12px;min-width:190px;">
         <div style="display:flex;gap:7px;align-items:flex-start;margin-bottom:6px;"><span style="font-size:16px">${c.ico}</span>
         <div><div style="font-size:12.5px;font-weight:700;color:#e2f0ff;line-height:1.3">${r.name}</div>
@@ -1913,7 +1959,7 @@ out center tags;`;
     const filtered=filterAndSortLiveResults(liveResults);
     renderLiveMarkers(filtered.length?filtered:liveResults);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[liveFilter, liveTextFilter, liveResults, liveRegionFilter, liveSort]);
+  },[liveFilter, liveTextFilter, liveResults, liveRegionFilter, liveSort, showGlowPoints]);
 
   function lpFly(lat:number,lng:number,id:any) {
     const map=mapRef.current;
@@ -2013,6 +2059,10 @@ out center tags;`;
               <span className="tog-lbl">70mi radius ring</span>
               <label className="tog-switch"><input type="checkbox" checked={showRadius} onChange={e=>setShowRadius(e.target.checked)}/><span className="tog-slider"/></label>
             </div>
+            <div className="tog-row">
+              <span className="tog-lbl">Glow effects</span>
+              <label className="tog-switch"><input type="checkbox" checked={showGlowPoints} onChange={e=>setShowGlowPoints(e.target.checked)}/><span className="tog-slider"/></label>
+            </div>
             {uploadedClinics.length>0&&<div className="tog-row">
               <span className="tog-lbl" style={{color:'#f472b6'}}>My clinics ({uploadedClinics.length})</span>
               <label className="tog-switch"><input type="checkbox" checked={showUploadedClinics} onChange={e=>setShowUploadedClinics(e.target.checked)}/><span className="tog-slider"/></label>
@@ -2107,6 +2157,24 @@ out center tags;`;
                   Include facilities in export
                 </label>
                 {dropCenter&&<div style={{fontSize:9,color:'#fecaca'}}>Center: {dropCenter.lat.toFixed(4)}, {dropCenter.lng.toFixed(4)}</div>}
+                <div style={{display:'flex',gap:6}}>
+                  <button className="drivetime-btn" disabled={!dropCenter} onClick={saveCurrentRadius} style={{background:'rgba(244,114,182,0.14)',borderColor:'rgba(244,114,182,0.35)',color:'#fbcfe8'}}>
+                    Save ring
+                  </button>
+                  <button className="drivetime-btn" disabled={!savedRadii.length} onClick={()=>setSavedRadii([])} style={{background:'rgba(148,163,184,0.14)',borderColor:'rgba(148,163,184,0.35)',color:'#cbd5e1'}}>
+                    Clear saved
+                  </button>
+                </div>
+                {savedRadii.length>0&&(
+                  <div style={{display:'grid',gap:3,maxHeight:76,overflowY:'auto',paddingRight:2}}>
+                    {savedRadii.slice(0,8).map((r,i)=>(
+                      <div key={r.id} style={{display:'flex',justifyContent:'space-between',fontSize:8.5,color:'#fecaca',background:'rgba(255,255,255,0.03)',border:'1px solid rgba(252,165,165,0.2)',borderRadius:4,padding:'3px 5px'}}>
+                        <span style={{display:'inline-flex',alignItems:'center',gap:5}}><span style={{width:7,height:7,borderRadius:'50%',background:r.color,display:'inline-block'}}/>Ring {i+1}</span>
+                        <span>{r.radiusMiles.toFixed(1)} mi</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {dropUi.status&&<div style={{fontSize:9,color:'#fca5a5',lineHeight:1.4}}>{dropUi.status}</div>}
                 <div style={{display:'flex',gap:6}}>
                   <button className="drivetime-btn" disabled={dropUi.exportLoading||!dropCenter} onClick={exportRadiusWorkbook} style={{background:'rgba(239,68,68,0.16)',borderColor:'rgba(252,165,165,0.4)',color:'#fecaca'}}>
