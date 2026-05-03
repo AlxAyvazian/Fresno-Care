@@ -1,0 +1,201 @@
+Build a polished full-stack-ready web app called “VoiceMap Fresno: Stray Animal Evidence Hub.”
+
+Purpose:
+A free public-interest tool for Fresno residents to document concerns involving stray cats and dogs, organize evidence, generate responsible reports, and create pressure for city response without making reckless or defamatory claims.
+
+Important framing:
+Use careful legal language throughout the app:
+- “reported concern”
+- “alleged incident”
+- “submitted evidence”
+- “animal welfare concern”
+- “requires review”
+- “requires investigation”
+- “pattern of public reports”
+Do NOT say abuse definitely occurred. Do NOT label any person as an abuser. The app should help users document and route concerns responsibly.
+
+Core mission:
+Help people document stray animal neglect in Fresno City, including photos, locations, dates, descriptions, and repeated patterns, so concerns can be organized into formal reports for animal control, police non-emergency, city council, the mayor’s office, and local media.
+
+Design style:
+Use a premium MacOS Tahoe / Apple Liquid Glass inspired interface:
+- luminous glassmorphism cards
+- translucent panels
+- frosted blur backgrounds
+- glowing borders on hover/click
+- soft moving luminous orbs in the background
+- subtle animated gradients
+- polished civic-tech look
+- rounded corners
+- modern typography
+- light/dark toggle
+- professional but emotionally powerful
+- no childish design
+- clean infographic / visual roadmap feel
+- bold title/subtitle sections
+- color-coded modules
+- simple icons
+- easy-to-scan dashboard cards
+
+Suggested color feel:
+Deep navy, midnight blue, soft cyan, aqua, white glass, subtle lime accents, gentle violet glow.
+
+Use:
+React + Vite + Tailwind CSS if available.
+Use localStorage for version 1.
+No paid APIs.
+No backend required initially, but structure code so Supabase can be added later.
+
+Pages:
+1. Landing Page
+2. Submit Report
+3. Report Generator
+4. Public Dashboard
+5. Escalation Center
+6. Resource Library
+7. About / Safety / Responsible Reporting
+
+Detailed features:
+
+Landing Page:
+- Hero title: “Give Fresno’s Stray Animals a Voice”
+- Subtitle explaining that the tool helps residents document animal welfare concerns and generate organized reports.
+- CTA buttons:
+  - “Document a Concern”
+  - “Generate a Report”
+  - “View Dashboard”
+- Include three feature cards:
+  1. Document Evidence
+  2. Generate Responsible Reports
+  3. Escalate Patterns to Officials
+- Add a section explaining:
+  “One report can be ignored. A documented pattern is harder to dismiss.”
+
+Submit Report Page:
+Create a detailed form with these fields:
+- Animal type: cat, dog, other
+- Number of animals observed
+- Location / cross streets
+- Neighborhood
+- Date observed
+- Time observed
+- Is the animal currently in danger? yes/no/unsure
+- Concern type checkboxes:
+  - appears injured
+  - appears starving
+  - abandoned
+  - trapped
+  - exposed to heat/cold
+  - repeated stray sightings
+  - possible neglect
+  - aggressive or unsafe situation
+  - deceased animal
+  - other
+- Description of concern
+- Evidence notes
+- Photo upload placeholder or “photo attachment notes” for version 1
+- Agencies already contacted
+- Did anyone respond?
+- User contact info optional
+- Anonymous submission option
+- Consent checkbox:
+  “I understand this tool helps organize reported concerns and does not make legal findings.”
+
+After submit:
+- Save report to localStorage
+- Show confirmation
+- Allow user to generate a formal report packet
+
+Report Generator Page:
+Generate a clean structured report with:
+- Report title
+- Date generated
+- Incident summary
+- Location summary
+- Animal welfare concern summary
+- Timeline
+- Evidence checklist
+- Agencies contacted
+- Recommended next steps
+- Suggested police / animal control email
+- Suggested city council / mayor email
+- Suggested media tip summary
+
+Include buttons:
+- Copy report
+- Print report
+- Download as text
+- Save draft locally
+
+Public Dashboard Page:
+Create a mock dashboard using locally saved reports plus demo data.
+Include:
+- Total reported concerns
+- Open concerns
+- Follow-up needed
+- Resolved / response received
+- Number of animals involved
+- Neighborhood heatmap placeholder
+- Recent reports table
+- Status tags:
+  - Draft
+  - Submitted
+  - Routed
+  - Follow-Up Needed
+  - Resolved
+- Issue type chart placeholder using cards/bars, no paid chart library required unless already available.
+- Map placeholder card saying “Map view can be connected later.”
+
+Escalation Center:
+Generate three types of messages:
+1. Animal control / police non-emergency message
+2. City council / mayor escalation message
+3. Local media tip message
+
+Each should include responsible language:
+- “I am submitting a documented concern”
+- “I am requesting review”
+- “I am asking whether this location has received repeated reports”
+- “Please advise what action, if any, has been taken”
+
+Resource Library:
+Sections:
+- What to document
+- When to call emergency services
+- When to use police non-emergency
+- How to photograph safely
+- What not to do
+- How to avoid confrontation
+- Fresno contact placeholders:
+  - Fresno Animal Center
+  - Fresno Police Non-Emergency
+  - City Council
+  - Mayor’s Office
+  - Local media contacts
+Use placeholders where exact contact info is not known.
+
+About / Safety Page:
+Include:
+- This is a public-interest documentation tool.
+- It does not replace emergency services.
+- It does not make legal conclusions.
+- Submitted concerns should be truthful and based on direct observation.
+- Users should not trespass, harass, threaten, or interfere with investigations.
+
+Components:
+- GlassCard
+- GlowButton
+- AnimatedBackgroundOrbs
+- StatCard
+- ReportForm
+- GeneratedReport
+- StatusBadge
+- SectionHeader
+- ResourceCard
+
+Important:
+Make the app look premium and emotionally compelling.
+The interface should feel like a serious civic-tech tool, not a basic form.
+Use animations sparingly but beautifully.
+Make it fully responsive for mobile and desktop.
+Include comments in code explaining where Supabase/photo upload/email routing can be added later.
