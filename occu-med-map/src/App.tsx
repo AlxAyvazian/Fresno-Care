@@ -1863,7 +1863,7 @@ export default function App() {
 
     if(liveCircleRef.current) { try{map.removeLayer(liveCircleRef.current);}catch(e){} }
     if(livePinRef.current) { try{map.removeLayer(livePinRef.current);}catch(e){} }
-    liveCircleRef.current=L.circle([lat,lng],{radius:liveRadius*1000,color:'#06b6d4',weight:1.5,opacity:0.45,dashArray:'7 5',fillColor:'#06b6d4',fillOpacity:0.03,interactive:false}).addTo(map);
+    liveCircleRef.current=L.circle([lat,lng],{radius:liveRadius*1000,color:'#22d3ee',weight:1.5,opacity:0.45,dashArray:'7 5',fillColor:'#06b6d4',fillOpacity:0.03,interactive:false}).addTo(map);
     livePinRef.current=L.marker([lat,lng],{icon:L.divIcon({className:'',html:'<div style="width:14px;height:14px;border-radius:50%;background:#06b6d4;border:2.5px solid #fff;box-shadow:0 0 0 4px rgba(6,182,212,0.28),0 0 14px rgba(6,182,212,0.6);"></div>',iconSize:[14,14],iconAnchor:[7,7]}),zIndexOffset:3000,interactive:false}).addTo(map);
 
     try { await revGeo(lat,lng); } catch(e){}
@@ -2324,7 +2324,7 @@ out center tags;`;
                 {savedRadii.length>0&&(
                   <div style={{display:'grid',gap:3,maxHeight:76,overflowY:'auto',paddingRight:2}}>
                     {savedRadii.slice(0,8).map((r,i)=>(
-                      <div key={r.id} style={{display:'flex',justifyContent:'space-between',fontSize:8.5,color:'#fecaca',background:'rgba(255,255,255,0.03)',border:'1px solid rgba(252,165,165,0.2)',borderRadius:4,padding:'3px 5px'}}>
+                      <div key={r.id} style={{display:'flex',justifyContent:'space-between',fontSize:8.5,color:'#fecaca',background:'rgba(255,255,255,0.06)',border:'1px solid rgba(252,165,165,0.2)',borderRadius:4,padding:'3px 5px'}}>
                         <span style={{display:'inline-flex',alignItems:'center',gap:5}}><span style={{width:7,height:7,borderRadius:'50%',background:r.color,display:'inline-block'}}/>Ring {i+1}</span>
                         <span>{r.radiusMiles.toFixed(1)} mi</span>
                       </div>
@@ -2470,7 +2470,7 @@ out center tags;`;
                   <div style={{borderTop:'1px solid rgba(252,165,165,0.15)',paddingTop:6,display:'grid',gap:4}}>
                     <div style={{fontSize:8,color:'#fca5a5',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:'0.08em'}}>SAVED MARKERS ({savedRadii.length})</div>
                     {savedRadii.map((r,i)=>(
-                      <div key={r.id} style={{display:'flex',alignItems:'center',gap:6,background:'rgba(255,255,255,0.03)',border:`1px solid ${r.color}44`,borderRadius:6,padding:'5px 8px'}}>
+                      <div key={r.id} style={{display:'flex',alignItems:'center',gap:6,background:'rgba(255,255,255,0.06)',border:`1px solid ${r.color}44`,borderRadius:6,padding:'5px 8px'}}>
                         <div style={{width:10,height:10,borderRadius:'50%',background:r.color,boxShadow:`0 0 8px ${r.color}`,flexShrink:0}}/>
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontSize:9.5,color:'#eef4ff',fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.label||`Marker ${i+1}`}</div>
@@ -2483,7 +2483,7 @@ out center tags;`;
                             const v=Math.max(0.1,Number(e.target.value)||0.1);
                             setSavedRadii(prev=>prev.map(x=>x.id===r.id?{...x,radiusMiles:v}:x));
                           }}
-                          style={{width:48,background:'rgba(255,255,255,0.04)',border:`1px solid ${r.color}44`,borderRadius:4,color:'#eef4ff',fontSize:9,padding:'2px 4px',fontFamily:"'IBM Plex Mono',monospace",outline:'none'}}
+                          style={{width:48,background:'rgba(255,255,255,0.07)',border:`1px solid ${r.color}44`,borderRadius:4,color:'#eef4ff',fontSize:9,padding:'2px 4px',fontFamily:"'IBM Plex Mono',monospace",outline:'none'}}
                         />
                         <button onClick={()=>setSavedRadii(prev=>prev.filter(x=>x.id!==r.id))}
                           style={{background:'transparent',border:'1px solid rgba(255,255,255,0.06)',borderRadius:3,color:'#3d5478',fontSize:9,padding:'2px 6px',cursor:'pointer',flexShrink:0}}>✕</button>
@@ -2513,7 +2513,7 @@ out center tags;`;
                 const gap = territoryGapSummary();
                 return (
                   <div style={{padding:'7px 9px',borderRadius:6,background:'rgba(15,33,63,0.45)',border:'1px solid rgba(103,232,249,0.16)'}}>
-                    <div style={{fontSize:8.5,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:'0.08em',color:'#67e8f9',marginBottom:4}}>TERRITORY GAP ANALYSIS</div>
+                    <div style={{fontSize:8.5,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:'0.08em',color:'#89d4fe',marginBottom:4}}>TERRITORY GAP ANALYSIS</div>
                     <div style={{fontSize:9,color:'#8fb3d8',marginBottom:4}}>Coverage: <strong style={{color:'#cfe9ff'}}>{gap.covered}/{gap.total}</strong> required categories in current map radius.</div>
                     {gap.missing.length>0 ? (
                       <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
@@ -2530,14 +2530,14 @@ out center tags;`;
               <div style={{display:'flex',alignItems:'center',gap:6}}>
                 <span style={{fontSize:9.5,color:'#3d5478',whiteSpace:'nowrap'}}>Radius:</span>
                 <input type="range" min={2} max={50} value={liveRadius} onChange={e=>setLiveRadius(Number(e.target.value))} onMouseUp={()=>{ if(lastRadiusRef.current) doLiveSearch(lastRadiusRef.current.lat,lastRadiusRef.current.lng); }}/>
-                <span style={{fontFamily:'IBM Plex Mono,monospace',fontSize:10,color:'#67e8f9',whiteSpace:'nowrap'}}>{liveRadius} km</span>
+                <span style={{fontFamily:'IBM Plex Mono,monospace',fontSize:10,color:'#89d4fe',whiteSpace:'nowrap'}}>{liveRadius} km</span>
               </div>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,padding:'6px 8px',borderRadius:8,background:'rgba(125,211,252,0.06)',border:'1px solid rgba(125,211,252,0.18)'}}>
                 <label style={{display:'flex',alignItems:'center',gap:6,fontSize:9.5,color:'#9cc7eb',cursor:'pointer'}}>
                   <input type="checkbox" checked={liveAutoPin} onChange={e=>setLiveAutoPin(e.target.checked)} />
                   Auto search on pin drop
                 </label>
-                <span style={{fontSize:9,color:'#67e8f9',fontFamily:"'IBM Plex Mono',monospace"}}>Global</span>
+                <span style={{fontSize:9,color:'#89d4fe',fontFamily:"'IBM Plex Mono',monospace"}}>Global</span>
               </div>
               <input
                 className="rp-input"
@@ -2745,7 +2745,7 @@ out center tags;`;
                 pfDone ? (
                   <>
                     <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
-                      LICENSED PROVIDERS NEAR <span style={{color:'#06b6d4'}}>{pfLocation.toUpperCase()}</span>
+                      LICENSED PROVIDERS NEAR <span style={{color:'#22d3ee'}}>{pfLocation.toUpperCase()}</span>
                       <span style={{marginLeft:8,color:'#2a3f5e'}}>({pfClinics.length} found · NPI Registry)</span>
                     </div>
                     {pfClinics.length===0 && (
@@ -2771,12 +2771,12 @@ out center tags;`;
                               <div style={{fontSize:8.5,color:'#4a5a7a',fontFamily:"'IBM Plex Mono',monospace",marginBottom:2}}>{c.taxonomy}</div>
                               {c.address && <div style={{fontSize:9,color:'#5d7a9e'}}>📍 {c.address}</div>}
                               {c.phone && <div style={{fontSize:9,color:'#3d8bcd',fontFamily:"'IBM Plex Mono',monospace",marginTop:1}}>
-                                📞 <a href={`tel:${c.phone}`} style={{color:'#67e8f9',textDecoration:'none'}}>{c.phone}</a>
+                                📞 <a href={`tel:${c.phone}`} style={{color:'#89d4fe',textDecoration:'none'}}>{c.phone}</a>
                               </div>}
                             </div>
                             <div style={{display:'flex',flexDirection:'column',gap:4,flexShrink:0}}>
                               <a href={c.searchUrl} target="_blank" rel="noopener noreferrer"
-                                style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'3px 7px',background:'rgba(6,182,212,0.1)',border:'1px solid rgba(6,182,212,0.25)',borderRadius:3,color:'#06b6d4',textDecoration:'none',textAlign:'center'}}>
+                                style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'3px 7px',background:'rgba(6,182,212,0.1)',border:'1px solid rgba(6,182,212,0.25)',borderRadius:3,color:'#22d3ee',textDecoration:'none',textAlign:'center'}}>
                                 FIND PRICE →
                               </a>
                               <button onClick={()=>{setPfReportProvider(c.name);setPfTab('report');}}
@@ -2808,7 +2808,7 @@ out center tags;`;
                 <>
                   {/* Deep links: Book & compare */}
                   <div style={{fontSize:9,color:'#3d5478',letterSpacing:'0.08em',marginBottom:8}}>
-                    BOOK & COMPARE{pfCity.trim()&&<> NEAR <span style={{color:'#06b6d4'}}>{(pfLocation||pfCity).toUpperCase()}{pfState?' · '+pfState.toUpperCase():''}</span></>}
+                    BOOK & COMPARE{pfCity.trim()&&<> NEAR <span style={{color:'#22d3ee'}}>{(pfLocation||pfCity).toUpperCase()}{pfState?' · '+pfState.toUpperCase():''}</span></>}
                   </div>
                   <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:18}}>
                     {pfDeepLinks(pfCity||'your city', pfState, pfServiceType).map((lk,i)=>(
@@ -2850,7 +2850,7 @@ out center tags;`;
                         flex:'1 1 180px',background:'rgba(6,182,212,0.05)',border:'1px solid rgba(6,182,212,0.15)',
                         borderRadius:6,padding:'8px 11px',textDecoration:'none',display:'block',
                       }}>
-                        <div style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",color:'#06b6d4',marginBottom:3}}>{r.tag}</div>
+                        <div style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",color:'#22d3ee',marginBottom:3}}>{r.tag}</div>
                         <div style={{fontSize:10,fontWeight:600,color:'#c8ddf0',marginBottom:2}}>{r.name}</div>
                         <div style={{fontSize:9,color:'#4a6080',lineHeight:1.4}}>{r.desc}</div>
                       </a>
@@ -2898,7 +2898,7 @@ out center tags;`;
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:8}}>
                         <div>
                           <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>MEDICARE ALLOWED</div>
-                          <div style={{fontSize:16,fontWeight:700,color:'#67e8f9',fontFamily:"'IBM Plex Mono',monospace"}}>
+                          <div style={{fontSize:16,fontWeight:700,color:'#89d4fe',fontFamily:"'IBM Plex Mono',monospace"}}>
                             {adjMed>0?`$${adjMed.toLocaleString()}`:'Not covered'}
                           </div>
                           {apState&&<div style={{fontSize:8,color:'#2a3f5e',marginTop:1}}>Adjusted for {apState}</div>}
@@ -3053,7 +3053,7 @@ out center tags;`;
                     >
                       {ohLoading ? 'SCORING…' : 'RUN OCC PARTNER HUNT'}
                     </button>
-                    <span style={{fontSize:9,color:'#67e8f9',fontFamily:"'IBM Plex Mono',monospace"}}>{ohResults.length} partners scored</span>
+                    <span style={{fontSize:9,color:'#89d4fe',fontFamily:"'IBM Plex Mono',monospace"}}>{ohResults.length} partners scored</span>
                   </div>
                   {ohResults.length>0 && (
                     <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:10}}>
@@ -3131,8 +3131,8 @@ out center tags;`;
                       </div>
                     </div>
                     <div style={{fontSize:8.5,color:'#2a3f5e',lineHeight:1.5}}>
-                      Service: <span style={{color:'#67e8f9'}}>{PF_SERVICE_LABELS[pfServiceType]}</span>
-                      {pfLocation && <> · <span style={{color:'#67e8f9'}}>{pfLocation}</span></>}
+                      Service: <span style={{color:'#89d4fe'}}>{PF_SERVICE_LABELS[pfServiceType]}</span>
+                      {pfLocation && <> · <span style={{color:'#89d4fe'}}>{pfLocation}</span></>}
                       {' · '}Saved to your browser — use Share to send to colleagues
                     </div>
                   </div>
@@ -3156,7 +3156,7 @@ out center tags;`;
                       </div>
                       <div style={{display:'flex',flexDirection:'column',gap:5}}>
                         {pfReports.map((r,i)=>(
-                          <div key={i} style={{background:'rgba(6,10,24,0.5)',border:'1px solid rgba(20,40,80,0.6)',borderRadius:6,padding:'8px 12px',display:'flex',gap:10,alignItems:'center'}}>
+                          <div key={i} style={{background:'rgba(255,255,255,0.055)',border:'1px solid rgba(20,40,80,0.6)',borderRadius:6,padding:'8px 12px',display:'flex',gap:10,alignItems:'center'}}>
                             <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:14,fontWeight:700,color:'#34d399',minWidth:70}}>{r.price}</div>
                             <div style={{flex:1}}>
                               <div style={{fontSize:10,fontWeight:600,color:'#eef4ff'}}>{r.provider}</div>
@@ -3252,7 +3252,7 @@ out center tags;`;
               ) : (
                 <div style={{display:'flex',flexDirection:'column',gap:10}}>
                   {clinicGroups.map((grp)=>(
-                    <div key={grp.id} style={{background:'rgba(6,10,24,0.55)',border:`1px solid ${grp.color}44`,borderRadius:10,overflow:'hidden'}}>
+                    <div key={grp.id} style={{background:'rgba(255,255,255,0.06)',border:`1px solid ${grp.color}44`,borderRadius:10,overflow:'hidden'}}>
                       {/* Group header */}
                       <div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',background:`${grp.color}14`,borderBottom:`1px solid ${grp.color}33`}}>
                         <div style={{width:12,height:12,borderRadius:'50%',background:grp.color,boxShadow:`0 0 8px ${grp.color}`,flexShrink:0}}/>
@@ -3340,11 +3340,11 @@ out center tags;`;
                     </tr></thead>
                     <tbody>
                       <tr>
-                        <td className="metric-label" style={{fontWeight:700,color:'#67e8f9',borderTop:'1px solid rgba(6,182,212,0.2)'}}>Providers in 70mi</td>
+                        <td className="metric-label" style={{fontWeight:700,color:'#89d4fe',borderTop:'1px solid rgba(6,182,212,0.2)'}}>Providers in 70mi</td>
                         {pinnedCities.map((p,i)=>{
                           const d=countProvidersInRadius(p[2],p[3],metric);
                           return <td key={i} style={{textAlign:'center',borderTop:'1px solid rgba(6,182,212,0.2)'}}>
-                            <div style={{fontFamily:'IBM Plex Mono,monospace',fontSize:14,fontWeight:700,color:'#67e8f9'}}>{d.estProviders}</div>
+                            <div style={{fontFamily:'IBM Plex Mono,monospace',fontSize:14,fontWeight:700,color:'#89d4fe'}}>{d.estProviders}</div>
                             <div style={{fontSize:8.5,color:'#3d5478'}}>{d.citiesInRadius} cities in zone</div>
                           </td>;
                         })}
@@ -3376,7 +3376,7 @@ out center tags;`;
           <div className="pdf-toolbar" onClick={e=>e.stopPropagation()}>
             <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'#3b82f6',letterSpacing:3,textTransform:'uppercase'}}>◈ Report Preview</span>
             <div style={{display:'flex',gap:10}}>
-              <button style={{padding:'7px 18px',borderRadius:3,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,cursor:'pointer',letterSpacing:1.5,textTransform:'uppercase',border:'1px solid rgba(6,182,212,0.4)',background:'rgba(6,182,212,0.15)',color:'#67e8f9'}} onClick={()=>{const b=new Blob([pdfHtml],{type:'text/html'});const u=URL.createObjectURL(b);window.open(u,'_blank');}}>↗ OPEN IN NEW TAB</button>
+              <button style={{padding:'7px 18px',borderRadius:3,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,cursor:'pointer',letterSpacing:1.5,textTransform:'uppercase',border:'1px solid rgba(6,182,212,0.4)',background:'rgba(6,182,212,0.15)',color:'#89d4fe'}} onClick={()=>{const b=new Blob([pdfHtml],{type:'text/html'});const u=URL.createObjectURL(b);window.open(u,'_blank');}}>↗ OPEN IN NEW TAB</button>
               <button style={{padding:'7px 18px',borderRadius:3,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,cursor:'pointer',letterSpacing:1.5,textTransform:'uppercase',border:'1px solid rgba(59,130,246,0.4)',background:'rgba(59,130,246,0.15)',color:'#93c5fd'}} onClick={()=>{const b=new Blob([pdfHtml],{type:'text/html'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=pdfDlName;document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(u);},1000);}}>↓ DOWNLOAD HTML</button>
               <button style={{padding:'7px 14px',background:'transparent',color:'#4a6888',border:'1px solid rgba(255,255,255,0.08)',borderRadius:3,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,cursor:'pointer'}} onClick={()=>setShowPdf(false)}>✕ Close</button>
             </div>
