@@ -706,15 +706,25 @@ export default function App() {
   const [showPopDensity, setShowPopDensity] = useState(false);
   const [showStateColors, setShowStateColors] = useState(true);
   const [filterDiff, setFilterDiff] = useState<number|null>(null);
-  // Clinic upload
-  const [uploadedClinics, setUploadedClinics] = useState<Array<{
-    name:string; address:string; city:string; state:string; zip:string;
-    phone:string; notes:string; lat:number|null; lng:number|null; color:string;
-  }>>(() => { try { return JSON.parse(localStorage.getItem('uploaded_clinics')||'[]'); } catch { return []; } });
-  const [showUploadedClinics, setShowUploadedClinics] = useState(true);
+  const [showCityDots, setShowCityDots] = useState(true);
+  // Address search
+  const [addrSearch, setAddrSearch] = useState('');
+  const [addrLoading, setAddrLoading] = useState(false);
+  const [addrError, setAddrError] = useState('');
+  const [addrSuggestions, setAddrSuggestions] = useState<Array<{display_name:string;lat:string;lon:string}>>([]);
+  const addrSearchRef = useRef<HTMLDivElement>(null);
+  // Clinic groups
+  type ClinicEntry = { name:string; address:string; city:string; state:string; zip:string; phone:string; notes:string; lat:number|null; lng:number|null; color:string; };
+  type ClinicGroup = { id:number; groupName:string; color:string; visible:boolean; clinics:ClinicEntry[]; };
+  const [clinicGroups, setClinicGroups] = useState<ClinicGroup[]>(() => { try { return JSON.parse(localStorage.getItem('clinic_groups')||'[]'); } catch { return []; } });
+  // Legacy compat: keep uploadedClinics as flat for existing render code
+  const uploadedClinics = clinicGroups.flatMap(g => g.visible ? g.clinics : []);
+  const showUploadedClinics = clinicGroups.some(g=>g.visible);
+  const setShowUploadedClinics = (v:boolean) => setClinicGroups(prev=>prev.map(g=>({...g,visible:v})));
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
   const [uploadColor, setUploadColor] = useState('#f472b6');
+  const [uploadGroupName, setUploadGroupName] = useState('');
   const [showUploadModal, setShowUploadModal] = useState(false);
   // Area prices
   const [showAreaPrices, setShowAreaPrices] = useState(false);
@@ -760,7 +770,11 @@ export default function App() {
   const [dropRadiusMiles, setDropRadiusMiles] = useState(25);
   const [dropFacilityType, setDropFacilityType] = useState('all');
   const [dropIncludeFacilities, setDropIncludeFacilities] = useState(true);
-  const [savedRadii, setSavedRadii] = useState<Array<{id:number;lat:number;lng:number;radiusMiles:number;color:string}>>([]);
+  const [savedRadii, setSavedRadii] = useState<Array<{id:number;lat:number;lng:number;radiusMiles:number;color:string;label:string}>>([]);
+  const [pendingMarkerLabel, setPendingMarkerLabel] = useState('');
+  const [pendingMarkerColor, setPendingMarkerColor] = useState('#ef4444');
+  const [multiDropMode, setMultiDropMode] = useState(false);
+  const multiDropLayerRef = useRef<L.LayerGroup|null>(null);
   const [showGlowPoints, setShowGlowPoints] = useState(true);
   const [outreachNotes, setOutreachNotes] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_notes')||'{}'); } catch { return {}; } });
   const [outreachStatus, setOutreachStatus] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_status')||'{}'); } catch { return {}; } });
@@ -935,12 +949,14 @@ export default function App() {
     }).addTo(map);
   }
 
-  function saveCurrentRadius() {
+  function saveCurrentRadius(label?:string, color?:string) {
     if (!dropCenter) return;
     setSavedRadii(prev=>{
-      const color = RADIUS_COLORS[prev.length % RADIUS_COLORS.length];
-      return [{id:Date.now(),lat:dropCenter.lat,lng:dropCenter.lng,radiusMiles:dropRadiusMiles,color}, ...prev].slice(0, 24);
+      const col = color || pendingMarkerColor || RADIUS_COLORS[prev.length % RADIUS_COLORS.length];
+      const lbl = label || pendingMarkerLabel || `Marker ${prev.length+1}`;
+      return [{id:Date.now(),lat:dropCenter.lat,lng:dropCenter.lng,radiusMiles:dropRadiusMiles,color:col,label:lbl}, ...prev].slice(0, 24);
     });
+    setPendingMarkerLabel('');
   }
 
   async function exportRadiusWorkbook() {
@@ -1332,7 +1348,7 @@ export default function App() {
     const grp = L.layerGroup();
     uploadedClinics.forEach((c,i)=>{
       if (c.lat===null || c.lng===null) return;
-      const col = c.color || uploadColor;
+      const col = c.color || '#f472b6';
       const mk = L.marker([c.lat, c.lng], {
         icon: L.divIcon({
           className: '',
@@ -1356,7 +1372,7 @@ export default function App() {
     grp.addTo(map);
     clinicLayerRef.current = grp;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[uploadedClinics, showUploadedClinics, uploadColor, showGlowPoints]);
+  },[uploadedClinics, showUploadedClinics, showGlowPoints]);
 
   async function handleClinicUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -1410,10 +1426,15 @@ export default function App() {
 
       const final = parsed.filter(p=>p.lat!==null&&!isNaN(p.lat as any));
       const skipped = parsed.length - final.length;
-      const merged = [...final, ...uploadedClinics].slice(0, 500);
-      setUploadedClinics(merged);
-      localStorage.setItem('uploaded_clinics', JSON.stringify(merged));
-      setUploadProgress(`✓ Added ${final.length} clinics${skipped>0?` (${skipped} skipped — no address/coordinates)`:''}. Toggle with the MY CLINICS button.`);
+      const groupName = uploadGroupName.trim() || `Import ${new Date().toLocaleDateString('en-US',{month:'short',day:'numeric'})}`;
+      const newGroup:ClinicGroup = { id:Date.now(), groupName, color:uploadColor, visible:true, clinics:final };
+      setClinicGroups(prev => {
+        const next = [...prev, newGroup];
+        localStorage.setItem('clinic_groups', JSON.stringify(next));
+        return next;
+      });
+      setUploadGroupName('');
+      setUploadProgress(`✓ Added ${final.length} clinics as "${groupName}"${skipped>0?` (${skipped} skipped — no address/coordinates)`:''}. Toggle each group in the sidebar.`);
     } catch(err:any) {
       setUploadProgress(`Error: ${err.message||'Could not parse file'}`);
     } finally {
@@ -1440,25 +1461,32 @@ export default function App() {
     if(!savedRadii.length) return;
     const grp = L.layerGroup();
     savedRadii.forEach((r, idx)=>{
-      L.circle([r.lat,r.lng],{
+      // Glow circle with colored ring
+      const circEl = L.circle([r.lat,r.lng],{
         radius: Math.max(r.radiusMiles,0.1)*1609.34,
         color: r.color,
-        weight: 2,
-        opacity: 0.88,
+        weight: 2.5,
+        opacity: 0.92,
         fillColor: r.color,
-        fillOpacity: 0.06,
-        dashArray: '8 5',
+        fillOpacity: 0.07,
+        dashArray: '10 6',
         interactive: false,
+        className: showGlowPoints ? 'drop-radius-ring' : '',
       }).addTo(grp);
+      // Label + dot marker
+      const labelHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;pointer-events:none;">
+        <div style="background:rgba(4,10,24,0.85);border:1.5px solid ${r.color};border-radius:8px;padding:2px 7px;font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;color:${r.color};white-space:nowrap;${showGlowPoints?`box-shadow:0 0 10px ${r.color}66,0 0 22px ${r.color}33;`:''}">${r.label||`Marker ${idx+1}`}</div>
+        <div style="width:12px;height:12px;border-radius:50%;background:${r.color};border:2px solid #fff;${showGlowPoints?`box-shadow:0 0 0 3px ${r.color}55,0 0 16px ${r.color}bb;`:'box-shadow:0 0 0 2px rgba(255,255,255,0.5);'}"></div>
+      </div>`;
       L.marker([r.lat,r.lng],{
         icon:L.divIcon({
           className:'',
-          html:`<div style="width:10px;height:10px;border-radius:50%;background:${r.color};border:2px solid #fff;box-shadow:${showGlowPoints?`0 0 0 3px ${r.color}55,0 0 12px ${r.color}aa`:'0 0 0 2px rgba(255,255,255,0.5)'};"></div>`,
-          iconSize:[10,10],iconAnchor:[5,5],
+          html:labelHtml,
+          iconSize:[80,40],iconAnchor:[40,40],
         }),
-        interactive:false,
+        interactive:true,
         zIndexOffset: 2800 - idx,
-      }).addTo(grp);
+      }).bindPopup(`<div class="pi"><div class="pt">${r.label||'Marker'}</div><div class="ps">${r.radiusMiles} mi radius</div><div class="pg"><div><div class="psl">Lat</div><div class="psv">${r.lat.toFixed(4)}</div></div><div><div class="psl">Lng</div><div class="psv">${r.lng.toFixed(4)}</div></div></div></div>`,{maxWidth:240}).addTo(grp);
     });
     grp.addTo(map);
     savedRadiusLayerRef.current = grp;
@@ -1476,6 +1504,7 @@ export default function App() {
     const cityLayer = cityLayerRef.current;
     if(!map||!cityLayer) return;
     cityLayer.clearLayers();
+    if(!showCityDots) return; // blank map mode
 
     // Show ALL cities — only apply difficulty filter if one is active
     const visibleLocs = LOCS.filter(loc=>{
@@ -1504,7 +1533,7 @@ export default function App() {
       cityLayer.addLayer(mk);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[metric,filterDiff,mapReady,showGlowPoints]);
+  },[metric,filterDiff,mapReady,showGlowPoints,showCityDots]);
 
   // ── Timezone layer ────────────────────────────────────────────────────────
   useEffect(()=>{
@@ -1975,6 +2004,43 @@ out center tags;`;
   const maxDist = Math.max(...dist.map(d=>d.count),1);
 
 
+  // ── Address search / geocode ─────────────────────────────────────────────
+  const addrDebounceRef = useRef<ReturnType<typeof setTimeout>|null>(null);
+  function handleAddrInput(val: string) {
+    setAddrSearch(val);
+    setAddrError('');
+    if (addrDebounceRef.current) clearTimeout(addrDebounceRef.current);
+    if (!val.trim() || val.length < 3) { setAddrSuggestions([]); return; }
+    addrDebounceRef.current = setTimeout(async () => {
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(val)}`;
+        const r = await fetch(url, { headers: {'Accept-Language':'en'} });
+        const data = await r.json();
+        setAddrSuggestions(data);
+      } catch { setAddrSuggestions([]); }
+    }, 380);
+  }
+  function jumpToAddr(lat: string, lon: string, name: string) {
+    const map = mapRef.current;
+    if (!map) return;
+    const lLat = parseFloat(lat);
+    const lLng = parseFloat(lon);
+    map.flyTo([lLat, lLng], 13, { duration: 1.2 });
+    setAddrSearch(name.split(',').slice(0,2).join(','));
+    setAddrSuggestions([]);
+    // Drop a temporary "you are here" pin
+    if (customPinRef.current) { try { map.removeLayer(customPinRef.current); } catch {} }
+    customPinRef.current = L.marker([lLat, lLng], {
+      icon: L.divIcon({
+        className: '',
+        html: `<div style="width:16px;height:16px;border-radius:50%;background:#7bd7ff;border:2.5px solid #fff;box-shadow:0 0 0 4px rgba(123,215,255,0.30),0 0 18px rgba(123,215,255,0.8);"></div>`,
+        iconSize:[16,16], iconAnchor:[8,8]
+      }),
+      zIndexOffset: 5000,
+    }).addTo(map);
+    customPinRef.current.bindPopup(`<div class="pi"><div class="pt">${name.split(',')[0]}</div><div class="ps">Address Search Result</div></div>`,{maxWidth:260}).openPopup();
+  }
+
   // ── Cursor light (Liquid Glass) ──────────────────────────────────────────
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -1996,6 +2062,66 @@ out center tags;`;
   return (
     <div className="app-wrap">
       <div className="cursor-light" />
+
+      {/* ── FLOATING ADDRESS SEARCH ── */}
+      <div ref={addrSearchRef} style={{
+        position:'absolute', top:62, left:'50%', transform:'translateX(-50%)',
+        zIndex:1500, width:440, maxWidth:'92vw',
+      }}>
+        <div style={{
+          background:'linear-gradient(145deg,rgba(255,255,255,0.10),rgba(255,255,255,0.03)),rgba(8,18,42,0.80)',
+          border:'1px solid rgba(123,215,255,0.30)',
+          borderRadius:18,
+          backdropFilter:'blur(28px) saturate(180%)',
+          boxShadow:'inset 0 1.5px 0 rgba(255,255,255,0.18),0 16px 48px rgba(0,0,0,0.55),0 0 28px rgba(123,215,255,0.12)',
+          display:'flex', alignItems:'center', gap:8, padding:'0 14px',
+        }}>
+          <span style={{fontSize:14, opacity:0.7, flexShrink:0}}>🔍</span>
+          <input
+            value={addrSearch}
+            onChange={e=>handleAddrInput(e.target.value)}
+            onKeyDown={e=>{ if(e.key==='Escape'){setAddrSearch('');setAddrSuggestions([]);} }}
+            placeholder="Search any address, city, or landmark…"
+            style={{
+              flex:1, background:'transparent', border:'none', outline:'none',
+              color:'#e8f4ff', fontSize:12, padding:'11px 0',
+              fontFamily:"'Inter',sans-serif",
+            }}
+          />
+          {addrLoading && <div className="lp-spin" style={{width:14,height:14,flexShrink:0}}/>}
+          {addrSearch && !addrLoading && (
+            <button onClick={()=>{setAddrSearch('');setAddrSuggestions([]);}} style={{background:'transparent',border:'none',color:'rgba(180,215,255,0.5)',cursor:'pointer',fontSize:16,flexShrink:0,padding:0,lineHeight:1}}>✕</button>
+          )}
+        </div>
+        {addrSuggestions.length>0 && (
+          <div style={{
+            marginTop:6,
+            background:'linear-gradient(145deg,rgba(14,28,52,0.97),rgba(8,18,38,0.95))',
+            border:'1px solid rgba(123,215,255,0.22)',
+            borderRadius:14,
+            overflow:'hidden',
+            backdropFilter:'blur(24px)',
+            boxShadow:'0 16px 48px rgba(0,0,0,0.70)',
+          }}>
+            {addrSuggestions.map((s,i)=>(
+              <div key={i}
+                onClick={()=>jumpToAddr(s.lat,s.lon,s.display_name)}
+                style={{
+                  padding:'9px 14px', cursor:'pointer',
+                  borderBottom: i<addrSuggestions.length-1 ? '1px solid rgba(123,215,255,0.06)' : 'none',
+                  transition:'background 0.14s',
+                }}
+                onMouseEnter={e=>(e.currentTarget.style.background='rgba(123,215,255,0.08)')}
+                onMouseLeave={e=>(e.currentTarget.style.background='transparent')}
+              >
+                <div style={{fontSize:11.5,color:'#e8f4ff',fontWeight:500}}>{s.display_name.split(',')[0]}</div>
+                <div style={{fontSize:9,color:'rgba(180,215,255,0.5)',marginTop:2,fontFamily:"'IBM Plex Mono',monospace",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.display_name}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* ── HEADER ── */}
       <header className="app-header">
         <div className="hdr-brand">
@@ -2080,10 +2206,19 @@ out center tags;`;
               <span className="tog-lbl">Glow effects</span>
               <label className="tog-switch"><input type="checkbox" checked={showGlowPoints} onChange={e=>setShowGlowPoints(e.target.checked)}/><span className="tog-slider"/></label>
             </div>
-            {uploadedClinics.length>0&&<div className="tog-row">
-              <span className="tog-lbl" style={{color:'#f472b6'}}>My clinics ({uploadedClinics.length})</span>
-              <label className="tog-switch"><input type="checkbox" checked={showUploadedClinics} onChange={e=>setShowUploadedClinics(e.target.checked)}/><span className="tog-slider"/></label>
-            </div>}
+            <div className="tog-row">
+              <span className="tog-lbl" style={{color: showCityDots ? 'inherit' : '#7bd7ff'}}>City dots {showCityDots ? '' : '(hidden)'}</span>
+              <label className="tog-switch"><input type="checkbox" checked={showCityDots} onChange={e=>setShowCityDots(e.target.checked)}/><span className="tog-slider"/></label>
+            </div>
+            {clinicGroups.length>0&&clinicGroups.map(grp=>(
+              <div key={grp.id} className="tog-row">
+                <span className="tog-lbl" style={{color:grp.color,display:'flex',alignItems:'center',gap:4}}>
+                  <span style={{width:7,height:7,borderRadius:'50%',background:grp.color,display:'inline-block',boxShadow:`0 0 6px ${grp.color}`,flexShrink:0}}/>
+                  {grp.groupName} ({grp.clinics.length})
+                </span>
+                <label className="tog-switch"><input type="checkbox" checked={grp.visible} onChange={e=>{setClinicGroups(prev=>{const n=prev.map(g=>g.id===grp.id?{...g,visible:e.target.checked}:g);localStorage.setItem('clinic_groups',JSON.stringify(n));return n;})}}/><span className="tog-slider"/></label>
+              </div>
+            ))}
           </div>
           <div className="sb-divider"/>
           <div className="sb-section">
@@ -2282,7 +2417,7 @@ out center tags;`;
               </div>
               <div style={{padding:'8px 9px',border:'1px solid rgba(239,68,68,0.3)',borderRadius:6,background:'rgba(239,68,68,0.08)',display:'grid',gap:6}}>
                 <div style={{fontSize:8.5,color:'#fca5a5',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:'0.08em'}}>RADIUS EXTRACTOR</div>
-                <div style={{fontSize:9.5,color:'#fca5a5'}}>Drop-click anywhere on the map to place a red center + glowing radius.</div>
+                <div style={{fontSize:9.5,color:'#fca5a5'}}>Drop-click anywhere on the map to place a center + glowing radius.</div>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
                   <div>
                     <div style={{fontSize:8,color:'#fecaca',marginBottom:3}}>Radius (miles)</div>
@@ -2305,8 +2440,59 @@ out center tags;`;
                     </select>
                   </div>
                 </div>
+                {/* ── Multi-marker drop ── */}
+                <div style={{borderTop:'1px solid rgba(252,165,165,0.15)',paddingTop:6,display:'grid',gap:5}}>
+                  <div style={{fontSize:8,color:'#fecaca',letterSpacing:'0.08em',fontFamily:"'IBM Plex Mono',monospace"}}>📍 SAVE AS NAMED MARKER</div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:6,alignItems:'center'}}>
+                    <input
+                      className="drivetime-input"
+                      placeholder="Marker label (e.g. Houston HQ)"
+                      value={pendingMarkerLabel}
+                      onChange={e=>setPendingMarkerLabel(e.target.value)}
+                      style={{marginBottom:0}}
+                    />
+                    <input type="color" value={pendingMarkerColor} onChange={e=>setPendingMarkerColor(e.target.value)}
+                      style={{width:34,height:30,border:'1px solid rgba(255,255,255,0.18)',borderRadius:6,background:'transparent',cursor:'pointer',padding:2,flexShrink:0}} />
+                  </div>
+                  <button
+                    onClick={()=>saveCurrentRadius(pendingMarkerLabel, pendingMarkerColor)}
+                    disabled={!dropCenter}
+                    style={{fontSize:9,padding:'6px 9px',borderRadius:4,border:`1px solid ${pendingMarkerColor}66`,background:`${pendingMarkerColor}22`,color:pendingMarkerColor,fontFamily:"'IBM Plex Mono',monospace",cursor:'pointer',fontWeight:700,opacity:dropCenter?1:0.45}}
+                  >
+                    💾 SAVE MARKER + RADIUS
+                  </button>
+                </div>
+                {savedRadii.length>0 && (
+                  <div style={{borderTop:'1px solid rgba(252,165,165,0.15)',paddingTop:6,display:'grid',gap:4}}>
+                    <div style={{fontSize:8,color:'#fca5a5',fontFamily:"'IBM Plex Mono',monospace",letterSpacing:'0.08em'}}>SAVED MARKERS ({savedRadii.length})</div>
+                    {savedRadii.map((r,i)=>(
+                      <div key={r.id} style={{display:'flex',alignItems:'center',gap:6,background:'rgba(255,255,255,0.03)',border:`1px solid ${r.color}44`,borderRadius:6,padding:'5px 8px'}}>
+                        <div style={{width:10,height:10,borderRadius:'50%',background:r.color,boxShadow:`0 0 8px ${r.color}`,flexShrink:0}}/>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:9.5,color:'#eef4ff',fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.label||`Marker ${i+1}`}</div>
+                          <div style={{fontSize:8,color:'#3d5478'}}>{r.radiusMiles} mi</div>
+                        </div>
+                        <input
+                          type="number" min={0.1} step={0.5}
+                          value={r.radiusMiles}
+                          onChange={e=>{
+                            const v=Math.max(0.1,Number(e.target.value)||0.1);
+                            setSavedRadii(prev=>prev.map(x=>x.id===r.id?{...x,radiusMiles:v}:x));
+                          }}
+                          style={{width:48,background:'rgba(255,255,255,0.04)',border:`1px solid ${r.color}44`,borderRadius:4,color:'#eef4ff',fontSize:9,padding:'2px 4px',fontFamily:"'IBM Plex Mono',monospace",outline:'none'}}
+                        />
+                        <button onClick={()=>setSavedRadii(prev=>prev.filter(x=>x.id!==r.id))}
+                          style={{background:'transparent',border:'1px solid rgba(255,255,255,0.06)',borderRadius:3,color:'#3d5478',fontSize:9,padding:'2px 6px',cursor:'pointer',flexShrink:0}}>✕</button>
+                      </div>
+                    ))}
+                    <button onClick={()=>setSavedRadii([])}
+                      style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'3px 8px',background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:3,color:'#fca5a5',cursor:'pointer'}}>
+                      CLEAR ALL MARKERS
+                    </button>
+                  </div>
+                )}
                 <div style={{fontSize:9,color:'#fecaca'}}>
-                  {dropCenter ? `Center: ${dropCenter.lat.toFixed(4)}, ${dropCenter.lng.toFixed(4)}` : 'No center selected yet.'}
+                  {dropCenter ? `Active center: ${dropCenter.lat.toFixed(4)}, ${dropCenter.lng.toFixed(4)}` : 'Click the map to set a center.'}
                 </div>
                 <button
                   onClick={exportRadiusWorkbook}
@@ -3005,20 +3191,32 @@ out center tags;`;
                   Supported: <span style={{color:'#c8ddf0'}}>Name, Address, City, State, Zip, Phone, Notes, Lat, Lng</span>.
                   Addresses without coordinates will be geocoded automatically.
                 </p>
-                <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap',marginBottom:8}}>
+                <div style={{display:'grid',gap:8,marginBottom:8}}>
                   <div>
-                    <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>PIN COLOR</div>
-                    <input type="color" value={uploadColor} onChange={e=>setUploadColor(e.target.value)}
-                      style={{width:40,height:32,border:'1px solid rgba(244,114,182,0.3)',borderRadius:4,background:'transparent',cursor:'pointer',padding:2}} />
+                    <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>GROUP NAME (e.g. "East Coast Partners")</div>
+                    <input
+                      className="rp-input"
+                      placeholder="Leave blank for auto-name"
+                      value={uploadGroupName}
+                      onChange={e=>setUploadGroupName(e.target.value)}
+                      style={{fontSize:11}}
+                    />
                   </div>
-                  <button className="rp-assess-btn"
-                    style={{padding:'8px 18px',background:'rgba(244,114,182,0.12)',borderColor:'rgba(244,114,182,0.3)',color:'#f472b6',opacity:uploadLoading?0.6:1}}
-                    disabled={uploadLoading}
-                    onClick={()=>clinicFileInputRef.current?.click()}>
-                    {uploadLoading ? '⏳ PROCESSING...' : '📁 CHOOSE FILE (.xlsx / .csv)'}
-                  </button>
-                  <input ref={clinicFileInputRef} type="file" accept=".xlsx,.xls,.csv" style={{display:'none'}}
-                    onChange={handleClinicUpload} />
+                  <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+                    <div>
+                      <div style={{fontSize:8,color:'#3d5478',marginBottom:3}}>GROUP COLOR</div>
+                      <input type="color" value={uploadColor} onChange={e=>setUploadColor(e.target.value)}
+                        style={{width:40,height:32,border:'1px solid rgba(244,114,182,0.3)',borderRadius:4,background:'transparent',cursor:'pointer',padding:2}} />
+                    </div>
+                    <button className="rp-assess-btn"
+                      style={{padding:'8px 18px',background:'rgba(244,114,182,0.12)',borderColor:'rgba(244,114,182,0.3)',color:'#f472b6',opacity:uploadLoading?0.6:1}}
+                      disabled={uploadLoading}
+                      onClick={()=>clinicFileInputRef.current?.click()}>
+                      {uploadLoading ? '⏳ PROCESSING...' : '📁 CHOOSE FILE (.xlsx / .csv)'}
+                    </button>
+                    <input ref={clinicFileInputRef} type="file" accept=".xlsx,.xls,.csv" style={{display:'none'}}
+                      onChange={handleClinicUpload} />
+                  </div>
                 </div>
                 {uploadProgress && (
                   <div style={{fontSize:9,color:uploadProgress.startsWith('✓')?'#34d399':uploadProgress.startsWith('Error')?'#fca5a5':'#67e8f9',fontFamily:"'IBM Plex Mono',monospace",lineHeight:1.5}}>
@@ -3028,43 +3226,65 @@ out center tags;`;
               </div>
 
               {/* Controls */}
-              {uploadedClinics.length>0 && (
+              {clinicGroups.length>0 && (
                 <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:12,flexWrap:'wrap'}}>
                   <div style={{fontSize:9,color:'#f472b6',letterSpacing:'0.08em',flex:1}}>
-                    {uploadedClinics.filter(c=>c.lat!==null).length} / {uploadedClinics.length} CLINICS MAPPED
+                    {clinicGroups.reduce((a,g)=>a+g.clinics.filter(c=>c.lat!==null).length,0)} / {clinicGroups.reduce((a,g)=>a+g.clinics.length,0)} CLINICS MAPPED · {clinicGroups.length} GROUPS
                   </div>
-                  <label style={{display:'flex',alignItems:'center',gap:5,cursor:'pointer',fontSize:9,color:'#3d5478'}}>
-                    <input type="checkbox" checked={showUploadedClinics} onChange={e=>setShowUploadedClinics(e.target.checked)}/>
-                    Show on map
-                  </label>
-                  <button onClick={()=>{setUploadedClinics([]);localStorage.removeItem('uploaded_clinics');setUploadProgress('');}}
+                  <button onClick={()=>{setClinicGroups([]);localStorage.removeItem('clinic_groups');localStorage.removeItem('uploaded_clinics');setUploadProgress('');}}
                     style={{fontSize:8,fontFamily:"'IBM Plex Mono',monospace",padding:'3px 8px',background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:3,color:'#fca5a5',cursor:'pointer'}}>
-                    CLEAR ALL
+                    CLEAR ALL GROUPS
                   </button>
                 </div>
               )}
 
-              {/* Clinic list */}
-              {uploadedClinics.length===0 ? (
+              {/* Clinic Groups list */}
+              {clinicGroups.length===0 ? (
                 <div style={{textAlign:'center',padding:'24px 0',color:'#2a3f5e',fontSize:10,lineHeight:1.8}}>
                   <div style={{fontSize:28,marginBottom:10}}>📍</div>
                   No clinics uploaded yet.<br/>
                   Upload a spreadsheet to see glowing pins on the map.
                 </div>
               ) : (
-                <div style={{display:'flex',flexDirection:'column',gap:5}}>
-                  {uploadedClinics.map((c,i)=>(
-                    <div key={i} style={{background:'rgba(6,10,24,0.5)',border:`1px solid ${c.lat!==null?'rgba(244,114,182,0.2)':'rgba(30,50,80,0.5)'}`,borderRadius:6,padding:'8px 12px',display:'flex',gap:10,alignItems:'center'}}>
-                      <div style={{width:10,height:10,borderRadius:'50%',background:c.color||uploadColor,boxShadow:`0 0 6px ${c.color||uploadColor}`,flexShrink:0}} />
-                      <div style={{flex:1}}>
-                        <div style={{fontSize:10,fontWeight:600,color:'#eef4ff'}}>{c.name}</div>
-                        <div style={{fontSize:8.5,color:'#3d5478',fontFamily:"'IBM Plex Mono',monospace"}}>
-                          {[c.address,c.city,c.state,c.zip].filter(Boolean).join(', ')||'No address'}
-                          {c.lat!==null?<span style={{color:'#34d399',marginLeft:6}}>✓ {c.lat?.toFixed(3)},{c.lng?.toFixed(3)}</span>:<span style={{color:'#f97316',marginLeft:6}}>⚠ Not geocoded</span>}
+                <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                  {clinicGroups.map((grp)=>(
+                    <div key={grp.id} style={{background:'rgba(6,10,24,0.55)',border:`1px solid ${grp.color}44`,borderRadius:10,overflow:'hidden'}}>
+                      {/* Group header */}
+                      <div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',background:`${grp.color}14`,borderBottom:`1px solid ${grp.color}33`}}>
+                        <div style={{width:12,height:12,borderRadius:'50%',background:grp.color,boxShadow:`0 0 8px ${grp.color}`,flexShrink:0}}/>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:11,fontWeight:700,color:'#eef4ff'}}>{grp.groupName}</div>
+                          <div style={{fontSize:8.5,color:'#5a78a0',fontFamily:"'IBM Plex Mono',monospace"}}>{grp.clinics.filter(c=>c.lat!==null).length}/{grp.clinics.length} mapped</div>
                         </div>
+                        {/* Color picker */}
+                        <input type="color" value={grp.color}
+                          onChange={e=>{const c=e.target.value;setClinicGroups(prev=>{const n=prev.map(g=>g.id===grp.id?{...g,color:c,clinics:g.clinics.map(cl=>({...cl,color:c}))}:g);localStorage.setItem('clinic_groups',JSON.stringify(n));return n;});}}
+                          style={{width:28,height:24,border:'1px solid rgba(255,255,255,0.15)',borderRadius:4,background:'transparent',cursor:'pointer',padding:1,flexShrink:0}} />
+                        {/* Visibility toggle */}
+                        <label style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer',fontSize:9,color:'#5a78a0',flexShrink:0}}>
+                          <input type="checkbox" checked={grp.visible} onChange={e=>{setClinicGroups(prev=>{const n=prev.map(g=>g.id===grp.id?{...g,visible:e.target.checked}:g);localStorage.setItem('clinic_groups',JSON.stringify(n));return n;});}}/>
+                          Show
+                        </label>
+                        {/* Delete group */}
+                        <button onClick={()=>setClinicGroups(prev=>{const n=prev.filter(g=>g.id!==grp.id);localStorage.setItem('clinic_groups',JSON.stringify(n));return n;})}
+                          style={{background:'transparent',border:'1px solid rgba(255,255,255,0.06)',borderRadius:3,color:'#3d5478',fontSize:9,padding:'2px 7px',cursor:'pointer',flexShrink:0}}>✕</button>
                       </div>
-                      <button onClick={()=>{const n=uploadedClinics.filter((_,j)=>j!==i);setUploadedClinics(n);localStorage.setItem('uploaded_clinics',JSON.stringify(n));}}
-                        style={{background:'transparent',border:'1px solid rgba(255,255,255,0.06)',borderRadius:3,color:'#3d5478',fontSize:9,padding:'2px 7px',cursor:'pointer',flexShrink:0}}>✕</button>
+                      {/* Clinic rows (collapsible - show first 5) */}
+                      <div style={{maxHeight:180,overflowY:'auto',padding:'6px 10px',display:'flex',flexDirection:'column',gap:3}}>
+                        {grp.clinics.slice(0,50).map((c,ci)=>(
+                          <div key={ci} style={{display:'flex',gap:6,alignItems:'center',padding:'4px 6px',borderRadius:4,background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.04)'}}>
+                            <div style={{width:6,height:6,borderRadius:'50%',background:grp.color,flexShrink:0}}/>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:10,fontWeight:600,color:'#eef4ff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.name}</div>
+                              <div style={{fontSize:8.5,color:'#3d5478',fontFamily:"'IBM Plex Mono',monospace",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                                {[c.city,c.state].filter(Boolean).join(', ')||c.address||'No address'}
+                                {c.lat!==null?<span style={{color:'#34d399',marginLeft:4}}>✓</span>:<span style={{color:'#f97316',marginLeft:4}}>⚠</span>}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        {grp.clinics.length>50&&<div style={{fontSize:8,color:'#3d5478',textAlign:'center',padding:'4px'}}>…and {grp.clinics.length-50} more</div>}
+                      </div>
                     </div>
                   ))}
                 </div>
