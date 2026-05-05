@@ -2063,65 +2063,6 @@ out center tags;`;
     <div className="app-wrap">
       <div className="cursor-light" />
 
-      {/* ── FLOATING ADDRESS SEARCH ── */}
-      <div ref={addrSearchRef} style={{
-        position:'absolute', top:62, left:'50%', transform:'translateX(-50%)',
-        zIndex:1500, width:440, maxWidth:'92vw',
-      }}>
-        <div style={{
-          background:'linear-gradient(145deg,rgba(255,255,255,0.10),rgba(255,255,255,0.03)),rgba(8,18,42,0.80)',
-          border:'1px solid rgba(123,215,255,0.30)',
-          borderRadius:18,
-          backdropFilter:'blur(28px) saturate(180%)',
-          boxShadow:'inset 0 1.5px 0 rgba(255,255,255,0.18),0 16px 48px rgba(0,0,0,0.55),0 0 28px rgba(123,215,255,0.12)',
-          display:'flex', alignItems:'center', gap:8, padding:'0 14px',
-        }}>
-          <span style={{fontSize:14, opacity:0.7, flexShrink:0}}>🔍</span>
-          <input
-            value={addrSearch}
-            onChange={e=>handleAddrInput(e.target.value)}
-            onKeyDown={e=>{ if(e.key==='Escape'){setAddrSearch('');setAddrSuggestions([]);} }}
-            placeholder="Search any address, city, or landmark…"
-            style={{
-              flex:1, background:'transparent', border:'none', outline:'none',
-              color:'#e8f4ff', fontSize:12, padding:'11px 0',
-              fontFamily:"'Inter',sans-serif",
-            }}
-          />
-          {addrLoading && <div className="lp-spin" style={{width:14,height:14,flexShrink:0}}/>}
-          {addrSearch && !addrLoading && (
-            <button onClick={()=>{setAddrSearch('');setAddrSuggestions([]);}} style={{background:'transparent',border:'none',color:'rgba(180,215,255,0.5)',cursor:'pointer',fontSize:16,flexShrink:0,padding:0,lineHeight:1}}>✕</button>
-          )}
-        </div>
-        {addrSuggestions.length>0 && (
-          <div style={{
-            marginTop:6,
-            background:'linear-gradient(145deg,rgba(14,28,52,0.97),rgba(8,18,38,0.95))',
-            border:'1px solid rgba(123,215,255,0.22)',
-            borderRadius:14,
-            overflow:'hidden',
-            backdropFilter:'blur(24px)',
-            boxShadow:'0 16px 48px rgba(0,0,0,0.70)',
-          }}>
-            {addrSuggestions.map((s,i)=>(
-              <div key={i}
-                onClick={()=>jumpToAddr(s.lat,s.lon,s.display_name)}
-                style={{
-                  padding:'9px 14px', cursor:'pointer',
-                  borderBottom: i<addrSuggestions.length-1 ? '1px solid rgba(123,215,255,0.06)' : 'none',
-                  transition:'background 0.14s',
-                }}
-                onMouseEnter={e=>(e.currentTarget.style.background='rgba(123,215,255,0.08)')}
-                onMouseLeave={e=>(e.currentTarget.style.background='transparent')}
-              >
-                <div style={{fontSize:11.5,color:'#e8f4ff',fontWeight:500}}>{s.display_name.split(',')[0]}</div>
-                <div style={{fontSize:9,color:'rgba(180,215,255,0.5)',marginTop:2,fontFamily:"'IBM Plex Mono',monospace",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.display_name}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       {/* ── HEADER ── */}
       <header className="app-header">
         <div className="hdr-brand">
@@ -2258,6 +2199,69 @@ out center tags;`;
         {/* ── MAP ── */}
         <div className="map-wrap">
           <div id="map" ref={mapDivRef}/>
+
+          {/* ── FLOATING ADDRESS SEARCH ── */}
+          <div ref={addrSearchRef} style={{
+            position:'absolute', top:14, left:'50%', transform:'translateX(-50%)',
+            zIndex:1500, width:440, maxWidth:'90vw',
+            pointerEvents:'none',
+          }}>
+            <div style={{
+              background:'linear-gradient(145deg,rgba(255,255,255,0.10),rgba(255,255,255,0.03)),rgba(8,18,42,0.82)',
+              border:'1px solid rgba(123,215,255,0.32)',
+              borderRadius:18,
+              backdropFilter:'blur(28px) saturate(180%)',
+              boxShadow:'inset 0 1.5px 0 rgba(255,255,255,0.18),0 16px 48px rgba(0,0,0,0.55),0 0 28px rgba(123,215,255,0.12)',
+              display:'flex', alignItems:'center', gap:8, padding:'0 14px',
+              pointerEvents:'auto',
+            }}>
+              <span style={{fontSize:14, opacity:0.6, flexShrink:0}}>🔍</span>
+              <input
+                value={addrSearch}
+                onChange={e=>handleAddrInput(e.target.value)}
+                onKeyDown={e=>{ if(e.key==='Escape'){setAddrSearch('');setAddrSuggestions([]);} }}
+                placeholder="Search any address, city, or landmark…"
+                style={{
+                  flex:1, background:'transparent', border:'none', outline:'none',
+                  color:'#e8f4ff', fontSize:12, padding:'11px 0',
+                  fontFamily:"'Inter',sans-serif",
+                }}
+              />
+              {addrLoading && <div className="lp-spin" style={{width:14,height:14,flexShrink:0}}/>}
+              {addrSearch && !addrLoading && (
+                <button onClick={()=>{setAddrSearch('');setAddrSuggestions([]);}} style={{background:'transparent',border:'none',color:'rgba(180,215,255,0.5)',cursor:'pointer',fontSize:16,flexShrink:0,padding:0,lineHeight:1,pointerEvents:'auto'}}>✕</button>
+              )}
+            </div>
+            {addrSuggestions.length>0 && (
+              <div style={{
+                marginTop:6,
+                background:'linear-gradient(145deg,rgba(14,28,52,0.97),rgba(8,18,38,0.95))',
+                border:'1px solid rgba(123,215,255,0.22)',
+                borderRadius:14,
+                overflow:'hidden',
+                backdropFilter:'blur(24px)',
+                boxShadow:'0 16px 48px rgba(0,0,0,0.70)',
+                pointerEvents:'auto',
+              }}>
+                {addrSuggestions.map((s,i)=>(
+                  <div key={i}
+                    onClick={()=>jumpToAddr(s.lat,s.lon,s.display_name)}
+                    style={{
+                      padding:'9px 14px', cursor:'pointer',
+                      borderBottom: i<addrSuggestions.length-1 ? '1px solid rgba(123,215,255,0.06)' : 'none',
+                      transition:'background 0.14s',
+                    }}
+                    onMouseEnter={e=>(e.currentTarget.style.background='rgba(123,215,255,0.08)')}
+                    onMouseLeave={e=>(e.currentTarget.style.background='transparent')}
+                  >
+                    <div style={{fontSize:11.5,color:'#e8f4ff',fontWeight:500}}>{s.display_name.split(',')[0]}</div>
+                    <div style={{fontSize:9,color:'rgba(180,215,255,0.5)',marginTop:2,fontFamily:"'IBM Plex Mono',monospace",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.display_name}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {localPopInfo&&(
             <div className="local-pop-card">
               <div className="local-pop-title">Local population estimate</div>
