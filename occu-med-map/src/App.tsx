@@ -1974,11 +1974,28 @@ out center tags;`;
   const dist = [1,2,3,4,5].map(v=>({v,count:LOCS.filter(l=>getVal(l,metric)===v).length}));
   const maxDist = Math.max(...dist.map(d=>d.count),1);
 
+
+  // ── Cursor light (Liquid Glass) ──────────────────────────────────────────
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      document.documentElement.style.setProperty('--glowX', e.clientX + 'px');
+      document.documentElement.style.setProperty('--glowY', e.clientY + 'px');
+      const light = document.querySelector('.cursor-light') as HTMLElement;
+      if (light) {
+        light.style.left = e.clientX + 'px';
+        light.style.top = e.clientY + 'px';
+      }
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, []);
+
   // ─────────────────────────────────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="app-wrap">
+      <div className="cursor-light" />
       {/* ── HEADER ── */}
       <header className="app-header">
         <div className="hdr-brand">
