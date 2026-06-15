@@ -12,6 +12,7 @@ import {
 } from './lib/procedurePrices';
 import { buildCitiesInRadius, buildFacilityRows, queryFacilitiesInRadius, type FacilityResult } from './lib/radiusExtractor';
 import { NPI_CATEGORY_MAP, NPI_CATEGORY_KEYS, isNpiCategory } from './lib/npiTaxonomies';
+import { searchNpiCustom, type NpiCustomSearchParams } from './lib/npiSearch';
 import type { ProviderCandidate, UnifiedSearchResponse, SearchAudit } from './lib/providerSources/types';
 import { SOURCE_BADGES } from './lib/providerSources/types';
 import { buildExplanation } from './lib/providerSources/scoring';
@@ -300,6 +301,10 @@ function isLikelyUsCoord(lat:number,lng:number):boolean {
   return inLower48 || inAlaska || inHawaii;
 }
 
+function isValidCoord(lat:number,lng:number):boolean {
+  return lat>=-90 && lat<=90 && lng>=-180 && lng<=180;
+}
+
 function localSearch(q:string,limit=8):typeof LOCS {
   const ql=q.toLowerCase().replace(/,/g,' ').replace(/\s+/g,' ').trim();
   const results:typeof LOCS=[];
@@ -426,14 +431,15 @@ async function geocodeQuery(q:string):Promise<{lat:number;lng:number;display:str
     return{lat,lng,display:city,city,state:stateCode||'',zip:''};
   }
   try {
-    const resp=await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=us&limit=1&q=${encodeURIComponent(qNorm)}`);
+    const resp=await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(qNorm)}`);
     if(!resp.ok) return null;
-    const data=await resp.json() as Array<{lat:string;lon:string;display_name?:string;address?:{city?:string;town?:string;village?:string;municipality?:string;state?:string;postcode?:string;}}>;
+    const data=await resp.json() as Array<{lat:string;lon:string;display_name?:string;address?:{city?:string;town?:string;village?:string;municipality?:string;state?:string;country?:string;country_code?:string;postcode?:string;}}>;
     if(!data?.length) return null;
     const hit=data[0];
     const addr=hit.address||{};
     const city=addr.city||addr.town||addr.village||addr.municipality||qNorm.replace(/ [A-Z]{2}$/,'');
-    const state=addr.state? (NAME2CODE[addr.state.toLowerCase()]||stateCode||'') : (stateCode||'');
+    // For US locations, try to map state name to code; for non-US, use state/region name or country
+    const state=addr.state ? (NAME2CODE[addr.state.toLowerCase()]||addr.state) : (addr.country||stateCode||'');
     return{
       lat:Number(hit.lat),
       lng:Number(hit.lon),
@@ -450,7 +456,19 @@ async function geocodeQuery(q:string):Promise<{lat:number;lng:number;display:str
 // ── Build popup HTML ──────────────────────────────────────────────────────────
 function buildStatePopup(postal:string):string {
   const d=SD[postal];
-  if(!d) return `<div class="pi"><div class="pt">${postal}</div></div>`;
+  // Handle non-US locations gracefully
+  if(!d) {
+    return `<div class="pi">
+      <div class="pt">${postal}</div>
+      <div class="ps">Detailed data only available for US locations</div>
+      <div class="pdiv"></div>
+      <div class="pcl">WORLDWIDE SUPPORT</div>
+      <div class="pg">
+        <div><div class="psl">Status</div><div class="psv">Geocoding enabled</div></div>
+        <div><div class="psl">Provider Search</div><div class="psv">OpenStreetMap</div></div>
+      </div>
+    </div>`;
+  }
   const pop=STATE_POP[postal];
   const tier=STATE_COST_TIER[postal]||'Average';
   const costIdx=STATE_COST_INDEX[postal]??1.0;
@@ -749,7 +767,7 @@ export default function App() {
   const [showAreaPrices, setShowAreaPrices] = useState(false);
   const [apState, setApState] = useState('');
   const [apProcedure, setApProcedure] = useState('urgentCareL3');
-  const [view, setView] = useState<'us'|'east'|'central'|'west'>('us');
+  const [view, setView] = useState<'world'|'us'|'east'|'central'|'west'>('world');
   const [rpOpen, setRpOpen] = useState(true);
   const [liveOpen, setLiveOpen] = useState(false);
   const [showDir, setShowDir] = useState(false);
@@ -794,6 +812,15 @@ export default function App() {
   const [npiSearchMeta, setNpiSearchMeta] = useState<SearchAudit | null>(null);
   const [npiUnifiedResponse, setNpiUnifiedResponse] = useState<UnifiedSearchResponse | null>(null);
   const [showAuditView, setShowAuditView] = useState(false);
+  
+  // Custom NPI search state
+  const [showCustomSearch, setShowCustomSearch] = useState(false);
+  const [customOrgName, setCustomOrgName] = useState('');
+  const [customFirstName, setCustomFirstName] = useState('');
+  const [customLastName, setCustomLastName] = useState('');
+  const [customTaxonomyDesc, setCustomTaxonomyDesc] = useState('');
+  const [customTaxonomyCode, setCustomTaxonomyCode] = useState('');
+  const [customEnumType, setCustomEnumType] = useState<'NPI-1' | 'NPI-2' | ''>('');
 
   const [dropCenter, setDropCenter] = useState<{lat:number;lng:number}|null>(null);
   const [dropRadiusMiles, setDropRadiusMiles] = useState(25);
@@ -1086,7 +1113,7 @@ export default function App() {
   useEffect(()=>{
     if(mapRef.current||!mapDivRef.current) return;
     const map = L.map(mapDivRef.current, {
-      center:[38.5,-96],zoom:4,zoomControl:true,
+      center:[20,0],zoom:2,zoomControl:true,
       preferCanvas:true,
       attributionControl:false,
     });
@@ -1695,11 +1722,12 @@ export default function App() {
   },[showTZ]);
 
   // ── View presets ─────────────────────────────────────────────────────────
-  function flyToView(v:'us'|'east'|'central'|'west') {
+  function flyToView(v:'world'|'us'|'east'|'central'|'west') {
     setView(v);
     const map=mapRef.current;
     if(!map) return;
-    if(v==='us') map.flyTo([38.5,-96],4,{duration:1});
+    if(v==='world') map.flyTo([20,0],2,{duration:1});
+    else if(v==='us') map.flyTo([38.5,-96],4,{duration:1});
     else if(v==='east') map.flyTo([38,-79],5.5,{duration:1});
     else if(v==='central') map.flyTo([38.5,-96],5,{duration:1});
     else if(v==='west') map.flyTo([40,-118],5.5,{duration:1});
@@ -2084,7 +2112,9 @@ export default function App() {
       const r=await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=12`,{headers:{'Accept-Language':'en'}});
       const d=await r.json();
       const a=d.address||{};
-      setLiveLocation((a.city||a.town||a.village||a.county||a.state||'')+(a.state_code?' · '+a.state_code:''));
+      const location=(a.city||a.town||a.village||a.county||a.state||a.country||'');
+      const region=a.state_code||a.state||a.country||'';
+      setLiveLocation(location+(region?' · '+region:''));
     } catch(e){ setLiveLocation(`${lat.toFixed(4)}, ${lng.toFixed(4)}`); }
   }
 
@@ -2094,9 +2124,10 @@ export default function App() {
       const d=await r.json();
       const a=d.address||{};
       const city=a.city||a.town||a.village||a.county||'';
-      const state=a.state_code||'';
-      if(!city||!state) return null;
-      return{city,state,display:`${city} · ${state}`};
+      // Use state_code for US, otherwise use state or country
+      const state=a.state_code||a.state||a.country||'';
+      if(!city) return null;
+      return{city,state,display:`${city}${state?` · ${state}`:''}`};
     } catch{return null;}
   }
 
@@ -2139,6 +2170,93 @@ export default function App() {
     } catch(e:any){
       setNpiError(e?.message||'NPI search failed. Please try again.');
       console.warn('[NPI Category Search] Failed',e);
+    } finally{
+      setNpiLoading(false);
+    }
+  }
+
+  async function doCustomNpiSearch() {
+    if(!lastRadiusRef.current){
+      setNpiError('Click the map first to set a search location.');
+      return;
+    }
+    const{centerLat,centerLng}={centerLat:lastRadiusRef.current.lat,centerLng:lastRadiusRef.current.lng};
+    const loc=await reverseGeocodeCityState(centerLat,centerLng);
+    if(!loc){
+      setNpiError('Could not determine city/state from map location. Try clicking near a city.');
+      return;
+    }
+    
+    // Validate at least one search parameter is provided
+    if(!customOrgName && !customFirstName && !customLastName && !customTaxonomyDesc && !customTaxonomyCode){
+      setNpiError('Please enter at least one search parameter (organization name, provider name, or taxonomy).');
+      return;
+    }
+    
+    setNpiLoading(true);
+    setNpiError('');
+    setNpiResults([]);
+    setNpiSearchMeta(null);
+    setNpiCategory('custom');
+    
+    const params: NpiCustomSearchParams = {
+      city: loc.city,
+      state: loc.state,
+      centerLat,
+      centerLng,
+      limit: 200,
+    };
+    
+    if(customOrgName) params.organization_name = customOrgName;
+    if(customFirstName) params.first_name = customFirstName;
+    if(customLastName) params.last_name = customLastName;
+    if(customTaxonomyDesc) params.taxonomy_description = customTaxonomyDesc;
+    if(customTaxonomyCode) params.taxonomy_code = customTaxonomyCode;
+    if(customEnumType) params.enumeration_type = customEnumType;
+    
+    try{
+      const response = await searchNpiCustom(params);
+      if(response.error){
+        setNpiError(response.error);
+      }
+      
+      // Convert NPI results to ProviderCandidate format
+      const candidates: ProviderCandidate[] = response.results.map((r) => ({
+        id: `npi-${r.npi}`,
+        name: r.name,
+        address: r.address,
+        city: r.city,
+        state: r.state,
+        postalCode: r.postalCode,
+        phone: r.phone,
+        website: '',
+        npi: r.npi,
+        taxonomy: r.taxonomyDescription,
+        taxonomyCode: r.taxonomyCode,
+        source: 'NPI',
+        sourceDetail: 'Custom Search',
+        sourceUrl: `https://npiregistry.cms.hhs.gov/provider-view/${r.npi}`,
+        confidence: 'medium' as const,
+        score: r.providerType === 'organization' ? 35 : 30,
+        badges: ['NPI'],
+        evidence: [],
+        _rawSources: ['NPI'],
+        lat: r.lat ?? undefined,
+        lng: r.lng ?? undefined,
+      }));
+      
+      setNpiResults(candidates);
+      setNpiSearchMeta({
+        normalizedCount: response.normalizedCount,
+        dedupedCount: response.normalizedCount,
+        geocodedCount: response.geocodedCount,
+        finalMarkerCount: response.finalMarkerCount,
+        durationMs: 0,
+        errorsBySource: {},
+      } as SearchAudit);
+    } catch(e:any){
+      setNpiError(e?.message||'Custom NPI search failed. Please try again.');
+      console.warn('[Custom NPI Search] Failed',e);
     } finally{
       setNpiLoading(false);
     }
@@ -2376,7 +2494,7 @@ export default function App() {
           <div className="sb-section">
             <div className="sb-lbl">VIEW PRESETS</div>
             <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-              {(['us','east','central','west'] as const).map(v=>(
+              {(['world','us','east','central','west'] as const).map(v=>(
                 <button key={v} className={`vbtn${view===v?' active':''}`} onClick={()=>flyToView(v)}>{v.toUpperCase()}</button>
               ))}
             </div>
@@ -2833,14 +2951,95 @@ export default function App() {
               </div>
               {/* Filter chips — now wired to NPI Registry category search */}
               <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
-                <button className={`lp-chip${!npiCategory?' on':''}`} onClick={()=>{setLiveFilter('all');setNpiCategory(null);setNpiResults([]);setNpiError('');setNpiSearchMeta(null);}}>All</button>
+                <button className={`lp-chip${!npiCategory?' on':''}`} onClick={()=>{setLiveFilter('all');setNpiCategory(null);setNpiResults([]);setNpiError('');setNpiSearchMeta(null);setShowCustomSearch(false);}}>All</button>
                 {NPI_CATEGORY_KEYS.map((cat)=>{
                   const c=NPI_CATEGORY_MAP[cat];
                   return (
-                    <button key={cat} className={`lp-chip${npiCategory===cat?' on':''}`} onClick={()=>{setLiveFilter(cat);doNpiCategorySearch(cat);}}>{c.icon} {c.label}</button>
+                    <button key={cat} className={`lp-chip${npiCategory===cat?' on':''}`} onClick={()=>{setLiveFilter(cat);doNpiCategorySearch(cat);setShowCustomSearch(false);}}>{c.icon} {c.label}</button>
                   );
                 })}
+                <button className={`lp-chip${npiCategory==='custom'?' on':''}`} onClick={()=>{setShowCustomSearch(!showCustomSearch);setNpiCategory(null);setNpiResults([]);setNpiError('');}}>🔍 Custom</button>
               </div>
+              
+              {/* Custom NPI Search Form */}
+              {showCustomSearch && (
+                <div style={{padding:'10px',background:'rgba(7,20,42,0.6)',border:'1px solid rgba(103,232,249,0.2)',borderRadius:6,marginTop:8}}>
+                  <div style={{fontSize:9,color:'#89d4fe',fontFamily:"'IBM Plex Mono',monospace",marginBottom:8,letterSpacing:'0.08em'}}>CUSTOM NPI SEARCH</div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:8}}>
+                    <div>
+                      <div style={{fontSize:8,color:'#3d5478',marginBottom:2}}>Organization Name</div>
+                      <input 
+                        className="rp-input" 
+                        style={{fontSize:9,padding:'4px 6px'}}
+                        placeholder="e.g. Mayo Clinic"
+                        value={customOrgName}
+                        onChange={e=>setCustomOrgName(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <div style={{fontSize:8,color:'#3d5478',marginBottom:2}}>First Name</div>
+                      <input 
+                        className="rp-input" 
+                        style={{fontSize:9,padding:'4px 6px'}}
+                        placeholder="e.g. John"
+                        value={customFirstName}
+                        onChange={e=>setCustomFirstName(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <div style={{fontSize:8,color:'#3d5478',marginBottom:2}}>Last Name</div>
+                      <input 
+                        className="rp-input" 
+                        style={{fontSize:9,padding:'4px 6px'}}
+                        placeholder="e.g. Smith"
+                        value={customLastName}
+                        onChange={e=>setCustomLastName(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <div style={{fontSize:8,color:'#3d5478',marginBottom:2}}>Taxonomy Description</div>
+                      <input 
+                        className="rp-input" 
+                        style={{fontSize:9,padding:'4px 6px'}}
+                        placeholder="e.g. Cardiology"
+                        value={customTaxonomyDesc}
+                        onChange={e=>setCustomTaxonomyDesc(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <div style={{fontSize:8,color:'#3d5478',marginBottom:2}}>Taxonomy Code</div>
+                      <input 
+                        className="rp-input" 
+                        style={{fontSize:9,padding:'4px 6px'}}
+                        placeholder="e.g. 207RC0000X"
+                        value={customTaxonomyCode}
+                        onChange={e=>setCustomTaxonomyCode(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <div style={{fontSize:8,color:'#3d5478',marginBottom:2}}>Provider Type</div>
+                      <select 
+                        className="rp-select" 
+                        style={{fontSize:9,padding:'4px 6px'}}
+                        value={customEnumType}
+                        onChange={e=>setCustomEnumType(e.target.value as any)}
+                      >
+                        <option value="">Any</option>
+                        <option value="NPI-1">Individual (NPI-1)</option>
+                        <option value="NPI-2">Organization (NPI-2)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <button 
+                    className="rp-assess-btn" 
+                    style={{width:'100%',padding:'6px 12px',fontSize:9}}
+                    onClick={doCustomNpiSearch}
+                    disabled={npiLoading}
+                  >
+                    {npiLoading ? '⏳ SEARCHING...' : '🔍 SEARCH NPI REGISTRY'}
+                  </button>
+                </div>
+              )}
               {npiLoading&&(
                 <div style={{fontSize:9,color:'#89d4fe',padding:'4px 0'}}>
                   Querying NPI Registry for {npiCategory ? NPI_CATEGORY_MAP[npiCategory]?.label : ''}...
