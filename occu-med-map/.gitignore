@@ -1,0 +1,24 @@
+.bluehive-scrape-checkpoint.json
+bluehive_providers.json
+bluehive_providers.csv
+bluehive_scrape_audit.csv
+
+# Zocdoc collector outputs
+.zocdoc-scrape-checkpoint.json
+zocdoc_providers.csv
+zocdoc_providers.jsonl
+zocdoc_scrape_audit.csv
+
+# NPI collector outputs
+.npi-scrape-checkpoint.json
+npi_registry_providers.csv
+npi_registry_providers.jsonl
+npi_registry_audit.csv
+
+# Radiology Assist collector outputs
+.radiology-assist-scrape-checkpoint.json
+radiology_assist_prices.csv
+radiology_assist_prices.jsonl
+radiology_assist_facilities.csv
+radiology_assist_facilities.jsonl
+radiology_assist_audit.csv

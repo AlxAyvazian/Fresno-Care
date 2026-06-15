@@ -11,6 +11,24 @@ import {
   adjustedPrice, tierColor,
 } from './lib/procedurePrices';
 import { buildCitiesInRadius, buildFacilityRows, queryFacilitiesInRadius, type FacilityResult } from './lib/radiusExtractor';
+import { NPI_CATEGORY_MAP, NPI_CATEGORY_KEYS, isNpiCategory } from './lib/npiTaxonomies';
+import type { ProviderCandidate, UnifiedSearchResponse, SearchAudit } from './lib/providerSources/types';
+import { SOURCE_BADGES } from './lib/providerSources/types';
+import { buildExplanation } from './lib/providerSources/scoring';
+
+async function searchProviderSources(body: { city: string; state: string; serviceType: string; radiusMiles: number; centerLat: number; centerLng: number }): Promise<UnifiedSearchResponse> {
+  const resp = await fetch('/api/provider-sources/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${resp.status}`);
+  }
+  return resp.json();
+}
 
 // ── FIPS → state abbreviation lookup ────────────────────────────────────────
 const FIPS2CODE: Record<string,string> = {
@@ -694,6 +712,7 @@ export default function App() {
   const dropPinRef = useRef<L.Marker|null>(null);
   const popDensityLayerRef = useRef<L.LayerGroup|null>(null);
   const clinicLayerRef = useRef<L.LayerGroup|null>(null);
+  const blueHiveLayerRef = useRef<L.LayerGroup|null>(null);
   const savedRadiusLayerRef = useRef<L.LayerGroup|null>(null);
   const rawStateFeaturesRef = useRef<any[]>([]);
   const clinicFileInputRef = useRef<HTMLInputElement>(null);
@@ -766,6 +785,16 @@ export default function App() {
   const [liveHighlightId, setLiveHighlightId] = useState<any>(null);
   const [liveHint, setLiveHint] = useState('Click anywhere on the map to search for facilities');
   const [liveMirror, setLiveMirror] = useState('');
+
+  // Unified provider search state
+  const [npiResults, setNpiResults] = useState<ProviderCandidate[]>([]);
+  const [npiLoading, setNpiLoading] = useState(false);
+  const [npiError, setNpiError] = useState('');
+  const [npiCategory, setNpiCategory] = useState<string | null>(null);
+  const [npiSearchMeta, setNpiSearchMeta] = useState<SearchAudit | null>(null);
+  const [npiUnifiedResponse, setNpiUnifiedResponse] = useState<UnifiedSearchResponse | null>(null);
+  const [showAuditView, setShowAuditView] = useState(false);
+
   const [dropCenter, setDropCenter] = useState<{lat:number;lng:number}|null>(null);
   const [dropRadiusMiles, setDropRadiusMiles] = useState(25);
   const [dropFacilityType, setDropFacilityType] = useState('all');
@@ -776,6 +805,11 @@ export default function App() {
   const [multiDropMode, setMultiDropMode] = useState(false);
   const multiDropLayerRef = useRef<L.LayerGroup|null>(null);
   const [showGlowPoints, setShowGlowPoints] = useState(true);
+  const [showBlueHive, setShowBlueHive] = useState(false);
+  const [blueHiveData, setBlueHiveData] = useState<any[]>([]);
+  const [showDentists, setShowDentists] = useState(false);
+  const [dentistData, setDentistData] = useState<any[]>([]);
+  const dentistLayerRef = useRef<L.LayerGroup|null>(null);
   const [outreachNotes, setOutreachNotes] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_notes')||'{}'); } catch { return {}; } });
   const [outreachStatus, setOutreachStatus] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_status')||'{}'); } catch { return {}; } });
   const [dropUi, setDropUi] = useState({panelOpen:false, exportLoading:false, status:''});
@@ -1093,6 +1127,22 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
+  // ── Load BlueHive provider data ────────────────────────────────────────────
+  useEffect(()=>{
+    fetch('/bluehive-map-data.json')
+      .then(r=>r.json())
+      .then(data=>setBlueHiveData(data.providers||[]))
+      .catch(()=>setBlueHiveData([]));
+  },[]);
+
+  // ── Load Dentist data ─────────────────────────────────────────────────────
+  useEffect(()=>{
+    fetch('/dentists.json')
+      .then(r=>r.json())
+      .then(data=>setDentistData(data||[]))
+      .catch(()=>setDentistData([]));
+  },[]);
+
   const liveOpenRef = useRef(false);
   useEffect(()=>{ liveOpenRef.current = liveOpen; },[liveOpen]);
   const liveAutoPinRef = useRef(true);
@@ -1373,6 +1423,76 @@ export default function App() {
     clinicLayerRef.current = grp;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[uploadedClinics, showUploadedClinics, showGlowPoints]);
+
+  // ── BlueHive provider pins ────────────────────────────────────────────────
+  useEffect(()=>{
+    const map = mapRef.current;
+    if (!map) return;
+    if (blueHiveLayerRef.current) { map.removeLayer(blueHiveLayerRef.current); blueHiveLayerRef.current = null; }
+    if (!showBlueHive || blueHiveData.length===0) return;
+    const grp = L.layerGroup();
+    blueHiveData.forEach((p:any,i:number)=>{
+      if (p.lat===null || p.lng===null) return;
+      const mk = L.marker([p.lat, p.lng], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="width:10px;height:10px;border-radius:50%;background:#3b82f6;${showGlowPoints?'box-shadow:0 0 6px #3b82f6,0 0 12px #3b82f666;':'box-shadow:0 0 0 1px rgba(255,255,255,0.3);'}cursor:pointer;"></div>`,
+          iconSize: [10,10], iconAnchor: [5,5],
+        }),
+        zIndexOffset: 500,
+      });
+      mk.bindPopup(`<div style="font-family:Inter,sans-serif;padding:10px 12px;min-width:200px;">
+        <div style="font-size:12px;font-weight:700;color:#e2f0ff;margin-bottom:4px">${p.clinic_name||'Unnamed'}</div>
+        ${p.address_1?`<div style="font-size:9.5px;color:#4a6888">📍 ${p.address_1}${p.city?', '+p.city:''}${p.state?' '+p.state:''}${p.zip?' '+p.zip:''}</div>`:''}
+        ${p.phone?`<div style="font-size:9.5px;color:#67e8f9;margin-top:2px">📞 <a href="tel:${p.phone}" style="color:#67e8f9;text-decoration:none">${p.phone}</a></div>`:''}
+        ${p.website?`<div style="font-size:8.5px;color:#3d5478;margin-top:2px"><a href="${p.website}" target="_blank" style="color:#93c5fd">${p.website}</a></div>`:''}
+        ${p.services?`<div style="font-size:8px;color:#3d5478;margin-top:3px">${p.services}</div>`:''}
+        <div style="margin-top:6px;display:flex;gap:5px">
+          <div style="width:8px;height:8px;border-radius:50%;background:#3b82f6;box-shadow:0 0 6px #3b82f6;flex-shrink:0;margin-top:2px"></div>
+          <span style="font-size:8.5px;color:#3d5478;font-family:'IBM Plex Mono',monospace">BLUEHIVE PROVIDER</span>
+        </div>
+      </div>`);
+      grp.addLayer(mk);
+    });
+    grp.addTo(map);
+    blueHiveLayerRef.current = grp;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[showBlueHive, blueHiveData, showGlowPoints]);
+
+  // ── Dentist provider pins ───────────────────────────────────────────────────
+  useEffect(()=>{
+    const map = mapRef.current;
+    if (!map) return;
+    if (dentistLayerRef.current) { map.removeLayer(dentistLayerRef.current); dentistLayerRef.current = null; }
+    if (!showDentists || dentistData.length===0) return;
+    const grp = L.layerGroup();
+    dentistData.forEach((p:any,i:number)=>{
+      if (p.lat===null || p.lng===null) return;
+      const mk = L.marker([p.lat, p.lng], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="width:10px;height:10px;border-radius:50%;background:#06b6d4;${showGlowPoints?'box-shadow:0 0 6px #06b6d4,0 0 12px #06b6d466;':'box-shadow:0 0 0 1px rgba(255,255,255,0.3);'}cursor:pointer;"></div>`,
+          iconSize: [10,10], iconAnchor: [5,5],
+        }),
+        zIndexOffset: 500,
+      });
+      mk.bindPopup(`<div style="font-family:Inter,sans-serif;padding:10px 12px;min-width:200px;">
+        <div style="font-size:12px;font-weight:700;color:#e2f0ff;margin-bottom:4px">${p.clinic_name||'Unnamed'}</div>
+        ${p.address_1?`<div style="font-size:9.5px;color:#4a6888">📍 ${p.address_1}${p.city?', '+p.city:''}${p.state?' '+p.state:''}${p.zip?' '+p.zip:''}</div>`:''}
+        ${p.phone?`<div style="font-size:9.5px;color:#67e8f9;margin-top:2px">📞 <a href="tel:${p.phone}" style="color:#67e8f9;text-decoration:none">${p.phone}</a></div>`:''}
+        ${p.npi?`<div style="font-size:8.5px;color:#3d5478;margin-top:2px">NPI: <a href="${p.source_url}" target="_blank" style="color:#93c5fd">${p.npi}</a></div>`:''}
+        ${p.taxonomy_description?`<div style="font-size:8px;color:#3d5478;margin-top:3px">${p.taxonomy_description}</div>`:''}
+        <div style="margin-top:6px;display:flex;gap:5px">
+          <div style="width:8px;height:8px;border-radius:50%;background:#06b6d4;box-shadow:0 0 6px #06b6d4;flex-shrink:0;margin-top:2px"></div>
+          <span style="font-size:8.5px;color:#3d5478;font-family:'IBM Plex Mono',monospace">DENTIST</span>
+        </div>
+      </div>`);
+      grp.addLayer(mk);
+    });
+    grp.addTo(map);
+    dentistLayerRef.current = grp;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[showDentists, dentistData, showGlowPoints]);
 
   async function handleClinicUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -1968,6 +2088,113 @@ export default function App() {
     } catch(e){ setLiveLocation(`${lat.toFixed(4)}, ${lng.toFixed(4)}`); }
   }
 
+  async function reverseGeocodeCityState(lat:number,lng:number):Promise<{city:string;state:string;display:string}|null> {
+    try {
+      const r=await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=12`,{headers:{'Accept-Language':'en'}});
+      const d=await r.json();
+      const a=d.address||{};
+      const city=a.city||a.town||a.village||a.county||'';
+      const state=a.state_code||'';
+      if(!city||!state) return null;
+      return{city,state,display:`${city} · ${state}`};
+    } catch{return null;}
+  }
+
+  async function doNpiCategorySearch(category:string) {
+    if(!lastRadiusRef.current){
+      setNpiError('Click the map first to set a search location.');
+      return;
+    }
+    if(!isNpiCategory(category)){
+      setNpiError(`Unknown category: ${category}`);
+      return;
+    }
+    const{centerLat,centerLng}={centerLat:lastRadiusRef.current.lat,centerLng:lastRadiusRef.current.lng};
+    const loc=await reverseGeocodeCityState(centerLat,centerLng);
+    if(!loc){
+      setNpiError('Could not determine city/state from map location. Try clicking near a city.');
+      return;
+    }
+    setNpiLoading(true);
+    setNpiError('');
+    setNpiResults([]);
+    setNpiSearchMeta(null);
+    setNpiCategory(category);
+    try{
+      const response=await searchProviderSources({
+        city:loc.city,
+        state:loc.state,
+        radiusMiles:25,
+        serviceType:category,
+        centerLat,
+        centerLng,
+      });
+      if(response.audit.errorsBySource && Object.keys(response.audit.errorsBySource).length > 0){
+        const firstError = String(Object.values(response.audit.errorsBySource)[0]);
+        setNpiError(firstError);
+      }
+      setNpiResults(response.results);
+      setNpiSearchMeta(response.audit);
+      setNpiUnifiedResponse(response);
+    } catch(e:any){
+      setNpiError(e?.message||'NPI search failed. Please try again.');
+      console.warn('[NPI Category Search] Failed',e);
+    } finally{
+      setNpiLoading(false);
+    }
+  }
+
+  function renderNpiMarkers(results:ProviderCandidate[],category:string){
+    const liveGrp=liveGrpRef.current;
+    const map=mapRef.current;
+    if(!liveGrp||!map) return;
+    liveGrp.clearLayers();
+    const config=NPI_CATEGORY_MAP[category];
+    const color=config?.color||'#22d3ee';
+    const icon=config?.icon||'\u26A1';
+    const label=config?.label||'Provider';
+
+    results.forEach((p,i)=>{
+      if(p.lat==null||p.lng==null) return;
+      const lat=p.lat;
+      const lng=p.lng;
+      // Internal map pin: show provider name
+      const mk=L.marker([lat,lng],{
+        icon:L.divIcon({
+          className:'',
+          html:`<div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(4,10,22,0.92);border:2px solid ${color};${showGlowPoints?`box-shadow:0 0 8px ${color}44,0 2px 6px rgba(0,0,0,0.6);`:'box-shadow:0 0 0 1px rgba(255,255,255,0.18);'}font-size:12px;cursor:pointer;">${icon}</div>`,
+          iconSize:[28,28],
+          iconAnchor:[14,14],
+        }),
+        zIndexOffset:1200+i,
+      });
+      // Internal popup: full provider details
+      const badgesHtml=(p.badges||[]).map((b)=>`<span style="display:inline-block;font-size:7.5px;padding:1px 5px;border-radius:3px;background:${color}22;border:1px solid ${color}44;color:${color};margin-right:3px;">${b}</span>`).join('');
+      const evidenceHtml=p.evidence&&p.evidence.length>0
+        ? `<div style="margin-top:5px;font-size:8px;color:#eab308;background:rgba(234,179,8,0.06);border:1px solid rgba(234,179,8,0.15);border-radius:3px;padding:4px 6px;"><strong>Evidence:</strong> ${p.evidence[0].serviceDetected}</div>`
+        : '';
+      const confidenceColor=p.confidence==='high'?'#34d399':p.confidence==='medium'?'#fbbf24':'#fca5a5';
+      const popupHtml=`<div style="font-family:Inter,sans-serif;padding:10px 12px;min-width:210px;max-width:280px;">
+        <div style="display:flex;gap:7px;align-items:flex-start;margin-bottom:6px;"><span style="font-size:16px">${icon}</span>
+        <div><div style="font-size:12px;font-weight:700;color:#e2f0ff;line-height:1.3">${p.name}</div>
+        <div style="font-size:8px;font-weight:700;font-family:'IBM Plex Mono',monospace;color:${color};letter-spacing:1px;text-transform:uppercase;margin-top:2px">${label}</div></div></div>
+        <div style="font-size:9px;color:#4a6888;margin-bottom:4px;">${p.address}</div>
+        ${p.phone?`<div style="font-size:9px;color:#67e8f9;margin-bottom:3px;">📞 <a href="tel:${p.phone}" style="color:#67e8f9;text-decoration:none">${p.phone}</a></div>`:''}
+        ${p.website?`<div style="font-size:8.5px;color:#3d5478;margin-bottom:3px;"><a href="${p.website}" target="_blank" rel="noopener" style="color:#93c5fd">${p.website}</a></div>`:''}
+        ${p.sourceUrl?`<div style="font-size:8px;color:#3d5478;margin-bottom:4px;"><a href="${p.sourceUrl}" target="_blank" rel="noopener" style="color:#93c5fd">${p.source} ↗</a></div>`:''}
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+          <span style="font-size:8px;font-family:'IBM Plex Mono',monospace;color:${confidenceColor};font-weight:700;">${p.confidence?.toUpperCase()}</span>
+          <span style="font-size:8px;font-family:'IBM Plex Mono',monospace;color:#89d4fe;">Score ${p.score}</span>
+          ${p.distanceMiles!==undefined?`<span style="font-size:8px;color:#5d7a9e;">${p.distanceMiles.toFixed(1)} mi</span>`:''}
+        </div>
+        <div style="margin-bottom:4px;">${badgesHtml}</div>
+        ${evidenceHtml}
+      </div>`;
+      mk.bindPopup(popupHtml,{maxWidth:280,className:'live-marker-popup'});
+      liveGrp.addLayer(mk);
+    });
+  }
+
   function renderLiveMarkers(results:any[]) {
     const liveGrp=liveGrpRef.current;
     const map=mapRef.current;
@@ -2014,10 +2241,15 @@ export default function App() {
   }
 
   useEffect(()=>{
+    // If an NPI category is active, render NPI markers; otherwise render OSM live markers
+    if(npiCategory){
+      renderNpiMarkers(npiResults,npiCategory);
+      return;
+    }
     const filtered=filterAndSortLiveResults(liveResults);
     renderLiveMarkers(filtered);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[liveFilter, liveTextFilter, liveResults, liveRegionFilter, liveSort, showGlowPoints]);
+  },[liveFilter, liveTextFilter, liveResults, liveRegionFilter, liveSort, showGlowPoints, npiCategory, npiResults]);
 
   function lpFly(lat:number,lng:number,id:any) {
     const map=mapRef.current;
@@ -2179,6 +2411,20 @@ export default function App() {
             <div className="tog-row">
               <span className="tog-lbl" style={{color: showCityDots ? 'inherit' : '#7bd7ff'}}>City dots {showCityDots ? '' : '(hidden)'}</span>
               <label className="tog-switch"><input type="checkbox" checked={showCityDots} onChange={e=>setShowCityDots(e.target.checked)}/><span className="tog-slider"/></label>
+            </div>
+            <div className="tog-row">
+              <span className="tog-lbl" style={{color:'#3b82f6',display:'flex',alignItems:'center',gap:4}}>
+                <span style={{width:7,height:7,borderRadius:'50%',background:'#3b82f6',display:'inline-block',boxShadow:'0 0 6px #3b82f6',flexShrink:0}}/>
+                BlueHive Providers {blueHiveData.length>0&&<span style={{fontSize:9,opacity:0.7,marginLeft:2}}>({blueHiveData.filter((p:any)=>p.lat!==null).length})</span>}
+              </span>
+              <label className="tog-switch"><input type="checkbox" checked={showBlueHive} onChange={e=>setShowBlueHive(e.target.checked)}/><span className="tog-slider"/></label>
+            </div>
+            <div className="tog-row">
+              <span className="tog-lbl" style={{color:'#06b6d4',display:'flex',alignItems:'center',gap:4}}>
+                <span style={{width:7,height:7,borderRadius:'50%',background:'#06b6d4',display:'inline-block',boxShadow:'0 0 6px #06b6d4',flexShrink:0}}/>
+                Dentists {dentistData.length>0&&<span style={{fontSize:9,opacity:0.7,marginLeft:2}}>({dentistData.length})</span>}
+              </span>
+              <label className="tog-switch"><input type="checkbox" checked={showDentists} onChange={e=>setShowDentists(e.target.checked)}/><span className="tog-slider"/></label>
             </div>
             {clinicGroups.length>0&&clinicGroups.map(grp=>(
               <div key={grp.id} className="tog-row">
@@ -2585,22 +2831,60 @@ export default function App() {
                   <option value="name">Sort: Name</option>
                 </select>
               </div>
-              {/* Filter chips */}
+              {/* Filter chips — now wired to NPI Registry category search */}
               <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
-                <button className={`lp-chip${liveFilter==='all'?' on':''}`} onClick={()=>setLiveFilter('all')}>All</button>
-                {Object.entries(CATS).map(([cat,c])=>(
-                  <button key={cat} className={`lp-chip${liveFilter===cat?' on':''}`} onClick={()=>setLiveFilter(cat)}>{c.ico} {c.lbl}</button>
-                ))}
+                <button className={`lp-chip${!npiCategory?' on':''}`} onClick={()=>{setLiveFilter('all');setNpiCategory(null);setNpiResults([]);setNpiError('');setNpiSearchMeta(null);}}>All</button>
+                {NPI_CATEGORY_KEYS.map((cat)=>{
+                  const c=NPI_CATEGORY_MAP[cat];
+                  return (
+                    <button key={cat} className={`lp-chip${npiCategory===cat?' on':''}`} onClick={()=>{setLiveFilter(cat);doNpiCategorySearch(cat);}}>{c.icon} {c.label}</button>
+                  );
+                })}
               </div>
+              {npiLoading&&(
+                <div style={{fontSize:9,color:'#89d4fe',padding:'4px 0'}}>
+                  Querying NPI Registry for {npiCategory ? NPI_CATEGORY_MAP[npiCategory]?.label : ''}...
+                </div>
+              )}
+              {npiError&&!npiLoading&&(
+                <div style={{fontSize:9,color:'#fca5a5',padding:'6px 8px',background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.25)',borderRadius:5,lineHeight:1.5}}>
+                  ⚠ {npiError}
+                </div>
+              )}
+              {npiSearchMeta&&!npiLoading&&(
+                <div style={{fontSize:8.5,color:'#2d4060',fontFamily:"'IBM Plex Mono',monospace",padding:'3px 0',display:'flex',alignItems:'center',gap:8}}>
+                  <span>{npiSearchMeta.normalizedCount} norm → {npiSearchMeta.dedupedCount} dedup → {npiSearchMeta.geocodedCount} geo → {npiSearchMeta.finalMarkerCount} markers · {npiSearchMeta.durationMs}ms</span>
+                  <button onClick={()=>setShowAuditView(v=>!v)} style={{fontSize:8,padding:'2px 6px',borderRadius:3,background:'rgba(59,130,246,0.1)',border:'1px solid rgba(59,130,246,0.25)',color:'#93c5fd',cursor:'pointer',fontFamily:"'IBM Plex Mono',monospace"}}>{showAuditView?'Hide':'Audit'}</button>
+                </div>
+              )}
+              {showAuditView&&npiUnifiedResponse&&(
+                <div style={{fontSize:8.5,color:'#3d5478',fontFamily:"'IBM Plex Mono',monospace",padding:'6px 8px',background:'rgba(7,20,42,0.5)',border:'1px solid rgba(103,232,249,0.15)',borderRadius:5,lineHeight:1.6}}>
+                  <div style={{color:'#89d4fe',marginBottom:3}}>ADAPTER STATUS</div>
+                  {npiUnifiedResponse.sourceResults.map((sr)=> (
+                    <div key={sr.sourceId} style={{display:'flex',gap:6}}>
+                      <span style={{color:sr.ok?'#34d399':'#fca5a5'}}>{sr.ok?'✓':'✗'}</span>
+                      <span>{sr.sourceLabel}: {sr.count}{sr.error ? ` · ${sr.error}` : ''}</span>
+                    </div>
+                  ))}
+                  {Object.keys(npiUnifiedResponse.audit.errorsBySource).length===0&&<div style={{color:'#34d399'}}>All sources responded cleanly.</div>}
+                </div>
+              )}
               <div style={{fontSize:9,color:'#8fb3d8'}}>
-                Showing {filterAndSortLiveResults(liveResults).length} of {liveResults.length} providers
+                {npiCategory
+                  ? `Showing ${npiResults.length} verified candidates`
+                  : `Showing ${filterAndSortLiveResults(liveResults).length} of ${liveResults.length} OSM facilities`}
               </div>
-              <div className={`lp-loading${liveLoading?' show':''}`}>
+              <div className={`lp-loading${(liveLoading||npiLoading)?' show':''}`}>
                 <div className="lp-spin"/>
-                <div style={{fontSize:10,color:'#3d5478'}}>Querying provider sources...</div>
+                <div style={{fontSize:10,color:'#3d5478'}}>
+                  {npiLoading ? 'Querying NPI Registry...' : 'Querying provider sources...'}
+                </div>
               </div>
-              {!liveLoading&&liveResults.length===0&&!liveHint.startsWith('⚠')&&(
+              {!npiLoading&&!npiCategory&&liveResults.length===0&&!liveHint.startsWith('⚠')&&(
                 <div className="lp-empty show">Click anywhere on the map to search nearby facilities</div>
+              )}
+              {!npiLoading&&npiCategory&&npiResults.length===0&&!npiError&&(
+                <div className="lp-empty show">No NPI providers found for {NPI_CATEGORY_MAP[npiCategory]?.label} in this area. Try a larger city or different category.</div>
               )}
               {!liveLoading&&liveHint.startsWith('⚠')&&(
                 <div style={{padding:14,textAlign:'center',fontSize:10.5,color:'#ef4444',lineHeight:1.9}}>
@@ -2608,49 +2892,92 @@ export default function App() {
                   <br/><button style={{marginTop:8,padding:'4px 12px',borderRadius:3,background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',color:'#ef4444',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,cursor:'pointer'}} onClick={()=>{if(lastRadiusRef.current)doLiveSearch(lastRadiusRef.current.lat,lastRadiusRef.current.lng);}}>↺ RETRY</button>
                 </div>
               )}
-              {filterAndSortLiveResults(liveResults).map((r:any)=>{
-                const c=CATS[r.cat]||CATS.clinic;
-                const gm=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.name+(r.addr?' '+r.addr:''))}`;
-                return (
-                  <div key={r.id} className={`lp-item${liveHighlightId===r.id?' hl':''}`} onClick={()=>lpFly(r.lat,r.lng,r.id)}>
-                    <div className="lp-row1">
-                      <span className="lp-ico">{c.ico}</span>
-                      <span className="lp-name">{r.name}</span>
-                      <span className="lp-dist">{fmtDist(r.dist)}</span>
-                    </div>
-                    {r.addr&&<div className="lp-addr">{r.addr}</div>}
-                    <div className="lp-tags">
-                      <span className="lp-tag" style={{color:c.col,borderColor:c.col+'30',background:c.col+'0d'}}>{c.lbl}</span>
-                      {r.hours&&<span className="lp-tag">{r.hours.substring(0,30)}</span>}
-                      {r.phone&&<span className="lp-tag">📞</span>}
-                    </div>
-                    <div className="lp-acts">
-                      <a href={gm} target="_blank" rel="noopener" className="lp-act pri" onClick={e=>e.stopPropagation()}>Google Maps ↗</a>
-                      {r.website&&<a href={r.website} target="_blank" rel="noopener" className="lp-act" onClick={e=>e.stopPropagation()}>Website ↗</a>}
-                      {r.phone&&<a href={`tel:${r.phone}`} className="lp-act" onClick={e=>e.stopPropagation()}>Call</a>}
-                    </div>
-                    <div style={{marginTop:6,display:'grid',gap:5}} onClick={e=>e.stopPropagation()}>
-                      <select
-                        value={outreachStatus[String(r.id)]||'new'}
-                        onChange={e=>updateOutreachStatus(r.id,e.target.value)}
-                        style={{fontSize:9,padding:'4px 6px',borderRadius:4,background:'rgba(7,20,42,0.7)',border:'1px solid rgba(103,232,249,0.2)',color:'#9cc7eb'}}
-                      >
-                        <option value="new">New</option>
-                        <option value="contacted">Contacted</option>
-                        <option value="interested">Interested</option>
-                        <option value="contracting">Contracting</option>
-                        <option value="closed">Closed</option>
-                      </select>
-                      <textarea
-                        value={outreachNotes[String(r.id)]||''}
-                        onChange={e=>updateOutreachNote(r.id,e.target.value)}
-                        placeholder="Outreach note..."
-                        style={{minHeight:46,resize:'vertical',fontSize:9,padding:'6px 7px',borderRadius:4,background:'rgba(7,20,42,0.6)',border:'1px solid rgba(103,232,249,0.18)',color:'#cce7ff'}}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+              {npiCategory && npiResults.length > 0
+                ? npiResults.map((p)=>{
+                    const c=NPI_CATEGORY_MAP[npiCategory];
+                    const explanation = buildExplanation(p);
+                    return (
+                      <div key={p.id} className="lp-item">
+                        <div className="lp-row1">
+                          <span className="lp-ico">{c?.icon}</span>
+                          <span className="lp-name" style={{fontSize:10.5}}>{p.name}</span>
+                          <span className="lp-dist" style={{fontSize:8,color:'#89d4fe',fontFamily:"'IBM Plex Mono',monospace"}}>Score {p.score}</span>
+                        </div>
+                        <div className="lp-addr" style={{fontSize:9,color:'#4a6888'}}>{p.city ? `${p.city}, ${p.state} ${p.postalCode}` : p.address}</div>
+                        {p.distanceMiles !== undefined && (
+                          <div style={{fontSize:8.5,color:'#3d5478',marginTop:2}}>📍 {p.distanceMiles.toFixed(1)} mi</div>
+                        )}
+                        <div className="lp-tags" style={{marginTop:4,flexWrap:'wrap'}}>
+                          <span className="lp-tag" style={{color:c?.color,borderColor:(c?.color||'')+'30',background:(c?.color||'')+'0d'}}>{c?.label}</span>
+                          {p.confidence==='high'&&<span className="lp-tag" style={{color:'#34d399',borderColor:'rgba(52,211,153,0.3)',background:'rgba(52,211,153,0.08)'}}>High Confidence</span>}
+                          {p.confidence==='medium'&&<span className="lp-tag" style={{color:'#fbbf24',borderColor:'rgba(251,191,36,0.3)',background:'rgba(251,191,36,0.08)'}}>Medium Confidence</span>}
+                          {p.confidence==='low'&&<span className="lp-tag" style={{color:'#fca5a5',borderColor:'rgba(252,165,165,0.3)',background:'rgba(239,68,68,0.08)'}}>Low Confidence</span>}
+                          {(p._rawSources||[]).map((src)=>{
+                            const badge = SOURCE_BADGES.find((b)=>b.id===src.toLowerCase()||src.toLowerCase().includes(b.id));
+                            return badge ? (
+                              <span key={src} className="lp-tag" style={{fontSize:7.5,padding:'1px 4px',color:badge.color,borderColor:badge.color+'44',background:badge.color+'11'}}>{badge.label}</span>
+                            ) : null;
+                          })}
+                        </div>
+                        <div style={{marginTop:5,fontSize:8,color:'#5d7a9e',lineHeight:1.5}}>
+                          {explanation}
+                        </div>
+                        {p.evidence && p.evidence.length > 0 && (
+                          <div style={{marginTop:4,fontSize:7.5,color:'#eab308',background:'rgba(234,179,8,0.06)',border:'1px solid rgba(234,179,8,0.15)',borderRadius:3,padding:'3px 5px',lineHeight:1.4}}>
+                            <strong>Website evidence:</strong> {p.evidence[0].serviceDetected} — "{p.evidence[0].evidenceTextSnippet.substring(0,60)}..."
+                          </div>
+                        )}
+                        <div className="lp-acts">
+                          {p.sourceUrl&&<a href={p.sourceUrl} target="_blank" rel="noopener" className="lp-act pri" onClick={e=>e.stopPropagation()}>{p.source} ↗</a>}
+                          {p.phone&&<a href={`tel:${p.phone}`} className="lp-act" onClick={e=>e.stopPropagation()}>Call</a>}
+                          {p.website&&<a href={p.website} target="_blank" rel="noopener" className="lp-act" onClick={e=>e.stopPropagation()}>Website ↗</a>}
+                        </div>
+                      </div>
+                    );
+                  })
+                : filterAndSortLiveResults(liveResults).map((r:any)=>{
+                    const c=CATS[r.cat]||CATS.clinic;
+                    const gm=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.name+(r.addr?' '+r.addr:''))}`;
+                    return (
+                      <div key={r.id} className={`lp-item${liveHighlightId===r.id?' hl':''}`} onClick={()=>lpFly(r.lat,r.lng,r.id)}>
+                        <div className="lp-row1">
+                          <span className="lp-ico">{c.ico}</span>
+                          <span className="lp-name">{r.name}</span>
+                          <span className="lp-dist">{fmtDist(r.dist)}</span>
+                        </div>
+                        {r.addr&&<div className="lp-addr">{r.addr}</div>}
+                        <div className="lp-tags">
+                          <span className="lp-tag" style={{color:c.col,borderColor:c.col+'30',background:c.col+'0d'}}>{c.lbl}</span>
+                          {r.hours&&<span className="lp-tag">{r.hours.substring(0,30)}</span>}
+                          {r.phone&&<span className="lp-tag">📞</span>}
+                        </div>
+                        <div className="lp-acts">
+                          <a href={gm} target="_blank" rel="noopener" className="lp-act pri" onClick={e=>e.stopPropagation()}>Google Maps ↗</a>
+                          {r.website&&<a href={r.website} target="_blank" rel="noopener" className="lp-act" onClick={e=>e.stopPropagation()}>Website ↗</a>}
+                          {r.phone&&<a href={`tel:${r.phone}`} className="lp-act" onClick={e=>e.stopPropagation()}>Call</a>}
+                        </div>
+                        <div style={{marginTop:6,display:'grid',gap:5}} onClick={e=>e.stopPropagation()}>
+                          <select
+                            value={outreachStatus[String(r.id)]||'new'}
+                            onChange={e=>updateOutreachStatus(r.id,e.target.value)}
+                            style={{fontSize:9,padding:'4px 6px',borderRadius:4,background:'rgba(7,20,42,0.7)',border:'1px solid rgba(103,232,249,0.2)',color:'#9cc7eb'}}
+                          >
+                            <option value="new">New</option>
+                            <option value="contacted">Contacted</option>
+                            <option value="interested">Interested</option>
+                            <option value="contracting">Contracting</option>
+                            <option value="closed">Closed</option>
+                          </select>
+                          <textarea
+                            value={outreachNotes[String(r.id)]||''}
+                            onChange={e=>updateOutreachNote(r.id,e.target.value)}
+                            placeholder="Outreach note..."
+                            style={{minHeight:46,resize:'vertical',fontSize:9,padding:'6px 7px',borderRadius:4,background:'rgba(7,20,42,0.6)',border:'1px solid rgba(103,232,249,0.18)',color:'#cce7ff'}}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
             </div>
           )}
         </div>

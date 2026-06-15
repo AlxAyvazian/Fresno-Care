@@ -6,6 +6,8 @@ import liveFinderRouter from "./liveFinder";
 import priceFinderUnifiedRouter from "./priceFinderUnified";
 import priceFinderRouter from "./priceFinder";
 import searchHistoryRouter from "./searchHistory";
+import providerSourcesRouter from "./providerSources";
+import providerSourcesImportRouter from "./providerSourcesImport";
 
 const router: IRouter = Router();
 
@@ -16,5 +18,7 @@ router.use(liveFinderRouter);
 router.use(priceFinderUnifiedRouter);
 router.use(priceFinderRouter);
 router.use(searchHistoryRouter);
+router.use(providerSourcesRouter);
+router.use(providerSourcesImportRouter);
 
 export default router;

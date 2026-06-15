@@ -1,0 +1,121 @@
+export const SERVICE_SOURCE_ROUTING: Record<string, string[]> = {
+  dotExam: [
+    'npi',
+    'fmcsa',
+    'concentra',
+    'medexpress',
+    'fastpace',
+    'carenow',
+    'website',
+  ],
+  faamedical: [
+    'npi',
+    'faa',
+    'website',
+  ],
+  physicalExam: [
+    'npi',
+    'concentra',
+    'medexpress',
+    'fastpace',
+    'carenow',
+    'nova',
+    'workcare',
+    'premise',
+    'marathon',
+    'website',
+  ],
+  urgentCare: [
+    'npi',
+    'afc_urgent_care',
+    'concentra',
+    'medexpress',
+    'fastpace',
+    'carenow',
+    'website',
+  ],
+  mammogram: [
+    'npi',
+    'fda_mqsa',
+    'acr',
+    'website',
+  ],
+  radiology: [
+    'npi',
+    'acr',
+    'iac',
+    'website',
+  ],
+  stressTest: [
+    'npi',
+    'acr',
+    'iac',
+    'website',
+  ],
+  drugscreen: [
+    'npi',
+    'quest',
+    'labcorp',
+    'escreen',
+    'formfox',
+    'disa',
+    'website',
+  ],
+  lab: [
+    'npi',
+    'quest',
+    'labcorp',
+    'crl',
+    'website',
+  ],
+  audiology: [
+    'npi',
+    'concentra',
+    'medexpress',
+    'website',
+  ],
+  dental: [
+    'npi',
+    'website',
+  ],
+  physio: [
+    'npi',
+    'website',
+  ],
+  chiropractic: [
+    'npi',
+    'website',
+  ],
+  behavioral: [
+    'npi',
+    'website',
+  ],
+  pulmonary: [
+    'npi',
+    'website',
+  ],
+  occupational: [
+    'npi',
+    'concentra',
+    'medexpress',
+    'fastpace',
+    'carenow',
+    'nova',
+    'workcare',
+    'premise',
+    'marathon',
+    'website',
+  ],
+  primaryCare: [
+    'npi',
+    'concentra',
+    'medexpress',
+    'fastpace',
+    'carenow',
+    'website',
+  ],
+};
+
+export function getAdaptersForServiceType(serviceType: string): string[] {
+  return SERVICE_SOURCE_ROUTING[serviceType] || ['npi', 'website'];
+}
