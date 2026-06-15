@@ -18,6 +18,21 @@ export interface NpiSearchParams {
   limit?: number;
 }
 
+export interface NpiCustomSearchParams {
+  city: string;
+  state: string;
+  centerLat: number;
+  centerLng: number;
+  limit?: number;
+  // Custom NPI API parameters
+  organization_name?: string;
+  first_name?: string;
+  last_name?: string;
+  taxonomy_description?: string;
+  taxonomy_code?: string;
+  enumeration_type?: 'NPI-1' | 'NPI-2';
+}
+
 export interface NpiSearchResponse {
   results: NormalizedNpiProvider[];
   rawCount: number;
@@ -108,6 +123,91 @@ export async function searchNpiByCategory(params: NpiSearchParams): Promise<NpiS
     finalMarkerCount,
     apiUrls,
   };
+}
+
+export async function searchNpiCustom(params: NpiCustomSearchParams): Promise<NpiSearchResponse> {
+  const { city, state, centerLat, centerLng, limit = 200, ...apiParams } = params;
+
+  log('Custom NPI search with parameters', apiParams);
+
+  // Build query parameters - only include non-empty values
+  const queryParams = new URLSearchParams({
+    version: '2.1',
+    city: city.trim(),
+    state: state.trim().toUpperCase(),
+    limit: String(limit),
+  });
+
+  // Add custom parameters if provided
+  if (apiParams.organization_name) queryParams.set('organization_name', apiParams.organization_name);
+  if (apiParams.first_name) queryParams.set('first_name', apiParams.first_name);
+  if (apiParams.last_name) queryParams.set('last_name', apiParams.last_name);
+  if (apiParams.taxonomy_description) queryParams.set('taxonomy_description', apiParams.taxonomy_description);
+  if (apiParams.taxonomy_code) queryParams.set('taxonomy', apiParams.taxonomy_code);
+  if (apiParams.enumeration_type) queryParams.set('enumeration_type', apiParams.enumeration_type);
+
+  const url = `https://npiregistry.cms.hhs.gov/api/?${queryParams.toString()}`;
+  log('Generated NPI API URL', url);
+
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!resp.ok) throw new Error(`NPI ${resp.status}`);
+    const data = (await resp.json()) as { results?: unknown[]; Errors?: Array<{ description: string }> };
+    
+    if (data.Errors && data.Errors.length > 0) {
+      const errorMsg = data.Errors.map((e) => e.description).join('; ');
+      log('NPI API error', errorMsg);
+      return {
+        results: [],
+        rawCount: 0,
+        normalizedCount: 0,
+        geocodedCount: 0,
+        finalMarkerCount: 0,
+        apiUrls: [url],
+        error: errorMsg,
+      };
+    }
+
+    const allRaw = data.results || [];
+    log('Number of raw NPI results', allRaw.length);
+
+    // Normalize
+    const normalized = normalizeNpiResults(allRaw);
+    log('Number of normalized results', normalized.length);
+
+    // Dedupe by NPI
+    const deduped = dedupeByNpi(normalized);
+    log('Number of deduped results', deduped.length);
+
+    // Geocode addresses
+    const withCoords = await geocodeProviders(deduped, centerLat, centerLng);
+    const geocodedCount = withCoords.filter((p) => p.lat !== null && p.lng !== null).length;
+    log('Number of geocoded results', geocodedCount);
+
+    const finalMarkerCount = withCoords.length;
+    log('Number of rendered markers', finalMarkerCount);
+
+    return {
+      results: withCoords,
+      rawCount: allRaw.length,
+      normalizedCount: normalized.length,
+      geocodedCount,
+      finalMarkerCount,
+      apiUrls: [url],
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    log('Custom NPI search failed', errorMsg);
+    return {
+      results: [],
+      rawCount: 0,
+      normalizedCount: 0,
+      geocodedCount: 0,
+      finalMarkerCount: 0,
+      apiUrls: [url],
+      error: errorMsg,
+    };
+  }
 }
 
 function normalizeNpiResults(raw: unknown[]): NormalizedNpiProvider[] {
