@@ -376,6 +376,104 @@ function countProvidersInRadius(lat:number,lng:number,examKey:string) {
   return{citiesInRadius:nearby.length,estProviders:Math.max(1,estProviders),avgDifficulty:avgDiff};
 }
 
+// ── Dependency-free grid clustering ──────────────────────────────────────────
+// Aggregates large point sets into zoom-aware cluster bubbles so dense layers
+// (e.g. BlueHive ~5.7k, Dentists ~104k) no longer render as a single blob.
+// Below `expandZoom` points are grouped into pixel-grid cells; at/above it the
+// individual markers (with their popups) are shown. Re-renders on map move/zoom.
+interface ClusterRendererOptions {
+  color: string;
+  glow: boolean;
+  expandZoom?: number;   // zoom at which individual pins appear
+  cellPx?: number;       // grid cell size in screen pixels
+  badgeLabel: string;    // accessibility / popup label
+  buildPopup: (p: any) => string;
+}
+
+function createClusteredLayer(
+  map: L.Map,
+  points: any[],
+  opts: ClusterRendererOptions,
+): { group: L.LayerGroup; destroy: () => void } {
+  const group = L.layerGroup().addTo(map);
+  const expandZoom = opts.expandZoom ?? 11;
+  const cellPx = opts.cellPx ?? 62;
+  const valid = points.filter(p => p && p.lat != null && p.lng != null && isValidCoord(p.lat, p.lng));
+
+  function dotHtml(): string {
+    return `<div style="width:10px;height:10px;border-radius:50%;background:${opts.color};${opts.glow ? `box-shadow:0 0 6px ${opts.color},0 0 12px ${opts.color}66;` : 'box-shadow:0 0 0 1px rgba(255,255,255,0.3);'}cursor:pointer;"></div>`;
+  }
+  function clusterHtml(count: number): string {
+    const size = count >= 1000 ? 46 : count >= 250 ? 40 : count >= 50 ? 34 : 28;
+    const txt = count >= 1000 ? `${(count / 1000).toFixed(count >= 10000 ? 0 : 1)}k` : String(count);
+    return `<div style="width:${size}px;height:${size}px;border-radius:50%;display:flex;align-items:center;justify-content:center;`
+      + `background:radial-gradient(circle at 35% 30%, ${opts.color}cc, ${opts.color}66);`
+      + `border:1.5px solid rgba(255,255,255,0.55);color:#fff;font-family:'IBM Plex Mono',monospace;font-weight:700;`
+      + `font-size:${size >= 40 ? 12 : 10}px;box-shadow:0 0 0 4px ${opts.color}22,0 2px 10px rgba(0,0,0,0.45);cursor:pointer;">${txt}</div>`;
+  }
+
+  function render() {
+    group.clearLayers();
+    if (!valid.length) return;
+    const zoom = map.getZoom();
+    const bounds = map.getBounds().pad(0.35);
+    const visible = valid.filter(p => bounds.contains([p.lat, p.lng] as L.LatLngTuple));
+
+    if (zoom >= expandZoom) {
+      for (const p of visible) {
+        const mk = L.marker([p.lat, p.lng], {
+          icon: L.divIcon({ className: '', html: dotHtml(), iconSize: [10, 10], iconAnchor: [5, 5] }),
+          zIndexOffset: 500,
+        });
+        mk.bindPopup(opts.buildPopup(p));
+        group.addLayer(mk);
+      }
+      return;
+    }
+
+    const cells = new Map<string, { sx: number; sy: number; count: number; sample: any }>();
+    for (const p of visible) {
+      const pt = map.project([p.lat, p.lng] as L.LatLngTuple, zoom);
+      const key = `${Math.floor(pt.x / cellPx)}:${Math.floor(pt.y / cellPx)}`;
+      const c = cells.get(key);
+      if (c) { c.sx += pt.x; c.sy += pt.y; c.count++; }
+      else cells.set(key, { sx: pt.x, sy: pt.y, count: 1, sample: p });
+    }
+
+    cells.forEach(c => {
+      const center = map.unproject([c.sx / c.count, c.sy / c.count] as L.PointTuple, zoom);
+      if (c.count === 1) {
+        const p = c.sample;
+        const mk = L.marker([p.lat, p.lng], {
+          icon: L.divIcon({ className: '', html: dotHtml(), iconSize: [10, 10], iconAnchor: [5, 5] }),
+          zIndexOffset: 500,
+        });
+        mk.bindPopup(opts.buildPopup(p));
+        group.addLayer(mk);
+      } else {
+        const size = c.count >= 1000 ? 46 : c.count >= 250 ? 40 : c.count >= 50 ? 34 : 28;
+        const mk = L.marker(center, {
+          icon: L.divIcon({ className: '', html: clusterHtml(c.count), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
+          zIndexOffset: 600,
+          title: `${c.count} ${opts.badgeLabel}`,
+        });
+        mk.on('click', () => map.flyTo(center, Math.min(map.getMaxZoom(), zoom + 2), { duration: 0.8 }));
+        group.addLayer(mk);
+      }
+    });
+  }
+
+  render();
+  map.on('moveend zoomend', render);
+  return {
+    group,
+    destroy() {
+      map.off('moveend zoomend', render);
+      try { map.removeLayer(group); } catch { /* noop */ }
+    },
+  };
+}
+
 function classifyFacility(tags:any):string {
   const a=(tags.amenity||'').toLowerCase(),h=(tags.healthcare||'').toLowerCase(),
     n=(tags.name||'').toLowerCase(),o=(tags.office||'').toLowerCase(),
@@ -548,7 +646,12 @@ interface ReportData {
   recommendation:number;isGeo:boolean;
   prov:number|null;wait:number|null;tier:number|null;
   queryCity:string;queryState:string;
+  isIntl?:boolean;lat?:number;lng?:number;
 }
+
+// Shown wherever U.S.-only coverage scoring would otherwise appear for a
+// location outside the United States.
+const INTL_COVERAGE_NOTICE = 'International location — U.S. coverage scoring is not applicable.';
 
 interface VerifiedProviderRef {
   name:string;
@@ -580,7 +683,51 @@ function examTaxonomyHint(examKey:string):string {
   return map[examKey] || 'Clinic/Center';
 }
 
+function generateInternationalReportHtml(data:ReportData):string {
+  const today=new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+  const coords=(data.lat!=null&&data.lng!=null)?`${data.lat.toFixed(4)}, ${data.lng.toFixed(4)}`:'—';
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Location Report — ${data.locName}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Inter',sans-serif;background:#f8fafc;color:#1e293b;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .page{width:780px;margin:0 auto;background:white;min-height:100vh;}
+  .header{background:#040c1a;padding:22px 36px;display:flex;justify-content:space-between;align-items:center;}
+  .org-name{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#89d4fe;letter-spacing:3px;text-transform:uppercase;margin-bottom:5px;}
+  .doc-title{font-size:18px;font-weight:700;color:#f0f6ff;}
+  .doc-subtitle{font-size:11px;color:#4a6888;margin-top:3px;font-family:'IBM Plex Mono',monospace;}
+  .doc-date{font-size:10px;color:#3d5478;font-family:'IBM Plex Mono',monospace;letter-spacing:0.5px;text-align:right;}
+  .location-hero{padding:24px 36px 20px;border-bottom:1px solid #e2e8f0;background:linear-gradient(135deg,#f8fafc 0%,#f4f0ff 100%);}
+  .loc-badge{display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:2px;text-transform:uppercase;padding:3px 10px;border-radius:2px;margin-bottom:10px;font-weight:600;background:rgba(124,58,237,0.10);color:#6d28d9;border:1px solid rgba(124,58,237,0.28);}
+  .loc-name{font-size:28px;font-weight:700;color:#0f172a;letter-spacing:-0.5px;margin-bottom:4px;}
+  .loc-meta{font-size:12px;color:#64748b;font-family:'IBM Plex Mono',monospace;}
+  .section{padding:20px 36px;border-bottom:1px solid #f1f5f9;}
+  .section-title{font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#94a3b8;font-family:'IBM Plex Mono',monospace;margin-bottom:14px;}
+  .notice{padding:14px 16px;border-radius:5px;border-left:3px solid #7c3aed;background:rgba(124,58,237,0.06);font-size:12px;line-height:1.7;color:#334155;}
+  .footer{padding:16px 36px;background:#f8fafc;border-top:1px solid #e2e8f0;}
+  .footer-brand{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#94a3b8;letter-spacing:1.5px;}
+  @media print{body{background:white;}.page{width:100%;box-shadow:none;}}
+</style></head><body><div class="page">
+  <div class="header">
+    <div><div class="org-name">Occu-Med · Network Management</div><div class="doc-title">Location Report</div><div class="doc-subtitle">INTERNATIONAL LOCATION</div></div>
+    <div><div class="doc-date">${today}</div></div>
+  </div>
+  <div class="location-hero">
+    <div class="loc-badge">🌐 International</div>
+    <div class="loc-name">${data.locName}</div>
+    <div class="loc-meta">Coordinates: ${coords}</div>
+  </div>
+  <div class="section">
+    <div class="section-title">Coverage Scoring</div>
+    <div class="notice"><strong>${INTL_COVERAGE_NOTICE}</strong><br/>
+    Difficulty scores, estimated provider density, and nearest-market suggestions are derived from U.S.-only datasets and are intentionally omitted for locations outside the United States. Use the in-app Live Finder (OpenStreetMap) to identify real facilities near this location.</div>
+  </div>
+  <div class="footer"><div class="footer-brand">OCCU-MED NETWORK MANAGEMENT · GENERATED ${today}</div></div>
+</div></body></html>`;
+}
+
 function generateReportHtml(data:ReportData,evidence:EvidencePayload|null):string {
+  if(data.isIntl) return generateInternationalReportHtml(data);
   const {locName,stateCode,examKey,scores,nearby,recommendation,isGeo,prov,wait,tier}=data;
   const today=new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
   const examLabel=MLBL[examKey]||'All Services';
@@ -730,7 +877,7 @@ export default function App() {
   const dropPinRef = useRef<L.Marker|null>(null);
   const popDensityLayerRef = useRef<L.LayerGroup|null>(null);
   const clinicLayerRef = useRef<L.LayerGroup|null>(null);
-  const blueHiveLayerRef = useRef<L.LayerGroup|null>(null);
+  const blueHiveLayerRef = useRef<ReturnType<typeof createClusteredLayer>|null>(null);
   const savedRadiusLayerRef = useRef<L.LayerGroup|null>(null);
   const rawStateFeaturesRef = useRef<any[]>([]);
   const clinicFileInputRef = useRef<HTMLInputElement>(null);
@@ -836,7 +983,7 @@ export default function App() {
   const [blueHiveData, setBlueHiveData] = useState<any[]>([]);
   const [showDentists, setShowDentists] = useState(false);
   const [dentistData, setDentistData] = useState<any[]>([]);
-  const dentistLayerRef = useRef<L.LayerGroup|null>(null);
+  const dentistLayerRef = useRef<ReturnType<typeof createClusteredLayer>|null>(null);
   const [outreachNotes, setOutreachNotes] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_notes')||'{}'); } catch { return {}; } });
   const [outreachStatus, setOutreachStatus] = useState<Record<string,string>>(() => { try { return JSON.parse(localStorage.getItem('outreach_status')||'{}'); } catch { return {}; } });
   const [dropUi, setDropUi] = useState({panelOpen:false, exportLoading:false, status:''});
@@ -1451,24 +1598,17 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[uploadedClinics, showUploadedClinics, showGlowPoints]);
 
-  // ── BlueHive provider pins ────────────────────────────────────────────────
+  // ── BlueHive provider pins (clustered) ────────────────────────────────────
   useEffect(()=>{
     const map = mapRef.current;
     if (!map) return;
-    if (blueHiveLayerRef.current) { map.removeLayer(blueHiveLayerRef.current); blueHiveLayerRef.current = null; }
+    if (blueHiveLayerRef.current) { blueHiveLayerRef.current.destroy(); blueHiveLayerRef.current = null; }
     if (!showBlueHive || blueHiveData.length===0) return;
-    const grp = L.layerGroup();
-    blueHiveData.forEach((p:any,i:number)=>{
-      if (p.lat===null || p.lng===null) return;
-      const mk = L.marker([p.lat, p.lng], {
-        icon: L.divIcon({
-          className: '',
-          html: `<div style="width:10px;height:10px;border-radius:50%;background:#3b82f6;${showGlowPoints?'box-shadow:0 0 6px #3b82f6,0 0 12px #3b82f666;':'box-shadow:0 0 0 1px rgba(255,255,255,0.3);'}cursor:pointer;"></div>`,
-          iconSize: [10,10], iconAnchor: [5,5],
-        }),
-        zIndexOffset: 500,
-      });
-      mk.bindPopup(`<div style="font-family:Inter,sans-serif;padding:10px 12px;min-width:200px;">
+    blueHiveLayerRef.current = createClusteredLayer(map, blueHiveData, {
+      color: '#3b82f6',
+      glow: showGlowPoints,
+      badgeLabel: 'BlueHive providers',
+      buildPopup: (p:any)=>`<div style="font-family:Inter,sans-serif;padding:10px 12px;min-width:200px;">
         <div style="font-size:12px;font-weight:700;color:#e2f0ff;margin-bottom:4px">${p.clinic_name||'Unnamed'}</div>
         ${p.address_1?`<div style="font-size:9.5px;color:#4a6888">📍 ${p.address_1}${p.city?', '+p.city:''}${p.state?' '+p.state:''}${p.zip?' '+p.zip:''}</div>`:''}
         ${p.phone?`<div style="font-size:9.5px;color:#67e8f9;margin-top:2px">📞 <a href="tel:${p.phone}" style="color:#67e8f9;text-decoration:none">${p.phone}</a></div>`:''}
@@ -1478,32 +1618,23 @@ export default function App() {
           <div style="width:8px;height:8px;border-radius:50%;background:#3b82f6;box-shadow:0 0 6px #3b82f6;flex-shrink:0;margin-top:2px"></div>
           <span style="font-size:8.5px;color:#3d5478;font-family:'IBM Plex Mono',monospace">BLUEHIVE PROVIDER</span>
         </div>
-      </div>`);
-      grp.addLayer(mk);
+      </div>`,
     });
-    grp.addTo(map);
-    blueHiveLayerRef.current = grp;
+    return ()=>{ if (blueHiveLayerRef.current) { blueHiveLayerRef.current.destroy(); blueHiveLayerRef.current = null; } };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[showBlueHive, blueHiveData, showGlowPoints]);
 
-  // ── Dentist provider pins ───────────────────────────────────────────────────
+  // ── Dentist provider pins (clustered) ───────────────────────────────────────
   useEffect(()=>{
     const map = mapRef.current;
     if (!map) return;
-    if (dentistLayerRef.current) { map.removeLayer(dentistLayerRef.current); dentistLayerRef.current = null; }
+    if (dentistLayerRef.current) { dentistLayerRef.current.destroy(); dentistLayerRef.current = null; }
     if (!showDentists || dentistData.length===0) return;
-    const grp = L.layerGroup();
-    dentistData.forEach((p:any,i:number)=>{
-      if (p.lat===null || p.lng===null) return;
-      const mk = L.marker([p.lat, p.lng], {
-        icon: L.divIcon({
-          className: '',
-          html: `<div style="width:10px;height:10px;border-radius:50%;background:#06b6d4;${showGlowPoints?'box-shadow:0 0 6px #06b6d4,0 0 12px #06b6d466;':'box-shadow:0 0 0 1px rgba(255,255,255,0.3);'}cursor:pointer;"></div>`,
-          iconSize: [10,10], iconAnchor: [5,5],
-        }),
-        zIndexOffset: 500,
-      });
-      mk.bindPopup(`<div style="font-family:Inter,sans-serif;padding:10px 12px;min-width:200px;">
+    dentistLayerRef.current = createClusteredLayer(map, dentistData, {
+      color: '#06b6d4',
+      glow: showGlowPoints,
+      badgeLabel: 'dentists',
+      buildPopup: (p:any)=>`<div style="font-family:Inter,sans-serif;padding:10px 12px;min-width:200px;">
         <div style="font-size:12px;font-weight:700;color:#e2f0ff;margin-bottom:4px">${p.clinic_name||'Unnamed'}</div>
         ${p.address_1?`<div style="font-size:9.5px;color:#4a6888">📍 ${p.address_1}${p.city?', '+p.city:''}${p.state?' '+p.state:''}${p.zip?' '+p.zip:''}</div>`:''}
         ${p.phone?`<div style="font-size:9.5px;color:#67e8f9;margin-top:2px">📞 <a href="tel:${p.phone}" style="color:#67e8f9;text-decoration:none">${p.phone}</a></div>`:''}
@@ -1513,11 +1644,9 @@ export default function App() {
           <div style="width:8px;height:8px;border-radius:50%;background:#06b6d4;box-shadow:0 0 6px #06b6d4;flex-shrink:0;margin-top:2px"></div>
           <span style="font-size:8.5px;color:#3d5478;font-family:'IBM Plex Mono',monospace">DENTIST</span>
         </div>
-      </div>`);
-      grp.addLayer(mk);
+      </div>`,
     });
-    grp.addTo(map);
-    dentistLayerRef.current = grp;
+    return ()=>{ if (dentistLayerRef.current) { dentistLayerRef.current.destroy(); dentistLayerRef.current = null; } };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[showDentists, dentistData, showGlowPoints]);
 
@@ -1814,7 +1943,7 @@ export default function App() {
     const nearby=findNearby(lat,lng,match,rpExam);
     const scores=ALL_METRICS.map(mk=>({key:mk,v:getVal(match,mk)}));
     const nearbyData=LOCS.filter(l=>l!==match&&l[4]<=2).map(l=>{const dist=approxMiles(l[2],l[3],lat,lng);return{name:l[0],state:l[1],dist,v:getVal(l,rpExam)};}).filter(l=>l.dist<250&&l.dist>0).sort((a,b)=>a.dist-b.dist).slice(0,4);
-    const rd:ReportData={locName:`${name}, ${state}`,stateCode:state,examKey:rpExam,scores,nearby:nearbyData,recommendation:v,isGeo:false,prov,wait,tier,queryCity:name,queryState:state};
+    const rd:ReportData={locName:`${name}, ${state}`,stateCode:state,examKey:rpExam,scores,nearby:nearbyData,recommendation:v,isGeo:false,prov,wait,tier,queryCity:name,queryState:state,isIntl:false,lat,lng};
     setLastReportData(rd);
     const map=mapRef.current;
     if(map) { map.flyTo([lat,lng],tier<=2?9:11,{duration:1.2}); drawRadiusCircle(lat,lng); }
@@ -1852,13 +1981,14 @@ export default function App() {
 
   function renderGeocodedResult(geo:any) {
     const {lat,lng,city,state,zip,display}=geo;
+    if(!isLikelyUsCoord(lat,lng)){ renderInternationalResult(geo); return; }
     const v=estimateDifficultyFromNeighbors(lat,lng,rpExam);
     const col=DCOL[v];
     const stD=SD[state]||null;
     const nearby=findNearby(lat,lng,null,rpExam);
     const scores=ALL_METRICS.map(mk=>({key:mk,v:estimateDifficultyFromNeighbors(lat,lng,mk)}));
     const nearbyData=LOCS.filter(l=>l[4]<=2).map(l=>{const dist=approxMiles(l[2],l[3],lat,lng);return{name:l[0],state:l[1],dist,v:getVal(l,rpExam)};}).filter(l=>l.dist<250&&l.dist>0).sort((a,b)=>a.dist-b.dist).slice(0,4);
-    const rd:ReportData={locName:`${city||display}${state?', '+state:''}`,stateCode:state||'',examKey:rpExam,scores,nearby:nearbyData,recommendation:v,isGeo:true,prov:stD?stD.prov:null,wait:stD?stD.wait:null,tier:null,queryCity:city||display,queryState:state||''};
+    const rd:ReportData={locName:`${city||display}${state?', '+state:''}`,stateCode:state||'',examKey:rpExam,scores,nearby:nearbyData,recommendation:v,isGeo:true,prov:stD?stD.prov:null,wait:stD?stD.wait:null,tier:null,queryCity:city||display,queryState:state||'',isIntl:false,lat,lng};
     setLastReportData(rd);
     const map=mapRef.current;
     if(map){ map.flyTo([lat,lng],11,{duration:1.2}); drawRadiusCircle(lat,lng); }
@@ -1895,6 +2025,39 @@ export default function App() {
         <DriveTimeBox fromLat={lat} fromLng={lng} fromName={`${city}, ${state}`} locB={null}/>
         {nearerItems.length>0&&<NearestEasier items={nearerItems} onFly={flyToNearer}/>}
         <button className="export-btn" onClick={()=>doExportReport(rd)}>↓ EXPORT PDF REPORT</button>
+      </div>
+    );
+  }
+
+  // International (non-U.S.) coverage lookup. The U.S.-only difficulty model,
+  // scorecard, nearest markets, provider density, and nearest-easier suggestions
+  // are intentionally NOT computed or shown here — only geocode, map fly-to, pin,
+  // and a Live Finder handoff are offered.
+  function renderInternationalResult(geo:any) {
+    const {lat,lng,city,state,zip,display}=geo;
+    const label=`${city||display}${state?', '+state:''}`;
+    const rd:ReportData={locName:label,stateCode:state||'',examKey:rpExam,scores:[],nearby:[],recommendation:0,isGeo:true,prov:null,wait:null,tier:null,queryCity:city||display,queryState:state||'',isIntl:true,lat,lng};
+    setLastReportData(rd);
+    const map=mapRef.current;
+    if(map){ map.flyTo([lat,lng],11,{duration:1.2}); drawRadiusCircle(lat,lng); }
+    placeCustomPin(lat,lng,`${city||display}${zip?', '+zip:''}`,'#89d4fe');
+    setDriveLocA(a=>{ setDriveLocB(a||null); return {name:label,lat,lng}; });
+    setRpResult(
+      <div className="fadein">
+        <div className="rp-divider"/>
+        <div className="rp-city-name">{city||display}</div>
+        <div className="rp-city-meta" style={{marginBottom:4}}>{state}{zip?' · '+zip:''} · <span style={{color:'var(--accent2)'}}>🌐 INTERNATIONAL</span></div>
+        <div className="rp-alert" style={{background:'rgba(196,168,255,0.10)',border:'1px solid rgba(196,168,255,0.30)',color:'var(--accent2)'}}>
+          {INTL_COVERAGE_NOTICE}
+        </div>
+        <div style={{fontSize:'9.5px',color:'#8fb3d8',marginBottom:8,padding:'6px 9px',background:'rgba(137,212,254,0.06)',borderRadius:5,lineHeight:1.55}}>
+          Difficulty scores, provider density, and nearest-market suggestions are
+          built from U.S.-only datasets and are not shown outside the United States.
+          Use Live Finder below to search real facilities here via OpenStreetMap.
+        </div>
+        <button className="export-btn" style={{marginBottom:8}} onClick={()=>{ setLiveOpen(true); doLiveSearch(lat,lng); }}>📡 SEARCH PROVIDERS HERE (LIVE FINDER)</button>
+        <DriveTimeBox fromLat={lat} fromLng={lng} fromName={label} locB={null}/>
+        <button className="export-btn" onClick={()=>doExportReport(rd)}>↓ EXPORT LOCATION REPORT</button>
       </div>
     );
   }
@@ -1992,9 +2155,10 @@ export default function App() {
   }
 
   async function doExportReport(rd:ReportData) {
-    const evidence=await fetchVerifiedEvidence(rd);
+    // U.S.-only NPI evidence is not fetched for international locations.
+    const evidence=rd.isIntl?null:await fetchVerifiedEvidence(rd);
     const html=generateReportHtml(rd,evidence);
-    const name=`OccuMed_Coverage_${rd.locName.replace(/[^a-z0-9]/gi,'_')}.html`;
+    const name=`OccuMed_${rd.isIntl?'Location':'Coverage'}_${rd.locName.replace(/[^a-z0-9]/gi,'_')}.html`;
     setPdfHtml(html);
     setPdfDlName(name);
     setShowPdf(true);
