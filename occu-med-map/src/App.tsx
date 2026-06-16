@@ -80,25 +80,25 @@ const OVERPASS_ENDPOINTS = [
 const RADIUS_COLORS = ['#f43f5e','#f97316','#facc15','#22c55e','#06b6d4','#3b82f6','#a855f7','#ec4899'];
 
 const CATS: Record<string,{ico:string;col:string;lbl:string}> = {
-  hospital:{ico:'🏥',col:'#ef4444',lbl:'Hospital'},
-  clinic:  {ico:'🏨',col:'#f97316',lbl:'Clinic'},
-  urgent:  {ico:'⚡',col:'#f59e0b',lbl:'Urgent Care'},
-  doctor:  {ico:'👨‍⚕️',col:'#84cc16',lbl:'Doctor / GP'},
-  physical:{ico:'🩺',col:'#22d3ee',lbl:'Physical Exam'},
-  faa:     {ico:'✈️',col:'#38bdf8',lbl:'FAA Exam'},
-  dotmd:   {ico:'🚛',col:'#facc15',lbl:'DOT MD/DO/PA/NP'},
-  dotchiro:{ico:'🦴',col:'#fb7185',lbl:'DOT Chiropractor'},
-  mammogram:{ico:'🎀',col:'#f472b6',lbl:'Mammogram'},
-  pharmacy:{ico:'💊',col:'#10b981',lbl:'Pharmacy'},
-  dentist: {ico:'🦷',col:'#06b6d4',lbl:'Dentist'},
-  audiology:{ico:'🎧',col:'#60a5fa',lbl:'Audiology'},
-  stress:  {ico:'🫀',col:'#f97316',lbl:'Stress Test'},
-  drugscreen:{ico:'🧪',col:'#a78bfa',lbl:'Drug Screen'},
-  eye:     {ico:'👁️',col:'#3b82f6',lbl:'Eye Care'},
-  physio:  {ico:'🦴',col:'#8b5cf6',lbl:'Physical Therapy'},
-  lab:     {ico:'🧪',col:'#ec4899',lbl:'Lab / Diagnostics'},
-  blood:   {ico:'🩸',col:'#dc2626',lbl:'Blood Bank'},
-  nursing: {ico:'🏠',col:'#a78bfa',lbl:'Nursing Home'},
+  hospital:{ico:'HOSP',col:'#ef4444',lbl:'Hospital'},
+  clinic:  {ico:'CLIN',col:'#f97316',lbl:'Clinic'},
+  urgent:  {ico:'URG',col:'#f59e0b',lbl:'Urgent Care'},
+  doctor:  {ico:'DOC',col:'#84cc16',lbl:'Doctor / GP'},
+  physical:{ico:'PHY',col:'#22d3ee',lbl:'Physical Exam'},
+  faa:     {ico:'FAA',col:'#38bdf8',lbl:'FAA Exam'},
+  dotmd:   {ico:'DOT',col:'#facc15',lbl:'DOT MD/DO/PA/NP'},
+  dotchiro:{ico:'CHI',col:'#fb7185',lbl:'DOT Chiropractor'},
+  mammogram:{ico:'MAM',col:'#f472b6',lbl:'Mammogram'},
+  pharmacy:{ico:'RX',col:'#10b981',lbl:'Pharmacy'},
+  dentist: {ico:'DNT',col:'#06b6d4',lbl:'Dentist'},
+  audiology:{ico:'AUD',col:'#60a5fa',lbl:'Audiology'},
+  stress:  {ico:'STR',col:'#f97316',lbl:'Stress Test'},
+  drugscreen:{ico:'DS',col:'#a78bfa',lbl:'Drug Screen'},
+  eye:     {ico:'EYE',col:'#3b82f6',lbl:'Eye Care'},
+  physio:  {ico:'PT',col:'#8b5cf6',lbl:'Physical Therapy'},
+  lab:     {ico:'LAB',col:'#ec4899',lbl:'Lab / Diagnostics'},
+  blood:   {ico:'BLD',col:'#dc2626',lbl:'Blood Bank'},
+  nursing: {ico:'NH',col:'#a78bfa',lbl:'Nursing Home'},
 };
 
 const PROVIDER_DIRS = [
@@ -401,15 +401,16 @@ function createClusteredLayer(
   const valid = points.filter(p => p && p.lat != null && p.lng != null && isValidCoord(p.lat, p.lng));
 
   function dotHtml(): string {
-    return `<div style="width:10px;height:10px;border-radius:50%;background:${opts.color};${opts.glow ? `box-shadow:0 0 6px ${opts.color},0 0 12px ${opts.color}66;` : 'box-shadow:0 0 0 1px rgba(255,255,255,0.3);'}cursor:pointer;"></div>`;
+    return `<div style="width:8px;height:8px;border-radius:50%;background:${opts.color};${opts.glow ? `box-shadow:0 0 8px ${opts.color},0 0 16px ${opts.color}44,inset 0 0 4px rgba(255,255,255,0.6);` : 'box-shadow:0 0 0 1px rgba(255,255,255,0.4),inset 0 0 3px rgba(255,255,255,0.3);'}cursor:pointer;"></div>`;
   }
   function clusterHtml(count: number): string {
-    const size = count >= 1000 ? 46 : count >= 250 ? 40 : count >= 50 ? 34 : 28;
-    const txt = count >= 1000 ? `${(count / 1000).toFixed(count >= 10000 ? 0 : 1)}k` : String(count);
+    const size = count >= 1000 ? 60 : count >= 250 ? 48 : count >= 50 ? 36 : 28;
+    const opacity = Math.min(0.85, 0.25 + (count / 500) * 0.6);
     return `<div style="width:${size}px;height:${size}px;border-radius:50%;display:flex;align-items:center;justify-content:center;`
-      + `background:radial-gradient(circle at 35% 30%, ${opts.color}cc, ${opts.color}66);`
-      + `border:1.5px solid rgba(255,255,255,0.55);color:#fff;font-family:'IBM Plex Mono',monospace;font-weight:700;`
-      + `font-size:${size >= 40 ? 12 : 10}px;box-shadow:0 0 0 4px ${opts.color}22,0 2px 10px rgba(0,0,0,0.45);cursor:pointer;">${txt}</div>`;
+      + `background:radial-gradient(circle at 40% 35%, rgba(255,255,255,${opacity * 0.4}), ${opts.color}${Math.floor(opacity * 255).toString(16).padStart(2,'0')}, transparent 70%);`
+      + `border:1px solid rgba(255,255,255,${opacity * 0.3});`
+      + `box-shadow:0 0 ${size/2}px ${opts.color}${Math.floor(opacity * 40).toString(16).padStart(2,'0')},0 0 ${size}px ${opts.color}${Math.floor(opacity * 20).toString(16).padStart(2,'0')},inset 0 0 20px rgba(255,255,255,${opacity * 0.15});`
+      + `cursor:pointer;backdrop-filter:blur(8px);"></div>`;
   }
 
   function render() {
@@ -422,7 +423,7 @@ function createClusteredLayer(
     if (zoom >= expandZoom) {
       for (const p of visible) {
         const mk = L.marker([p.lat, p.lng], {
-          icon: L.divIcon({ className: '', html: dotHtml(), iconSize: [10, 10], iconAnchor: [5, 5] }),
+          icon: L.divIcon({ className: '', html: dotHtml(), iconSize: [8, 8], iconAnchor: [4, 4] }),
           zIndexOffset: 500,
         });
         mk.bindPopup(opts.buildPopup(p));
@@ -445,17 +446,17 @@ function createClusteredLayer(
       if (c.count === 1) {
         const p = c.sample;
         const mk = L.marker([p.lat, p.lng], {
-          icon: L.divIcon({ className: '', html: dotHtml(), iconSize: [10, 10], iconAnchor: [5, 5] }),
+          icon: L.divIcon({ className: '', html: dotHtml(), iconSize: [8, 8], iconAnchor: [4, 4] }),
           zIndexOffset: 500,
         });
         mk.bindPopup(opts.buildPopup(p));
         group.addLayer(mk);
       } else {
-        const size = c.count >= 1000 ? 46 : c.count >= 250 ? 40 : c.count >= 50 ? 34 : 28;
+        const size = c.count >= 1000 ? 60 : c.count >= 250 ? 48 : c.count >= 50 ? 36 : 28;
         const mk = L.marker(center, {
           icon: L.divIcon({ className: '', html: clusterHtml(c.count), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
           zIndexOffset: 600,
-          title: `${c.count} ${opts.badgeLabel}`,
+          title: `Provider density area`,
         });
         mk.on('click', () => map.flyTo(center, Math.min(map.getMaxZoom(), zoom + 2), { duration: 0.8 }));
         group.addLayer(mk);
@@ -2046,7 +2047,7 @@ export default function App() {
       <div className="fadein">
         <div className="rp-divider"/>
         <div className="rp-city-name">{city||display}</div>
-        <div className="rp-city-meta" style={{marginBottom:4}}>{state}{zip?' · '+zip:''} · <span style={{color:'var(--accent2)'}}>🌐 INTERNATIONAL</span></div>
+        <div className="rp-city-meta" style={{marginBottom:4}}>{state}{zip?' · '+zip:''} · <span style={{color:'var(--accent2)'}}>INTERNATIONAL LOCATION</span></div>
         <div className="rp-alert" style={{background:'rgba(196,168,255,0.10)',border:'1px solid rgba(196,168,255,0.30)',color:'var(--accent2)'}}>
           {INTL_COVERAGE_NOTICE}
         </div>
@@ -2055,7 +2056,7 @@ export default function App() {
           built from U.S.-only datasets and are not shown outside the United States.
           Use Live Finder below to search real facilities here via OpenStreetMap.
         </div>
-        <button className="export-btn" style={{marginBottom:8}} onClick={()=>{ setLiveOpen(true); doLiveSearch(lat,lng); }}>📡 SEARCH PROVIDERS HERE (LIVE FINDER)</button>
+        <button className="export-btn" style={{marginBottom:8}} onClick={()=>{ setLiveOpen(true); doLiveSearch(lat,lng); }}>SEARCH LIVE PROVIDERS</button>
         <DriveTimeBox fromLat={lat} fromLng={lng} fromName={label} locB={null}/>
         <button className="export-btn" onClick={()=>doExportReport(rd)}>↓ EXPORT LOCATION REPORT</button>
       </div>
