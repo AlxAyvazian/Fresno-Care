@@ -33,13 +33,13 @@ async function getPersistenceModule(): Promise<PersistenceModule | null> {
     persistenceModulePromise = (async () => {
       try {
         const mod = await import("@workspace/db");
-        if (!("db" in mod) || !("networkMapSearchesTable" in mod)) {
+        if (!("getDb" in mod) || !("networkMapSearchesTable" in mod)) {
           logger.warn("Database module loaded but Network Map search schema is unavailable");
           return null;
         }
 
         return {
-          db: mod.db,
+          db: mod.getDb(),
           networkMapSearchesTable: mod.networkMapSearchesTable,
         };
       } catch (err) {

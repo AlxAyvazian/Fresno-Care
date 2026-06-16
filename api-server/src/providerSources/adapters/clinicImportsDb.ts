@@ -1,8 +1,9 @@
 import { eq } from "drizzle-orm";
-import { db, clinicImportsTable } from "@workspace/db";
+import { getDb, clinicImportsTable } from "@workspace/db";
 import type { ProviderCandidate } from "../types";
 
 export async function searchClinicImports(_city: string, state: string): Promise<ProviderCandidate[]> {
+  const db = getDb();
   const rows = await db
     .select()
     .from(clinicImportsTable)

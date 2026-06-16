@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { eq, and } from "drizzle-orm";
-import { db, clinicImportsTable } from "@workspace/db";
+import { getDb, clinicImportsTable } from "@workspace/db";
 import type { ProviderCandidate } from "../providerSources/types";
 
 const router = Router();
@@ -131,6 +131,7 @@ router.post("/provider-sources/import", async (req: Request, res: Response) => {
       internalStatus: c.internalStatus || "candidate",
     }));
 
+    const db = getDb();
     const inserted = await db.insert(clinicImportsTable).values(insertValues).returning();
 
     res.json({
@@ -153,6 +154,7 @@ router.get("/provider-sources/imported", async (req: Request, res: Response) => 
     const state = String(req.query.state || "").trim().toUpperCase();
     const sourceTag = String(req.query.sourceTag || "").trim();
 
+    const db = getDb();
     let query = db.select().from(clinicImportsTable);
     const conditions = [];
     if (state) conditions.push(eq(clinicImportsTable.state, state));
