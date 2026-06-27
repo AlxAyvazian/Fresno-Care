@@ -7,7 +7,8 @@ const NOMINATIM_TIMEOUT_MS = 7000;
 
 function configuredGeocodioToken(): string {
   const thirdEnv = "GEOCODIO_" + "TERTIARY_" + "TOKEN";
-  return String(process.env.GEOCODIO_TOKEN || process.env.GEOCODIO_SECONDARY_TOKEN || process.env[thirdEnv] || "").trim();
+  const fourthEnv = "GEOCODIO_" + "QUATERNARY_" + "TOKEN";
+  return String(process.env.GEOCODIO_TOKEN || process.env.GEOCODIO_SECONDARY_TOKEN || process.env[thirdEnv] || process.env[fourthEnv] || "").trim();
 }
 
 async function geocodeWithGeocodio(query: string): Promise<GeocodePoint | null> {
