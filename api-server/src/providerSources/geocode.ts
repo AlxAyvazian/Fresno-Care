@@ -6,7 +6,7 @@ const GEOCODIO_TIMEOUT_MS = 7000;
 const NOMINATIM_TIMEOUT_MS = 7000;
 
 function configuredGeocodioToken(): string {
-  return String(process.env.GEOCODIO_TOKEN || "").trim();
+  return String(process.env.GEOCODIO_TOKEN || process.env.GEOCODIO_SECONDARY_TOKEN || "").trim();
 }
 
 async function geocodeWithGeocodio(query: string): Promise<GeocodePoint | null> {
