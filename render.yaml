@@ -21,6 +21,8 @@ services:
         sync: false
       - key: GEOCODIO_TERTIARY_TOKEN
         sync: false
+      - key: GEOCODIO_QUATERNARY_TOKEN
+        sync: false
 
 databases:
   - name: network-map-db
