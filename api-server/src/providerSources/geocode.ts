@@ -5,26 +5,30 @@ type GeocodePoint = { lat: number; lng: number };
 const GEOCODIO_TIMEOUT_MS = 7000;
 const NOMINATIM_TIMEOUT_MS = 7000;
 
-function configuredGeocodioToken(): string {
+function configuredGeocodioKeys(): string[] {
   const thirdEnv = "GEOCODIO_" + "TERTIARY_" + "TOKEN";
   const fourthEnv = "GEOCODIO_" + "QUATERNARY_" + "TOKEN";
-  return String(process.env.GEOCODIO_TOKEN || process.env.GEOCODIO_SECONDARY_TOKEN || process.env[thirdEnv] || process.env[fourthEnv] || "").trim();
+  return [
+    process.env.GEOCODIO_TOKEN,
+    process.env.GEOCODIO_SECONDARY_TOKEN,
+    process.env[thirdEnv],
+    process.env[fourthEnv],
+  ]
+    .map((key) => String(key || "").trim())
+    .filter((key, index, allKeys) => Boolean(key) && allKeys.indexOf(key) === index);
 }
 
-async function geocodeWithGeocodio(query: string): Promise<GeocodePoint | null> {
-  const token = configuredGeocodioToken();
-  if (!token) return null;
-
+async function geocodeWithGeocodioKey(query: string, key: string): Promise<GeocodePoint | null> {
   const url = new URL("https://api.geocod.io/v1.8/geocode");
   url.searchParams.set("q", query);
   url.searchParams.set("limit", "1");
-  url.searchParams.set("api_" + "key", token);
+  url.searchParams.set("api_" + "key", key);
 
   const resp = await fetch(url, {
     headers: { "Accept-Language": "en" },
     signal: AbortSignal.timeout(GEOCODIO_TIMEOUT_MS),
   });
-  if (!resp.ok) throw new Error(`Geocodio ${resp.status}`);
+  if (!resp.ok) return null;
 
   const data = await resp.json() as { results?: Array<{ location?: { lat?: number | string; lng?: number | string } }> };
   const location = data.results?.[0]?.location;
@@ -32,6 +36,15 @@ async function geocodeWithGeocodio(query: string): Promise<GeocodePoint | null> 
   const lng = Number(location?.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   return { lat, lng };
+}
+
+async function geocodeWithGeocodio(query: string): Promise<GeocodePoint | null> {
+  const keys = configuredGeocodioKeys();
+  for (const key of keys) {
+    const point = await geocodeWithGeocodioKey(query, key);
+    if (point) return point;
+  }
+  return null;
 }
 
 async function geocodeWithNominatim(query: string): Promise<GeocodePoint | null> {
@@ -55,13 +68,9 @@ async function geocodeWithNominatim(query: string): Promise<GeocodePoint | null>
 }
 
 async function geocodeAddress(query: string): Promise<GeocodePoint | null> {
-  if (configuredGeocodioToken()) {
-    try {
-      const point = await geocodeWithGeocodio(query);
-      if (point) return point;
-    } catch (e) {
-      console.warn("[Provider geocode] Geocodio failed; falling back", String(e));
-    }
+  if (configuredGeocodioKeys().length) {
+    const point = await geocodeWithGeocodio(query);
+    if (point) return point;
   }
 
   try {
@@ -75,7 +84,7 @@ async function geocodeAddress(query: string): Promise<GeocodePoint | null> {
 export async function geocodeProviders(candidates: ProviderCandidate[], centerLat: number, centerLng: number): Promise<ProviderCandidate[]> {
   const results: ProviderCandidate[] = [];
   const jitterRadius = 0.03;
-  const hasGeocodio = Boolean(configuredGeocodioToken());
+  const hasGeocodio = configuredGeocodioKeys().length > 0;
   const geocodeLimit = hasGeocodio ? 25 : 8;
   const geocodeDelayMs = hasGeocodio ? 250 : 1100;
 
