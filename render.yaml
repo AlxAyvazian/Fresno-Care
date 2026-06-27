@@ -17,6 +17,8 @@ services:
           property: connectionString
       - key: GEOCODIO_TOKEN
         sync: false
+      - key: GEOCODIO_SECONDARY_TOKEN
+        sync: false
 
 databases:
   - name: network-map-db
