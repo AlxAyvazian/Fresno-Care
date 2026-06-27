@@ -15,7 +15,7 @@ services:
         fromDatabase:
           name: network-map-db
           property: connectionString
-      - key: GEOAPIFY_API_KEY
+      - key: GEOCODIO_TOKEN
         sync: false
 
 databases:
