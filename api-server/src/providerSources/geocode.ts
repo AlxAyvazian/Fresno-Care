@@ -2,33 +2,32 @@ import type { ProviderCandidate } from "./types";
 
 type GeocodePoint = { lat: number; lng: number };
 
-const GEOAPIFY_TIMEOUT_MS = 7000;
+const GEOCODIO_TIMEOUT_MS = 7000;
 const NOMINATIM_TIMEOUT_MS = 7000;
 
-function configuredGeoapifyToken(): string {
-  const envName = "GEOAPIFY_API" + "_KEY";
-  return String(process.env[envName] || "").trim();
+function configuredGeocodioToken(): string {
+  return String(process.env.GEOCODIO_TOKEN || "").trim();
 }
 
-async function geocodeWithGeoapify(query: string): Promise<GeocodePoint | null> {
-  const token = configuredGeoapifyToken();
+async function geocodeWithGeocodio(query: string): Promise<GeocodePoint | null> {
+  const token = configuredGeocodioToken();
   if (!token) return null;
 
-  const url = new URL("https://api.geoapify.com/v1/geocode/search");
-  url.searchParams.set("text", query);
+  const url = new URL("https://api.geocod.io/v1.8/geocode");
+  url.searchParams.set("q", query);
   url.searchParams.set("limit", "1");
-  url.searchParams.set("api" + "Key", token);
+  url.searchParams.set("api_" + "key", token);
 
   const resp = await fetch(url, {
     headers: { "Accept-Language": "en" },
-    signal: AbortSignal.timeout(GEOAPIFY_TIMEOUT_MS),
+    signal: AbortSignal.timeout(GEOCODIO_TIMEOUT_MS),
   });
-  if (!resp.ok) throw new Error(`Geoapify ${resp.status}`);
+  if (!resp.ok) throw new Error(`Geocodio ${resp.status}`);
 
-  const data = await resp.json() as { features?: Array<{ geometry?: { coordinates?: [number, number] } }> };
-  const coords = data.features?.[0]?.geometry?.coordinates;
-  const lng = Number(coords?.[0]);
-  const lat = Number(coords?.[1]);
+  const data = await resp.json() as { results?: Array<{ location?: { lat?: number | string; lng?: number | string } }> };
+  const location = data.results?.[0]?.location;
+  const lat = Number(location?.lat);
+  const lng = Number(location?.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   return { lat, lng };
 }
@@ -54,12 +53,12 @@ async function geocodeWithNominatim(query: string): Promise<GeocodePoint | null>
 }
 
 async function geocodeAddress(query: string): Promise<GeocodePoint | null> {
-  if (configuredGeoapifyToken()) {
+  if (configuredGeocodioToken()) {
     try {
-      const point = await geocodeWithGeoapify(query);
+      const point = await geocodeWithGeocodio(query);
       if (point) return point;
     } catch (e) {
-      console.warn("[Provider geocode] Geoapify failed; falling back", String(e));
+      console.warn("[Provider geocode] Geocodio failed; falling back", String(e));
     }
   }
 
@@ -74,9 +73,9 @@ async function geocodeAddress(query: string): Promise<GeocodePoint | null> {
 export async function geocodeProviders(candidates: ProviderCandidate[], centerLat: number, centerLng: number): Promise<ProviderCandidate[]> {
   const results: ProviderCandidate[] = [];
   const jitterRadius = 0.03;
-  const hasGeoapify = Boolean(configuredGeoapifyToken());
-  const geocodeLimit = hasGeoapify ? 25 : 8;
-  const geocodeDelayMs = hasGeoapify ? 250 : 1100;
+  const hasGeocodio = Boolean(configuredGeocodioToken());
+  const geocodeLimit = hasGeocodio ? 25 : 8;
+  const geocodeDelayMs = hasGeocodio ? 250 : 1100;
 
   for (let i = 0; i < candidates.length; i++) {
     const p = candidates[i];
