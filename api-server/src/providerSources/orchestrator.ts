@@ -2,9 +2,7 @@ import type { ProviderCandidate, SearchParams, SourceResult, SearchAudit, Unifie
 import { searchNpi } from "./adapters/npi";
 import { searchFmcsa } from "./adapters/fmcsa";
 import { searchClinicImports } from "./adapters/clinicImportsDb";
-import { searchLangSearchEvidence } from "./adapters/langSearch";
-import { searchWebEvidence } from "./adapters/webEvidence";
-import { isLangSearchConfigured } from "../lib/langSearchClient";
+import { searchWebEvidence, hasConfiguredWebEvidenceSource } from "./adapters/webEvidence";
 import { dedupeCandidates } from "./dedupe";
 import { geocodeProviders } from "./geocode";
 import { scoreProvider, assignTrustTier } from "./scoring";
@@ -32,10 +30,9 @@ const SERVICE_ROUTING: Record<string, string[]> = {
 };
 
 const ADAPTER_REGISTRY: Record<string, (city: string, state: string, serviceType: string, params: SearchParams) => Promise<ProviderCandidate[]>> = {
-  npi: (c, s, _st, _p) => searchNpi(c, s, _st),
-  fmcsa: (c, _s, _st, _p) => searchFmcsa(c, _s),
+  npi: (c, s, st, _p) => searchNpi(c, s, st),
+  fmcsa: (c, s, _st, _p) => searchFmcsa(c, s),
   clinicimports: (c, s, _st, _p) => searchClinicImports(c, s),
-  langsearch: (c, s, st, _p) => searchLangSearchEvidence(c, s, st),
   rapidapi: (_c, _s, _st, p) => searchRapidApiFromOrchestrator(p),
   webevidence: (c, s, st, p) => searchWebEvidence(c, s, st, p),
 };
@@ -44,14 +41,23 @@ const SOURCE_LABELS: Record<string, string> = {
   npi: "NPI Registry",
   fmcsa: "FMCSA National Registry",
   clinicimports: "Imported Clinics (DB)",
-  langsearch: "LangSearch Web Evidence",
-  rapidapi: "RapidAPI",
-  webevidence: "Web Evidence",
+  rapidapi: "RapidAPI Provider Search",
+  webevidence: "Unified Web Evidence",
 };
+
+function isTruthyFlag(value: string | undefined): boolean {
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+function isRapidApiProviderSearchConfigured(): boolean {
+  return Boolean(process.env.RAPIDAPI_KEY?.trim()) &&
+    isTruthyFlag(process.env.RAPIDAPI_ENABLED) &&
+    isTruthyFlag(process.env.RAPIDAPI_PROVIDER_SEARCH_ENABLED);
+}
 
 async function searchRapidApiFromOrchestrator(params: SearchParams): Promise<ProviderCandidate[]> {
   const { city, state, radiusMiles, serviceType, centerLat, centerLng } = params;
-  
+
   const result = await searchRapidApiProviders({
     location: `${city}, ${state}`,
     lat: centerLat,
@@ -63,49 +69,54 @@ async function searchRapidApiFromOrchestrator(params: SearchParams): Promise<Pro
     limit: 20,
   });
 
-  // Convert RapidAPI ProviderCandidate to the internal ProviderCandidate format
   return result.providers.map((p) => ({
     id: p.id || `rapidapi-${Date.now()}-${Math.random()}`,
     name: p.name,
-    address: p.address || '',
+    address: p.address || "",
     city: p.city || city,
     state: p.state || state,
-    postalCode: p.postalCode || '',
-    phone: p.phone || '',
-    website: p.website || '',
+    postalCode: p.postalCode || "",
+    phone: p.phone || "",
+    website: p.website || "",
     lat: p.lat,
     lng: p.lng,
-    coordinateStatus: 'geocoded' as const,
-    source: 'rapidapi',
-    sourceDetail: result.debug.succeeded || 'rapidapi',
+    coordinateStatus: "geocoded" as const,
+    source: "rapidapi",
+    sourceDetail: result.debug.succeeded || "rapidapi",
     sourceUrl: p.sourceUrl,
-    confidence: p.confidence >= 75 ? 'high' : p.confidence >= 50 ? 'medium' : 'low',
-    trustTier: 'directory' as const,
+    confidence: p.confidence >= 75 ? "high" : p.confidence >= 50 ? "medium" : "low",
+    trustTier: "directory" as const,
     score: p.confidence,
-    badges: ['RapidAPI'],
+    badges: ["RapidAPI"],
     evidence: p.evidence.map((e) => ({
       serviceDetected: serviceType,
-      evidenceUrl: p.sourceUrl || '',
+      evidenceUrl: p.sourceUrl || "",
       evidenceTextSnippet: e,
       confidence: p.confidence,
-      source: 'rapidapi',
+      source: "rapidapi",
     })),
     distanceMiles: p.distanceMiles,
-    _rawSources: ['rapidapi'],
+    _rawSources: ["rapidapi"],
   }));
 }
 
 function activeAdapterIds(serviceType: string): string[] {
   const adapterIds = [...(SERVICE_ROUTING[serviceType] || ["npi"] )];
 
-  // LangSearch is an optional lead/evidence layer. It never replaces NPI/imported data,
-  // and it only runs when the backend has LANGSEARCH_API_KEY configured.
   if (
-    process.env.LANGSEARCH_PROVIDER_EVIDENCE !== "false" &&
-    isLangSearchConfigured() &&
-    !adapterIds.includes("langsearch")
+    process.env.WEB_EVIDENCE_PROVIDER_DISCOVERY !== "false" &&
+    hasConfiguredWebEvidenceSource() &&
+    !adapterIds.includes("webevidence")
   ) {
-    adapterIds.push("langsearch");
+    adapterIds.push("webevidence");
+  }
+
+  if (
+    process.env.RAPIDAPI_PROVIDER_DISCOVERY !== "false" &&
+    isRapidApiProviderSearchConfigured() &&
+    !adapterIds.includes("rapidapi")
+  ) {
+    adapterIds.push("rapidapi");
   }
 
   return adapterIds;
@@ -132,7 +143,6 @@ export async function runUnifiedSearch(params: SearchParams): Promise<UnifiedSea
   const errorsBySource: Record<string, string> = {};
   const rawResultCounts: Record<string, number> = {};
 
-  // Get API source status for the audit
   const sourceStatus = getSourceStatusReport();
   const configuredApiSources = sourceStatus.filter((s) => s.configured).map((s) => s.sourceName);
   const missingApiSources = sourceStatus.filter((s) => !s.configured).map((s) => s.sourceName);
@@ -179,18 +189,14 @@ export async function runUnifiedSearch(params: SearchParams): Promise<UnifiedSea
     return { ...p, distanceMiles: haversineMiles(centerLat, centerLng, p.lat, p.lng) };
   });
 
-  // Enforce radius filtering for radius-mode searches
   const filtered = radiusMiles > 0
     ? withDistance.filter((p) => {
-        // Always include unplaced results (they appear in list only)
         if (p.coordinateStatus === "unverified") return true;
-        // Filter placed results by radius
         return p.distanceMiles !== undefined && p.distanceMiles <= radiusMiles;
       })
     : withDistance;
 
   const sorted = filtered.sort((a, b) => {
-    // Placed results first, then unplaced
     const aPlaced = a.coordinateStatus !== "unverified" ? 0 : 1;
     const bPlaced = b.coordinateStatus !== "unverified" ? 0 : 1;
     if (aPlaced !== bPlaced) return aPlaced - bPlaced;
