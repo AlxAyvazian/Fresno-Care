@@ -20,7 +20,7 @@ interface LangSearchApiResponse {
     webPages?: {
       webSearchUrl?: string;
       totalEstimatedMatches?: number | null;
-      value?: LangSearchWebPage[];
+      value?: unknown;
       someResultsRemoved?: boolean;
     };
   };
@@ -66,7 +66,7 @@ function normalizeCount(value?: number): number {
 
 export async function searchLangSearchWeb(request: LangSearchRequest): Promise<LangSearchResponse> {
   const apiKey = process.env.LANGSEARCH_API_KEY?.trim();
-  const query = request.query.trim();
+  const query = typeof request.query === "string" ? request.query.trim() : "";
 
   if (!query) throw new Error("LangSearch query is required");
   if (!apiKey) throw new Error("LANGSEARCH_API_KEY is not configured");
@@ -94,11 +94,15 @@ export async function searchLangSearchWeb(request: LangSearchRequest): Promise<L
     throw new Error(payload.msg || `LangSearch request failed with code ${payload.code}`);
   }
 
+  const results = Array.isArray(payload?.data?.webPages?.value)
+    ? (payload.data.webPages.value as LangSearchWebPage[])
+    : [];
+
   return {
     query,
     webSearchUrl: payload?.data?.webPages?.webSearchUrl,
     totalEstimatedMatches: payload?.data?.webPages?.totalEstimatedMatches,
     someResultsRemoved: payload?.data?.webPages?.someResultsRemoved,
-    results: payload?.data?.webPages?.value || [],
+    results,
   };
 }
