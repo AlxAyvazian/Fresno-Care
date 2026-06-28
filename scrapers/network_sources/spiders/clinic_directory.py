@@ -38,15 +38,20 @@ class ClinicDirectorySpider(scrapy.Spider):
         list_selector = self.source_config.get("listSelector")
         if list_selector:
             for node in response.css(list_selector):
-                yield self._item_from_node(node, response, self.source_config.get("fields", {}))
-
+                seed = self._item_from_node(node, response, self.source_config.get("fields", {}))
                 detail_links = self.source_config.get("follow", {}).get("detailLinks", {})
+                followed_detail = False
+
                 for href in self._extract_all(node, detail_links):
+                    followed_detail = True
                     yield response.follow(
                         href,
                         callback=self.parse_detail,
-                        cb_kwargs={"seed": dict(self._item_from_node(node, response, self.source_config.get("fields", {})))},
+                        cb_kwargs={"seed": dict(seed)},
                     )
+
+                if not followed_detail:
+                    yield seed
         else:
             yield self._item_from_node(response, response, self.source_config.get("fields", {}))
 
