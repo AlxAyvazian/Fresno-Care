@@ -1,0 +1,24 @@
+{
+  "sourceTag": "example-sitemap-directory",
+  "allowedDomains": ["example.com"],
+  "sitemapUrls": ["https://example.com/sitemap.xml"],
+  "urlInclude": ["/locations/", "/clinic/"],
+  "urlExclude": ["/blog/", "/news/", "/careers/"],
+  "maxPages": 5000,
+  "fields": {
+    "name": { "css": "h1::text" },
+    "address": { "css": "[itemprop='streetAddress']::text" },
+    "city": { "css": "[itemprop='addressLocality']::text" },
+    "state": { "css": "[itemprop='addressRegion']::text" },
+    "postalCode": { "css": "[itemprop='postalCode']::text" },
+    "phone": { "css": "a[href^='tel:']::text" },
+    "fax": { "css": ".fax::text" },
+    "hours": { "css": "[itemprop='openingHours']::text", "join": " | " },
+    "services": { "css": ".services li::text", "join": ", " },
+    "evidenceNote": { "css": "main::text", "join": " " }
+  },
+  "defaults": {
+    "internalStatus": "candidate",
+    "services": "urgent care, occupational health"
+  }
+}
