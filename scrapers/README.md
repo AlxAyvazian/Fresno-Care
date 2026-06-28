@@ -64,6 +64,18 @@ API_BASE=http://localhost:8080/api bash tools/run_source_pipeline.sh \
   example-clinic-directory
 ```
 
+## Batch pipeline
+
+Use this when you have multiple source configs to process:
+
+```bash
+bash tools/run_batch_pipeline.sh \
+  sources/example_clinic_directory.json \
+  sources/example_sitemap_directory.json
+```
+
+The batch runner keeps this additive: it calls the source pipeline for each config and does not replace any existing Network Map source.
+
 ## Validate a source config only
 
 ```bash
@@ -128,3 +140,5 @@ source config -> config check -> Scrapy crawl -> raw JSONL -> validate/dedupe ->
 ## Important implementation rule
 
 Scrapy should run as a batch ingestion worker. Do not run crawlers inside live map searches. The map should read normalized imported provider rows from the database through the existing provider-source pipeline.
+
+See `docs/scrapy_core_notes.md` for how the Scrapy core API concepts map to this additive ingestion layer.
