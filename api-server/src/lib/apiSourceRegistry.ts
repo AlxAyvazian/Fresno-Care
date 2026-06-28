@@ -26,9 +26,11 @@ export interface SourceStatusReport {
   usedBy: UsedBy[];
 }
 
-// Registry of all API sources with their categorization and wiring status
+// Registry of API sources with their categorization and current wiring status.
+// Keep this honest: "active" means code currently calls the API; "configured_not_wired"
+// means the env var is visible in diagnostics but no adapter consumes it yet.
 const API_SOURCE_REGISTRY: ApiSourceConfig[] = [
-  // Web search / web evidence
+  // Web search / web evidence. These are called by the unified webEvidence adapter.
   {
     name: "LangSearch",
     envVar: "LANGSEARCH_API_KEY",
@@ -41,30 +43,31 @@ const API_SOURCE_REGISTRY: ApiSourceConfig[] = [
     envVar: "SERPER_API_KEY",
     category: "web_search",
     adapterStatus: "active",
-    usedBy: ["provider_discovery", "price_discovery"],
+    usedBy: ["provider_discovery"],
   },
   {
     name: "Tavily",
     envVar: "TAVILY_API_KEY",
     category: "web_search",
     adapterStatus: "active",
-    usedBy: ["provider_discovery", "price_discovery"],
+    usedBy: ["provider_discovery"],
   },
   {
     name: "Exa",
     envVar: "EXA_API_KEY",
     category: "web_search",
-    adapterStatus: "configured_not_wired",
-    usedBy: ["provider_discovery", "price_discovery"],
+    adapterStatus: "active",
+    usedBy: ["provider_discovery"],
   },
 
-  // Web extraction / browser automation
+  // Web extraction / browser automation.
+  // Firecrawl is active through webEvidence search; deeper extraction is follow-up.
   {
     name: "Firecrawl",
     envVar: "FIRECRAWL_API_KEY",
     category: "web_extraction",
-    adapterStatus: "configured_not_wired",
-    usedBy: ["price_discovery", "enrichment"],
+    adapterStatus: "active",
+    usedBy: ["provider_discovery", "price_discovery", "enrichment"],
   },
   {
     name: "Browse AI",
@@ -88,7 +91,7 @@ const API_SOURCE_REGISTRY: ApiSourceConfig[] = [
     usedBy: ["price_discovery", "enrichment"],
   },
 
-  // AI extraction / summarization / ranking
+  // AI extraction / summarization / ranking.
   {
     name: "Gemini",
     envVar: "GEMINI_API_KEY",
@@ -139,7 +142,7 @@ const API_SOURCE_REGISTRY: ApiSourceConfig[] = [
     usedBy: ["enrichment"],
   },
 
-  // Geocoding / map / distance
+  // Geocoding / map / distance.
   {
     name: "Geocodio Primary",
     envVar: "GEOCODIO_TOKEN",
@@ -218,7 +221,7 @@ const API_SOURCE_REGISTRY: ApiSourceConfig[] = [
     usedBy: ["geocoding"],
   },
 
-  // Vector / semantic index
+  // Vector / semantic index.
   {
     name: "Pinecone",
     envVar: "PINECONE_API_KEY",
@@ -237,8 +240,8 @@ function isEnvConfigured(envVar: string): boolean {
 }
 
 /**
- * Get the full source status report
- * Returns safe diagnostic information without exposing secret values
+ * Get the full source status report.
+ * Returns safe diagnostic information without exposing secret values.
  */
 export function getSourceStatusReport(): SourceStatusReport[] {
   return API_SOURCE_REGISTRY.map((config) => ({
@@ -256,68 +259,4 @@ export function getSourceStatusReport(): SourceStatusReport[] {
  */
 export function getSourcesByCategory(category: ApiSourceCategory): SourceStatusReport[] {
   return getSourceStatusReport().filter((s) => s.category === category);
-}
-
-/**
- * Get configured sources by category
- */
-export function getConfiguredSourcesByCategory(category: ApiSourceCategory): SourceStatusReport[] {
-  return getSourcesByCategory(category).filter((s) => s.configured);
-}
-
-/**
- * Get sources by usage context
- */
-export function getSourcesByUsage(usage: UsedBy): SourceStatusReport[] {
-  return getSourceStatusReport().filter((s) => s.usedBy.includes(usage));
-}
-
-/**
- * Get configured sources by usage context
- */
-export function getConfiguredSourcesByUsage(usage: UsedBy): SourceStatusReport[] {
-  return getSourcesByUsage(usage).filter((s) => s.configured);
-}
-
-/**
- * Get summary statistics
- */
-export function getSourceSummary() {
-  const report = getSourceStatusReport();
-  const total = report.length;
-  const configured = report.filter((s) => s.configured).length;
-  const active = report.filter((s) => s.adapterStatus === "active").length;
-  const configuredNotWired = report.filter((s) => s.configured && s.adapterStatus === "configured_not_wired").length;
-  const planned = report.filter((s) => s.adapterStatus === "planned").length;
-
-  return {
-    total,
-    configured,
-    notConfigured: total - configured,
-    active,
-    configuredNotWired,
-    planned,
-    byCategory: {
-      web_search: {
-        total: report.filter((s) => s.category === "web_search").length,
-        configured: report.filter((s) => s.category === "web_search" && s.configured).length,
-      },
-      web_extraction: {
-        total: report.filter((s) => s.category === "web_extraction").length,
-        configured: report.filter((s) => s.category === "web_extraction" && s.configured).length,
-      },
-      ai_extraction: {
-        total: report.filter((s) => s.category === "ai_extraction").length,
-        configured: report.filter((s) => s.category === "ai_extraction" && s.configured).length,
-      },
-      geocoding: {
-        total: report.filter((s) => s.category === "geocoding").length,
-        configured: report.filter((s) => s.category === "geocoding" && s.configured).length,
-      },
-      vector_index: {
-        total: report.filter((s) => s.category === "vector_index").length,
-        configured: report.filter((s) => s.category === "vector_index" && s.configured).length,
-      },
-    },
-  };
 }
