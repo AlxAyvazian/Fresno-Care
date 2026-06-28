@@ -15,6 +15,7 @@ import { NPI_CATEGORY_MAP, NPI_CATEGORY_KEYS, isNpiCategory } from './lib/npiTax
 import type { ProviderCandidate, UnifiedSearchResponse, SearchAudit } from './lib/providerSources/types';
 import { SOURCE_BADGES } from './lib/providerSources/types';
 import { buildExplanation } from './lib/providerSources/scoring';
+import { fetchMapInventory, type MapInventoryProvider } from './features/providerSearch/providerSearchClient';
 
 type NpiCustomSearchParams = {
   city: string;
@@ -1009,6 +1010,10 @@ export default function App() {
   const [showGlowPoints, setShowGlowPoints] = useState(true);
   const [showBlueHive, setShowBlueHive] = useState(false);
   const [blueHiveData, setBlueHiveData] = useState<any[]>([]);
+  const [showInventory, setShowInventory] = useState(true);
+  const [inventoryData, setInventoryData] = useState<MapInventoryProvider[]>([]);
+  const inventoryLayerRef = useRef<ReturnType<typeof createClusteredLayer>|null>(null);
+  const inventoryFetchRef = useRef<AbortController|null>(null);
   const [showDentists, setShowDentists] = useState(false);
   const [dentistData, setDentistData] = useState<any[]>([]);
   const dentistLayerRef = useRef<ReturnType<typeof createClusteredLayer>|null>(null);
@@ -1333,6 +1338,48 @@ export default function App() {
       .then(data=>setDentistData(data||[]))
       .catch(()=>setDentistData([]));
   },[]);
+
+  // ── Map Inventory: load indexed providers from Neon on map load + pan/zoom ──
+  useEffect(()=>{
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    let debounceTimer: ReturnType<typeof setTimeout>|null = null;
+
+    function loadInventory(){
+      if(debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(()=>{
+        const bounds = map!.getBounds();
+        if(inventoryFetchRef.current) inventoryFetchRef.current.abort();
+        const ac = new AbortController();
+        inventoryFetchRef.current = ac;
+        fetchMapInventory({
+          north: bounds.getNorth(),
+          south: bounds.getSouth(),
+          east: bounds.getEast(),
+          west: bounds.getWest(),
+          limit: 1000,
+        }).then(data=>{
+          if(!ac.signal.aborted) setInventoryData(data.providers||[]);
+        }).catch(()=>{
+          if(!ac.signal.aborted) setInventoryData([]);
+        });
+      }, 400);
+    }
+
+    // Initial load
+    loadInventory();
+
+    // Reload on pan/zoom
+    map.on('moveend', loadInventory);
+
+    return ()=>{
+      map.off('moveend', loadInventory);
+      if(debounceTimer) clearTimeout(debounceTimer);
+      if(inventoryFetchRef.current) inventoryFetchRef.current.abort();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[mapReady]);
 
   const liveOpenRef = useRef(false);
   useEffect(()=>{ liveOpenRef.current = liveOpen; },[liveOpen]);
@@ -1666,6 +1713,38 @@ export default function App() {
     return ()=>{ if (dentistLayerRef.current) { dentistLayerRef.current.destroy(); dentistLayerRef.current = null; } };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[showDentists, dentistData, showGlowPoints]);
+
+  // ── Indexed Provider Inventory pins (clustered) ─────────────────────────────
+  useEffect(()=>{
+    const map = mapRef.current;
+    if (!map) return;
+    if (inventoryLayerRef.current) { inventoryLayerRef.current.destroy(); inventoryLayerRef.current = null; }
+    if (!showInventory || inventoryData.length===0) return;
+    const trustColor = (t:string)=>t==='verified'?'#34d399':t==='registry'?'#60a5fa':t==='directory'?'#a78bfa':'#94a3b8';
+    inventoryLayerRef.current = createClusteredLayer(map, inventoryData, {
+      color: '#10b981',
+      glow: showGlowPoints,
+      badgeLabel: 'Indexed providers',
+      buildPopup: (p:MapInventoryProvider)=>{
+        const tc = trustColor(p.trustTier);
+        return `<div style="font-family:Inter,sans-serif;padding:10px 12px;min-width:210px;max-width:280px;">
+        <div style="font-size:12px;font-weight:700;color:#e2f0ff;margin-bottom:4px">${p.name||'Unnamed'}</div>
+        ${p.address?`<div style="font-size:9.5px;color:#4a6888">📍 ${p.address}${p.city?', '+p.city:''}${p.state?' '+p.state:''}</div>`:''}
+        ${p.phone?`<div style="font-size:9.5px;color:#67e8f9;margin-top:2px">📞 <a href="tel:${p.phone}" style="color:#67e8f9;text-decoration:none">${p.phone}</a></div>`:''}
+        ${p.website?`<div style="font-size:8.5px;color:#3d5478;margin-top:2px"><a href="${p.website}" target="_blank" style="color:#93c5fd">${p.website}</a></div>`:''}
+        ${p.npi?`<div style="font-size:8.5px;color:#3d5478;margin-top:2px">NPI: <a href="https://npiregistry.cms.hhs.gov/provider-view/${p.npi}" target="_blank" style="color:#93c5fd">${p.npi}</a></div>`:''}
+        ${p.services.length>0?`<div style="font-size:8px;color:#3d5478;margin-top:3px">${p.services.join(', ')}</div>`:''}
+        <div style="margin-top:6px;display:flex;gap:5px;align-items:center">
+          <div style="width:8px;height:8px;border-radius:50%;background:${tc};box-shadow:0 0 6px ${tc};flex-shrink:0"></div>
+          <span style="font-size:8.5px;color:${tc};font-family:'IBM Plex Mono',monospace;text-transform:uppercase">${p.trustTier}</span>
+          ${p.coordinateStatus?`<span style="font-size:7.5px;color:#5d7a9e;margin-left:4px">${p.coordinateStatus}</span>`:''}
+        </div>
+      </div>`;
+      },
+    });
+    return ()=>{ if (inventoryLayerRef.current) { inventoryLayerRef.current.destroy(); inventoryLayerRef.current = null; } };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[showInventory, inventoryData, showGlowPoints]);
 
   async function handleClinicUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -2690,6 +2769,13 @@ export default function App() {
             <div className="tog-row">
               <span className="tog-lbl" style={{color: showCityDots ? 'inherit' : '#7bd7ff'}}>City dots {showCityDots ? '' : '(hidden)'}</span>
               <label className="tog-switch"><input type="checkbox" checked={showCityDots} onChange={e=>setShowCityDots(e.target.checked)}/><span className="tog-slider"/></label>
+            </div>
+            <div className="tog-row">
+              <span className="tog-lbl" style={{color:'#10b981',display:'flex',alignItems:'center',gap:4}}>
+                <span style={{width:7,height:7,borderRadius:'50%',background:'#10b981',display:'inline-block',boxShadow:'0 0 6px #10b981',flexShrink:0}}/>
+                Indexed Providers {inventoryData.length>0&&<span style={{fontSize:9,opacity:0.7,marginLeft:2}}>({inventoryData.length})</span>}
+              </span>
+              <label className="tog-switch"><input type="checkbox" checked={showInventory} onChange={e=>setShowInventory(e.target.checked)}/><span className="tog-slider"/></label>
             </div>
             <div className="tog-row">
               <span className="tog-lbl" style={{color:'#3b82f6',display:'flex',alignItems:'center',gap:4}}>
