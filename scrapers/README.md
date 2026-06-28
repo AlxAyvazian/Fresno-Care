@@ -55,6 +55,15 @@ bash tools/run_source_pipeline.sh \
 
 The runner validates the config, crawls the site, validates and dedupes JSONL, and creates an import-ready CSV.
 
+To post into a running local API after CSV generation:
+
+```bash
+API_BASE=http://localhost:8080/api bash tools/run_source_pipeline.sh \
+  clinic_directory \
+  sources/example_clinic_directory.json \
+  example-clinic-directory
+```
+
 ## Validate a source config only
 
 ```bash
@@ -99,7 +108,14 @@ python tools/jsonl_to_import_csv.py \
   --output output/example-clinics-import.csv
 ```
 
-Then post that CSV text to the existing `/api/provider-sources/import` endpoint with a `sourceTag`.
+Then post that CSV text to the existing `/api/provider-sources/import` endpoint with a `sourceTag`:
+
+```bash
+python tools/post_import_csv.py \
+  --csv output/example-clinics-import.csv \
+  --api-base http://localhost:8080/api \
+  --source-tag example-clinic-directory
+```
 
 The CSV converter intentionally replaces commas inside cell values with semicolons because the current API parser is simple and splits rows on commas.
 
