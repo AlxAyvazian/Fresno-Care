@@ -1,13 +1,23 @@
 import { Router, type Request, type Response } from "express";
-import { getSourceStatusReport, getSourceSummary } from "../lib/apiSourceRegistry";
+import { getSourceStatusReport } from "../lib/apiSourceRegistry";
 
 const router = Router();
 
-router.get("/source-status", async (req: Request, res: Response) => {
+router.get("/source-status", async (_req: Request, res: Response) => {
   try {
     const report = getSourceStatusReport();
-    const summary = getSourceSummary();
-    
+    const summary = {
+      total: report.length,
+      configured: report.filter((source) => source.configured).length,
+      notConfigured: report.filter((source) => !source.configured).length,
+      active: report.filter((source) => source.adapterStatus === "active").length,
+      configuredNotWired: report.filter((source) => source.adapterStatus === "configured_not_wired").length,
+      planned: report.filter((source) => source.adapterStatus === "planned").length,
+      configuredButNotWired: report
+        .filter((source) => source.configured && source.adapterStatus === "configured_not_wired")
+        .map((source) => source.sourceName),
+    };
+
     res.json({
       summary,
       sources: report,
