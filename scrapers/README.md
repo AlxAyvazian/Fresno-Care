@@ -33,7 +33,35 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Run a clinic directory spider
+## One-command pipeline
+
+Use this after creating a source config:
+
+```bash
+bash tools/run_source_pipeline.sh \
+  clinic_directory \
+  sources/example_clinic_directory.json \
+  example-clinic-directory
+```
+
+For sitemap-based location pages:
+
+```bash
+bash tools/run_source_pipeline.sh \
+  sitemap_directory \
+  sources/example_sitemap_directory.json \
+  example-sitemap-directory
+```
+
+The runner validates the config, crawls the site, validates and dedupes JSONL, and creates an import-ready CSV.
+
+## Validate a source config only
+
+```bash
+python tools/check_source_config.py sources/example_clinic_directory.json
+```
+
+## Run a clinic directory spider manually
 
 Use this when the public site has a normal locations page with cards, pagination, and optional detail links:
 
@@ -43,7 +71,7 @@ scrapy crawl clinic_directory \
   -O output/example-clinics.raw.jsonl
 ```
 
-## Run a sitemap-driven spider
+## Run a sitemap-driven spider manually
 
 Use this when a clinic chain exposes a sitemap and location pages are spread across many URLs:
 
@@ -78,7 +106,7 @@ The CSV converter intentionally replaces commas inside cell values with semicolo
 ## Recommended workflow
 
 ```text
-Scrapy crawl -> raw JSONL -> validate/dedupe -> clean JSONL -> import CSV -> Network Map database
+source config -> config check -> Scrapy crawl -> raw JSONL -> validate/dedupe -> clean JSONL -> import CSV -> Network Map database
 ```
 
 ## Important implementation rule
