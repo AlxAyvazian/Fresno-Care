@@ -1,0 +1,31 @@
+{
+  "sourceTag": "example-clinic-directory",
+  "allowedDomains": ["example.com"],
+  "startUrls": ["https://example.com/locations"],
+  "listSelector": ".location-card",
+  "fields": {
+    "name": { "css": ".location-name::text" },
+    "address1": { "css": ".street-address::text" },
+    "city": { "css": ".locality::text" },
+    "state": { "css": ".region::text" },
+    "postalCode": { "css": ".postal-code::text" },
+    "phone": { "css": "a[href^='tel:']::text" },
+    "fax": { "css": ".fax::text" },
+    "hours": { "css": ".hours::text", "join": " | " },
+    "services": { "css": ".services li::text", "join": ", " },
+    "website": { "css": "a.location-link::attr(href)" }
+  },
+  "detailFields": {
+    "evidenceNote": { "css": "main::text", "join": " " },
+    "lat": { "css": "[data-lat]::attr(data-lat)" },
+    "lng": { "css": "[data-lng]::attr(data-lng)" }
+  },
+  "follow": {
+    "detailLinks": { "css": "a.location-link::attr(href)" },
+    "pagination": { "css": "a.next::attr(href)" }
+  },
+  "defaults": {
+    "internalStatus": "candidate",
+    "services": "urgent care, occupational health"
+  }
+}
