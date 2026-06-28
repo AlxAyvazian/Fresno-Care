@@ -43,16 +43,17 @@ scrapy crawl clinic_directory \
 
 Use `-O` to overwrite an output file, or `-o` to append.
 
-## Import JSONL into Network Map
+## Convert JSONL for the existing import endpoint
 
 ```bash
-python tools/import_jsonl_to_network_map.py \
+python tools/jsonl_to_import_csv.py \
   --input output/example-clinics.jsonl \
-  --api-base http://localhost:8080 \
-  --source-tag example-clinic-directory
+  --output output/example-clinics-import.csv
 ```
 
-The importer sends rows to `/provider-sources/import` as JSON rows. The API route supports CSV, JSONL, and JSON rows.
+Then post that CSV text to the existing `/api/provider-sources/import` endpoint with a `sourceTag`.
+
+The CSV converter intentionally replaces commas inside cell values with semicolons because the current API parser is simple and splits rows on commas.
 
 ## Important implementation rule
 
