@@ -1,5 +1,6 @@
 .venv/
 output/
+httpcache/
 *.log
 *.sqlite
 .pytest_cache/

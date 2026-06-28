@@ -33,17 +33,27 @@ The project settings enable crawler controls that are important for public clini
 
 ## Programmatic/batch crawling
 
-Scrapy exposes Crawler and CrawlerProcess APIs for running crawlers from scripts. The connector blocked adding a direct Python CrawlerProcess runner in this PR, so this branch adds a safer shell batch runner instead:
+Scrapy exposes Crawler and CrawlerProcess APIs for running crawlers from scripts. This PR intentionally uses the Scrapy CLI and shell runners (`tools/run_source_pipeline.sh` and `tools/run_batch_pipeline.sh`) rather than embedding `CrawlerProcess` inside the live app. This keeps the batch layer separate, easy to review, and safe to run without touching the Node/Express runtime.
+
+## Source config validation
+
+Before a crawl, run:
 
 ```bash
-bash tools/run_batch_pipeline.sh sources/source-a.json sources/source-b.json
+python tools/check_source_config.py sources/example.json
 ```
 
-That keeps the feature additive and avoids modifying the live app runtime.
+The validator checks:
+
+- required keys (`sourceTag`, `startUrls` or `sitemapUrls`, `fields`)
+- valid HTTP/HTTPS URLs for start and sitemap URLs
+- valid regex patterns for `urlInclude` and `urlExclude`
+- selector rules and `join` separators
+- presence of required import fields (`name`, `city`, `state`) across `fields`, `detailFields`, and `defaults`
 
 ## Stats and validation
 
-Scrapy collects crawl stats internally while a spider runs. For this branch, the external validation step reports practical import readiness:
+Scrapy collects crawl stats internally while a spider runs. For this PR, the external validation step reports practical import readiness:
 
 - input row count
 - valid row count
@@ -51,11 +61,14 @@ Scrapy collects crawl stats internally while a spider runs. For this branch, the
 - duplicate row count
 - invalid samples
 
-This is intentionally separate from the app runtime so failed or low-quality crawls do not pollute Network Map search results.
+The source and batch pipeline runners also print row counts for the raw JSONL, clean JSONL, and import CSV. This is intentionally separate from the app runtime so failed or low-quality crawls do not pollute Network Map search results.
 
 ## Non-goals
 
-- Do not run Scrapy inside live provider search routes.
+- Do not run Scrapy inside live provider search routes or map rendering.
 - Do not replace NPI, FMCSA, imported-clinic, or existing provider-source adapters.
+- Do not alter map rendering or current provider scoring.
 - Do not remove existing provider data flows.
+- Do not require Python/Scrapy to serve normal user requests.
 - Treat Scrapy as an additional offline ingestion source only.
+

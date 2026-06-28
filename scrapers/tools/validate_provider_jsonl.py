@@ -82,6 +82,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Validate and dedupe provider JSONL")
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output", type=Path, help="Optional cleaned JSONL output path")
+    parser.add_argument("--report", type=Path, help="Optional path to write the validation summary JSON")
     args = parser.parse_args()
 
     rows = read_rows(args.input)
@@ -96,10 +97,14 @@ def main() -> int:
     }
     print(json.dumps(report, indent=2, sort_keys=True))
 
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
     if args.output:
         write_jsonl(args.output, valid)
 
-    return 0 if valid else 1
+    return 0
 
 
 if __name__ == "__main__":

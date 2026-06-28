@@ -57,17 +57,20 @@ Optional keys:
 "city": { "xpath": "//*[contains(@class, 'city')]/text()" }
 ```
 
-## Minimum viable import fields
+## Required import fields
 
-The downstream import requires at least:
+Every scraped row must eventually contain:
 
 - `name`
 - `city`
 - `state`
 
+Rows missing any of these are dropped by the validation step. Provide them through `fields`, `detailFields`, or `defaults`.
+
 For the Network Map to be useful, also try to capture:
 
 - address
+- postalCode
 - phone
 - fax
 - website
@@ -75,3 +78,27 @@ For the Network Map to be useful, also try to capture:
 - services
 - evidenceNote
 - sourceUrl
+- lat
+- lng
+
+## Source config validation
+
+Before running a crawl, validate the config:
+
+```bash
+python tools/check_source_config.py sources/example_clinic_directory.json
+python tools/check_source_config.py sources/example_sitemap_directory.json
+```
+
+The validator checks for required keys, valid URLs, valid regex patterns, selector rules, and the presence of required import fields.
+
+## Sitemap URL filtering
+
+Use `urlInclude` and `urlExclude` to keep only location pages:
+
+```json
+"urlInclude": ["/locations/", "/clinic/"],
+"urlExclude": ["/blog/", "/news/", "/careers/", "/providers/"]
+```
+
+These are regex patterns, so escape special characters when needed.

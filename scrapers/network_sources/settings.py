@@ -31,6 +31,9 @@ DEFAULT_REQUEST_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+# Polite, identifiable user agent for clinic-directory crawls.
+USER_AGENT = "NetworkMapScraper/1.0 (+https://github.com/Occumed79/Network-Map)"
+
 ITEM_PIPELINES = {
     "network_sources.pipelines.CleanClinicLocationPipeline": 300,
 }

@@ -24,6 +24,23 @@ Expected fields:
 - `lat`
 - `lng`
 
+## What this does and does not change
+
+- **What it does:** adds a standalone, offline batch scraper that can produce raw JSONL, clean it, dedupe it, convert it to import CSV, and optionally post it to the existing `/api/provider-sources/import` endpoint.
+- **What it does not change:** existing provider search, map rendering, NPI/FMCSA sources, imported-clinic DB flow, provider scoring, or any existing UI or API routes.
+
+Scrapy is never invoked during a normal user request. It is an optional batch ingestion tool.
+
+## Non-goals
+
+- Do not run Scrapy during live provider searches.
+- Do not replace the NPI source.
+- Do not replace the FMCSA source.
+- Do not replace or disable the imported-clinic database flow.
+- Do not alter map rendering or provider scoring.
+- Do not remove or disable existing provider sources.
+- Do not require Python/Scrapy for the live app to serve normal requests.
+
 ## Setup
 
 ```bash
@@ -74,7 +91,7 @@ bash tools/run_batch_pipeline.sh \
   sources/example_sitemap_directory.json
 ```
 
-The batch runner keeps this additive: it calls the source pipeline for each config and does not replace any existing Network Map source.
+The batch runner calls the source pipeline for each config, prints a per-source summary table (raw, clean, import row counts and status), and exits non-zero if any source failed. It does not replace any existing Network Map source.
 
 ## Validate a source config only
 
