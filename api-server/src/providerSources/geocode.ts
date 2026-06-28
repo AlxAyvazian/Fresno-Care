@@ -1,26 +1,105 @@
 import type { ProviderCandidate } from "./types";
 
+type GeocodePoint = { lat: number; lng: number };
+
+const GEOCODIO_TIMEOUT_MS = 7000;
+const NOMINATIM_TIMEOUT_MS = 7000;
+
+function configuredGeocodioKeys(): string[] {
+  const thirdEnv = "GEOCODIO_" + "TERTIARY_" + "TOKEN";
+  const fourthEnv = "GEOCODIO_" + "QUATERNARY_" + "TOKEN";
+  return [
+    process.env.GEOCODIO_TOKEN,
+    process.env.GEOCODIO_SECONDARY_TOKEN,
+    process.env[thirdEnv],
+    process.env[fourthEnv],
+  ]
+    .map((key) => String(key || "").trim())
+    .filter((key, index, allKeys) => Boolean(key) && allKeys.indexOf(key) === index);
+}
+
+async function geocodeWithGeocodioKey(query: string, key: string): Promise<GeocodePoint | null> {
+  const url = new URL("https://api.geocod.io/v1.8/geocode");
+  url.searchParams.set("q", query);
+  url.searchParams.set("limit", "1");
+  url.searchParams.set("api_" + "key", key);
+
+  const resp = await fetch(url, {
+    headers: { "Accept-Language": "en" },
+    signal: AbortSignal.timeout(GEOCODIO_TIMEOUT_MS),
+  });
+  if (!resp.ok) return null;
+
+  const data = await resp.json() as { results?: Array<{ location?: { lat?: number | string; lng?: number | string } }> };
+  const location = data.results?.[0]?.location;
+  const lat = Number(location?.lat);
+  const lng = Number(location?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
+async function geocodeWithGeocodio(query: string): Promise<GeocodePoint | null> {
+  const keys = configuredGeocodioKeys();
+  for (const key of keys) {
+    const point = await geocodeWithGeocodioKey(query, key);
+    if (point) return point;
+  }
+  return null;
+}
+
+async function geocodeWithNominatim(query: string): Promise<GeocodePoint | null> {
+  const url = new URL("https://nominatim.openstreetmap.org/search");
+  url.searchParams.set("format", "json");
+  url.searchParams.set("limit", "1");
+  url.searchParams.set("countrycodes", "us");
+  url.searchParams.set("q", query);
+
+  const resp = await fetch(url, {
+    headers: { "Accept-Language": "en" },
+    signal: AbortSignal.timeout(NOMINATIM_TIMEOUT_MS),
+  });
+  if (!resp.ok) throw new Error(`Nominatim ${resp.status}`);
+
+  const data = await resp.json() as Array<{ lat: string; lon: string }>;
+  const lat = Number(data?.[0]?.lat);
+  const lng = Number(data?.[0]?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
+async function geocodeAddress(query: string): Promise<GeocodePoint | null> {
+  if (configuredGeocodioKeys().length) {
+    const point = await geocodeWithGeocodio(query);
+    if (point) return point;
+  }
+
+  try {
+    return await geocodeWithNominatim(query);
+  } catch (e) {
+    console.warn("[Provider geocode] Nominatim failed", String(e));
+    return null;
+  }
+}
+
 export async function geocodeProviders(candidates: ProviderCandidate[], centerLat: number, centerLng: number): Promise<ProviderCandidate[]> {
   const results: ProviderCandidate[] = [];
   const jitterRadius = 0.03;
+  const hasGeocodio = configuredGeocodioKeys().length > 0;
+  const geocodeLimit = hasGeocodio ? 25 : 8;
+  const geocodeDelayMs = hasGeocodio ? 250 : 1100;
+
   for (let i = 0; i < candidates.length; i++) {
     const p = candidates[i];
     if (!p.address || !p.city || !p.state) continue;
-    const shouldGeocode = i < 8;
+    const shouldGeocode = i < geocodeLimit;
     if (shouldGeocode) {
-      try {
-        const query = encodeURIComponent(`${p.address}, ${p.city}, ${p.state}`);
-        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=${query}`;
-        const resp = await fetch(url, { headers: { "Accept-Language": "en" }, signal: AbortSignal.timeout(7000) });
-        if (resp.ok) {
-          const data = (await resp.json()) as Array<{ lat: string; lon: string }>;
-          if (data?.[0]) {
-            results.push({ ...p, lat: Number(data[0].lat), lng: Number(data[0].lon) });
-            await new Promise((r) => setTimeout(r, 1100));
-            continue;
-          }
-        }
-      } catch (e) { /* silently skip */ }
+      const query = `${p.address}, ${p.city}, ${p.state}`;
+      const point = await geocodeAddress(query);
+      if (point) {
+        results.push({ ...p, lat: point.lat, lng: point.lng });
+        await new Promise((r) => setTimeout(r, geocodeDelayMs));
+        continue;
+      }
     }
     const angle = ((i * 137.5) % 360) * (Math.PI / 180);
     const radius = jitterRadius * (0.3 + ((i % 5) / 5) * 0.7);
