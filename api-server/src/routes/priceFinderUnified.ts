@@ -59,11 +59,13 @@ router.get("/price-finder", async (req: Request, res: Response, next: NextFuncti
 
   try {
     // Use the unified orchestrator (same as POST /api/provider-sources/search)
+    // Pass radiusMiles: 0 because we don't have a real center point —
+    // passing a real radius with centerLat/Lng=0 would filter out all US providers.
     const unified = await runUnifiedSearch({
       city,
       state,
       serviceType,
-      radiusMiles: Number.isFinite(radiusMiles) ? radiusMiles : 35,
+      radiusMiles: 0,
       centerLat: 0,
       centerLng: 0,
     });

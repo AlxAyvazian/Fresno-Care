@@ -228,11 +228,13 @@ export async function runUnifiedProviderSearch(params: {
   const serviceType = params.serviceType.trim() || "physicalExam";
   const radiusMiles = Number(params.radiusMiles || 35);
 
+  // Pass radiusMiles: 0 because we don't have a real center point —
+  // passing a real radius with centerLat/Lng=0 would filter out all US providers.
   const unified = await runUnifiedSearch({
     city,
     state,
     serviceType,
-    radiusMiles,
+    radiusMiles: 0,
     centerLat: 0,
     centerLng: 0,
   });
