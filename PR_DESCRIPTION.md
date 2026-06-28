@@ -1,24 +1,56 @@
-# PR Description: LangSearch Web Evidence + API Source Registry
+# PR Description: Unified API Source Registry + Multi-Source Web Evidence
 
 ## Overview
-This PR implements LangSearch web evidence integration for provider discovery, along with a comprehensive API source registry for the unified search engine. The registry enables the backend to track, categorize, and report on all configured API keys, while the web evidence adapter supports multiple search APIs (LangSearch, Serper, Tavily) for enhanced provider discovery.
 
-## Environment Variables Added
-Added the following environment variables to `render.yaml` as backend env vars with `sync: false` for secrets:
+This PR adds a backend-only API source registry and a unified multi-source web evidence layer for Network Map.
 
-### Web Search / Web Evidence
+This is not a LangSearch-only PR. LangSearch is one source inside a larger backend source system.
+
+The goal is:
+
+```text
+NPI / FMCSA / imported clinics / RapidAPI / web evidence APIs
+  -> normalize
+  -> dedupe
+  -> evidence
+  -> score
+  -> geocode when possible
+  -> persist into Neon
+```
+
+This does not replace existing app behavior.
+
+## Additive-only scope
+
+This PR does not replace or remove:
+
+- NPI
+- FMCSA
+- imported clinic DB flow
+- map inventory loading from Neon
+- provider dedupe/scoring/geocoding rules
+- existing frontend behavior
+
+All API-backed evidence feeds the backend normalization/evidence pipeline only.
+
+## Environment variables registered
+
+### Web search / web evidence
+
 - `LANGSEARCH_API_KEY`
 - `SERPER_API_KEY`
 - `TAVILY_API_KEY`
 - `EXA_API_KEY`
 
-### Web Extraction / Browser Automation
+### Web extraction / browser automation
+
 - `FIRECRAWL_API_KEY`
 - `BROWSE_AI_API_KEY`
 - `OLOSTEP_API_KEY`
 - `BROWSERBASE_API_KEY`
 
-### AI Extraction / Summarization / Ranking
+### AI extraction / summarization / ranking
+
 - `GEMINI_API_KEY`
 - `GROQ_API_KEY`
 - `OPENROUTER_KEY`
@@ -27,7 +59,8 @@ Added the following environment variables to `render.yaml` as backend env vars w
 - `MINIMAX_API_KEY`
 - `CLOD_API_KEY`
 
-### Geocoding / Map / Distance
+### Geocoding / map / distance
+
 - `GEOCODIO_TOKEN`
 - `GEOCODIO_SECONDARY_TOKEN`
 - `GEOCODIO_TERTIARY_TOKEN`
@@ -40,176 +73,157 @@ Added the following environment variables to `render.yaml` as backend env vars w
 - `RAPIDAPI_PROVIDER_SEARCH_ENABLED`
 - `RAPIDAPI_ROUTING_DISTANCE_ENABLED`
 
-### Vector / Semantic Index
+### Vector / semantic index
+
 - `PINECONE_API_KEY`
 
-## Implementation Details
+## Actively wired in this PR
 
-### Original LangSearch Web Evidence Implementation
-This PR initially implemented LangSearch integration for provider discovery:
-- **LangSearch Client** (`api-server/src/lib/langSearchClient.ts`): Backend client for LangSearch API
-- **LangSearch Adapter** (`api-server/src/providerSources/adapters/langSearch.ts`): Adapter that converts LangSearch results to ProviderCandidate format
-- **Trust Tier System**: Added `trustTier` field to ProviderCandidate to indicate source reliability (verified, registry, directory, lead)
-- **Coordinate Status System**: Added `coordinateStatus` field to track geocoding state (imported, geocoded, unverified)
-- **Optional Evidence Layer**: LangSearch runs as an optional lead/evidence layer when `LANGSEARCH_API_KEY` is configured, never replacing NPI or imported data
+### Provider discovery / web evidence
 
-### 1. API Source Registry (`api-server/src/lib/apiSourceRegistry.ts`)
-Created a comprehensive registry that:
-- Categorizes each API source into 5 categories: web_search, web_extraction, ai_extraction, geocoding, vector_index
-- Tracks adapter status: active, configured_not_wired, planned
-- Defines usage contexts: provider_discovery, price_discovery, geocoding, enrichment, indexing
-- Provides safe diagnostic functions that only expose configured/not-configured booleans (never secret values)
+The orchestrator now routes configured web APIs through the unified `webevidence` adapter.
 
-### 2. Source Status Endpoint (`GET /api/source-status`)
-New diagnostic endpoint that returns:
-- **summary**: Overall statistics (total, configured, active, configured_not_wired, planned)
-- **sources**: Detailed array with:
-  - sourceName: Human-readable name
-  - envVar: Environment variable name
-  - configured: boolean (true if env var is set and non-empty)
-  - category: API category
-  - adapterStatus: Current wiring status
-  - usedBy: Array of usage contexts
+Active web evidence sources:
 
-### 3. Updated Unified Search Audit Response
-The `/api/provider-sources/search` endpoint now includes in its audit:
-- **activeAdapters**: Which adapters ran for this search
-- **configuredApiSources**: All API sources with configured keys
-- **missingApiSources**: All API sources without configured keys
-- **configuredButNotWired**: Sources with keys but not yet wired into adapters
+- `LANGSEARCH_API_KEY` through the shared `langSearchClient.ts`
+- `SERPER_API_KEY`
+- `TAVILY_API_KEY`
+- `EXA_API_KEY`
+- `FIRECRAWL_API_KEY` using Firecrawl search as web evidence
 
-This allows immediate visibility into whether the backend sees environment variables and whether each source is actually wired into the unified search engine.
+Web evidence candidates remain low-trust:
 
-### 4. Web Evidence Adapter (`api-server/src/providerSources/adapters/webEvidence.ts`)
-Created a unified web evidence adapter that:
-- Supports multiple search APIs: LangSearch, Serper, Tavily
-- Automatically uses the first available configured API
-- Tries APIs in order: LangSearch → Serper → Tavily
-- Skips APIs that are not configured
-- Converts web search results to ProviderCandidate format
-- Includes evidence snippets and URLs for each result
+- `trustTier: "lead"`
+- `coordinateStatus: "unverified"`
+- evidence/list-first, not verified provider truth
 
-The adapter is integrated into the orchestrator alongside the existing LangSearch adapter, providing a fallback mechanism for web evidence collection.
+### Provider discovery / RapidAPI
 
-## API Wiring Status
+RapidAPI provider search is routed by the orchestrator only when required env values and flags are enabled:
 
-### Actively Wired (in this PR)
-- **Web Evidence**: LangSearch (original adapter + unified adapter), Serper, Tavily
-- **Geocoding**: Geocodio (primary, secondary, tertiary, quaternary), RapidAPI (all flags)
-- **Existing**: NPI, FMCSA, ClinicImports, RapidAPI provider search
+- `RAPIDAPI_KEY`
+- `RAPIDAPI_ENABLED`
+- `RAPIDAPI_PROVIDER_SEARCH_ENABLED`
 
-### Registered But Not Yet Wired (follow-up work needed)
-- **Web Search**: Exa
-- **Web Extraction**: Firecrawl, Browse AI, Olostep, Browserbase
-- **AI Extraction**: Gemini, Groq, OpenRouter, Cerebras, HuggingFace, Minimax, Clod
-- **Vector Index**: Pinecone
+### Price discovery
 
-These sources are registered in the API source registry and will be reported in `/api/source-status`, but do not have adapter implementations yet.
+`/api/price-discovery/run` currently uses LangSearch for open-web price discovery.
 
-## Usage Categories
-The system uses categories to determine which APIs to call for different operations:
+Safety fixes:
 
-- **Provider Discovery**: Can use web evidence sources (LangSearch, Serper, Tavily)
-- **Price Discovery**: Can use web search + extraction sources (when implemented)
-- **Geocoding**: Uses Geocodio/RapidAPI geocoding APIs
-- **AI Keys**: Used only for extraction/summarization/ranking (when implemented)
-- **Pinecone**: For vector indexing/search, not normal map display
+- explicit `prices: []` is respected as an intentional zero-result run
+- `query` must be a non-empty string
+- LangSearch failures are best-effort and do not kill the route
+- price rows are saved only when a dollar amount is extracted
+- weak web leads do not go through generic provider upsert unless they have NPI or address + ZIP
+- response separates `configured`, `requested`, and `ran`
 
-## How to Check `/api/source-status`
+### Geocoding
 
-### Example Request
-```bash
-curl https://your-app.onrender.com/api/source-status
+Existing geocoding support remains active for:
+
+- `GEOCODIO_TOKEN`
+- `GEOCODIO_SECONDARY_TOKEN`
+- `GEOCODIO_TERTIARY_TOKEN`
+- `GEOCODIO_QUATERNARY_TOKEN`
+
+## API source registry
+
+Added:
+
+```text
+api-server/src/lib/apiSourceRegistry.ts
 ```
 
-### Example Response
+The registry tracks:
+
+- source name
+- env var name
+- category
+- configured true/false
+- adapter status
+- usage area
+
+Statuses are intentionally strict:
+
+- `active` means real code currently calls the API
+- `configured_not_wired` means diagnostics can see the key, but no dedicated adapter consumes it yet
+- `planned` is reserved for future work
+
+## Source status endpoint
+
+Added:
+
+```text
+GET /api/source-status
+```
+
+This returns safe diagnostics only. It never exposes secret values.
+
+## Unified search audit
+
+`/api/provider-sources/search` audit now includes:
+
+- `configuredApiSources`
+- `missingApiSources`
+- `configuredButNotWired`
+
+This makes it visible when a key exists but is not actually wired yet.
+
+## Registered but not fully wired yet
+
+These keys are visible through `/api/source-status`, but still need dedicated adapters:
+
+- `BROWSE_AI_API_KEY`
+- `OLOSTEP_API_KEY`
+- `BROWSERBASE_API_KEY`
+- `GEMINI_API_KEY`
+- `GROQ_API_KEY`
+- `OPENROUTER_KEY`
+- `CEREBRAS_API_KEY`
+- `HUGGINGFACE_API_KEY`
+- `MINIMAX_API_KEY`
+- `CLOD_API_KEY`
+- `PINECONE_API_KEY`
+
+Follow-up implementation details are documented in:
+
+```text
+TODO_API_ADAPTERS.md
+```
+
+## Example `/api/source-status` response
+
 ```json
 {
   "summary": {
     "total": 27,
     "configured": 5,
     "notConfigured": 22,
-    "active": 13,
+    "active": 16,
     "configuredNotWired": 4,
-    "planned": 0,
-    "byCategory": {
-      "web_search": { "total": 4, "configured": 2 },
-      "web_extraction": { "total": 4, "configured": 0 },
-      "ai_extraction": { "total": 7, "configured": 0 },
-      "geocoding": { "total": 11, "configured": 3 },
-      "vector_index": { "total": 1, "configured": 0 }
-    }
+    "planned": 0
   },
   "sources": [
     {
-      "sourceName": "LangSearch",
-      "envVar": "LANGSEARCH_API_KEY",
+      "sourceName": "Exa",
+      "envVar": "EXA_API_KEY",
       "configured": true,
       "category": "web_search",
       "adapterStatus": "active",
-      "usedBy": ["provider_discovery", "price_discovery"]
-    },
-    {
-      "sourceName": "Serper",
-      "envVar": "SERPER_API_KEY",
-      "configured": true,
-      "category": "web_search",
-      "adapterStatus": "active",
-      "usedBy": ["provider_discovery", "price_discovery"]
-    },
-    {
-      "sourceName": "Tavily",
-      "envVar": "TAVILY_API_KEY",
-      "configured": false,
-      "category": "web_search",
-      "adapterStatus": "active",
-      "usedBy": ["provider_discovery", "price_discovery"]
-    },
-    {
-      "sourceName": "Firecrawl",
-      "envVar": "FIRECRAWL_API_KEY",
-      "configured": false,
-      "category": "web_extraction",
-      "adapterStatus": "configured_not_wired",
-      "usedBy": ["price_discovery", "enrichment"]
+      "usedBy": ["provider_discovery"]
     }
-    // ... remaining sources
   ]
 }
 ```
 
-## Follow-up Adapters Still Needed
+## Testing notes
 
-### High Priority
-1. **Web Extraction Adapters** (for price discovery):
-   - Firecrawl adapter
-   - Browse AI adapter
-   - Olostep adapter
-   - Browserbase adapter
+Recommended checks after deployment:
 
-2. **AI Extraction/Summarization Adapters** (for enrichment):
-   - Gemini adapter
-   - Groq adapter
-   - OpenRouter adapter
-   - Cerebras adapter
-   - HuggingFace adapter
-   - Minimax adapter
-   - Clod adapter
-
-### Medium Priority
-3. **Exa Web Search Adapter** (alternative web search source)
-
-4. **Pinecone Vector Index Adapter** (for semantic search)
-
-## Security Notes
-- All environment variables are marked with `sync: false` in render.yaml to prevent secret synchronization
-- The `/api/source-status` endpoint only exposes configured/not-configured booleans
-- No secret values are ever exposed in API responses or logs
-- API keys are only checked for presence (non-empty), never logged or returned
-
-## Testing
-To test the implementation:
-1. Set one or more of the web search API keys in your environment
-2. Call `GET /api/source-status` to verify the keys are detected
-3. Call `POST /api/provider-sources/search` to see the audit include API source status
-4. Verify the web evidence adapter uses the first available configured API
+1. Set at least one web evidence API key.
+2. Call `GET /api/source-status`.
+3. Call `POST /api/provider-sources/search`.
+4. Confirm `audit.activeAdapters` includes `webevidence` when a supported web evidence key is configured.
+5. Confirm web evidence candidates are unverified leads, not fake map pins.
+6. Confirm registered-but-not-wired keys appear in diagnostics without being claimed as active.
