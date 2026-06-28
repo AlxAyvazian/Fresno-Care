@@ -2,6 +2,8 @@ import type { ProviderCandidate, SearchParams, SourceResult, SearchAudit, Unifie
 import { searchNpi } from "./adapters/npi";
 import { searchFmcsa } from "./adapters/fmcsa";
 import { searchClinicImports } from "./adapters/clinicImportsDb";
+import { searchLangSearchEvidence } from "./adapters/langSearch";
+import { isLangSearchConfigured } from "../lib/langSearchClient";
 import { dedupeCandidates } from "./dedupe";
 import { geocodeProviders } from "./geocode";
 import { scoreProvider, assignTrustTier } from "./scoring";
@@ -30,7 +32,31 @@ const ADAPTER_REGISTRY: Record<string, (city: string, state: string, serviceType
   npi: (c, s, st) => searchNpi(c, s, st),
   fmcsa: (c, s) => searchFmcsa(c, s),
   clinicimports: (c, s) => searchClinicImports(c, s),
+  langsearch: (c, s, st) => searchLangSearchEvidence(c, s, st),
 };
+
+const SOURCE_LABELS: Record<string, string> = {
+  npi: "NPI Registry",
+  fmcsa: "FMCSA National Registry",
+  clinicimports: "Imported Clinics (DB)",
+  langsearch: "LangSearch Web Evidence",
+};
+
+function activeAdapterIds(serviceType: string): string[] {
+  const adapterIds = [...(SERVICE_ROUTING[serviceType] || ["npi"] )];
+
+  // LangSearch is an optional lead/evidence layer. It never replaces NPI/imported data,
+  // and it only runs when the backend has LANGSEARCH_API_KEY configured.
+  if (
+    process.env.LANGSEARCH_PROVIDER_EVIDENCE !== "false" &&
+    isLangSearchConfigured() &&
+    !adapterIds.includes("langsearch")
+  ) {
+    adapterIds.push("langsearch");
+  }
+
+  return adapterIds;
+}
 
 export function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 3958.8;
@@ -43,7 +69,7 @@ export function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: n
 export async function runUnifiedSearch(params: SearchParams): Promise<UnifiedSearchResponse> {
   const startMs = performance.now();
   const { city, state, radiusMiles, serviceType, centerLat, centerLng } = params;
-  const adapterIds = SERVICE_ROUTING[serviceType] || ["npi"];
+  const adapterIds = activeAdapterIds(serviceType);
   const adapters = adapterIds
     .map((id) => ({ id, fn: ADAPTER_REGISTRY[id] }))
     .filter((a): a is { id: string; fn: (c: string, s: string, st: string) => Promise<ProviderCandidate[]> } => Boolean(a.fn));
@@ -62,15 +88,14 @@ export async function runUnifiedSearch(params: SearchParams): Promise<UnifiedSea
 
   settled.forEach((outcome, i) => {
     const { id } = adapters[i];
-    const labelMap: Record<string, string> = { npi: "NPI Registry", fmcsa: "FMCSA National Registry", clinicimports: "Imported Clinics (DB)" };
     if (outcome.status === "fulfilled") {
       rawResultCounts[id] = outcome.value.results.length;
       allCandidates.push(...outcome.value.results);
-      sourceResults.push({ sourceId: id, sourceLabel: labelMap[id] || id, ok: true, count: outcome.value.results.length });
+      sourceResults.push({ sourceId: id, sourceLabel: SOURCE_LABELS[id] || id, ok: true, count: outcome.value.results.length });
     } else {
       const err = String(outcome.reason?.message || outcome.reason || "failed");
       errorsBySource[id] = err;
-      sourceResults.push({ sourceId: id, sourceLabel: labelMap[id] || id, ok: false, count: 0, error: err });
+      sourceResults.push({ sourceId: id, sourceLabel: SOURCE_LABELS[id] || id, ok: false, count: 0, error: err });
     }
   });
 
