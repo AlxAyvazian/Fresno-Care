@@ -1,0 +1,7 @@
+.venv/
+output/
+*.log
+*.sqlite
+.pytest_cache/
+__pycache__/
+*.py[cod]
