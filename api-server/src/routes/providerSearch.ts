@@ -1,4 +1,7 @@
 import { Router, type Request, type Response } from "express";
+import { runUnifiedSearch } from "../providerSources/orchestrator";
+import { upsertProvider } from "../providerSources/persistence";
+import { isPersistenceConfigured } from "../lib/networkMapPersistence";
 
 const router = Router();
 
@@ -210,6 +213,10 @@ function webHints(city: string, state: string, serviceType: string): ProviderCan
   }));
 }
 
+/**
+ * Legacy compatibility wrapper — delegates to the unified orchestrator.
+ * This ensures /api/providers/search uses the same pipeline as /api/provider-sources/search.
+ */
 export async function runUnifiedProviderSearch(params: {
   city: string;
   state: string;
@@ -221,25 +228,52 @@ export async function runUnifiedProviderSearch(params: {
   const serviceType = params.serviceType.trim() || "physicalExam";
   const radiusMiles = Number(params.radiusMiles || 35);
 
-  const [npi, osm] = await Promise.all([
-    searchNpi(city, state, serviceType).catch(() => []),
-    searchOsm(city, state, serviceType, Number.isFinite(radiusMiles) ? radiusMiles : 35).catch(() => []),
-  ]);
-  const web = webHints(city, state, serviceType);
-  const results = mergeCandidates([...npi, ...osm, ...web]);
+  const unified = await runUnifiedSearch({
+    city,
+    state,
+    serviceType,
+    radiusMiles,
+    centerLat: 0,
+    centerLng: 0,
+  });
+
+  // Upsert into Neon
+  if (isPersistenceConfigured()) {
+    for (const c of unified.results) {
+      try { await upsertProvider(c, serviceType); } catch { /* ignore */ }
+    }
+  }
+
+  // Map to legacy response format
+  const results: ProviderCandidate[] = unified.results.map((c) => ({
+    name: c.name,
+    address: c.address,
+    phone: c.phone,
+    website: c.website,
+    lat: c.lat,
+    lng: c.lng,
+    taxonomy: c.taxonomy,
+    source: c.source as ProviderSource,
+    sourceDetail: c.sourceDetail,
+    sourceUrl: c.sourceUrl,
+    confidence: c.confidence,
+    score: c.score,
+    badges: c.badges,
+  }));
 
   return {
     location: `${city}, ${state}`,
     serviceType,
-    radiusMiles: Number.isFinite(radiusMiles) ? radiusMiles : 35,
+    radiusMiles,
     count: results.length,
     results,
-    providers: [
-      { source: "NPI", count: npi.length, ok: true },
-      { source: "OpenStreetMap", count: osm.length, ok: true },
-      { source: "WebHint", count: web.length, ok: true },
-    ],
-    note: "Unified provider search aggregates active free sources in parallel, merges duplicates, and labels confidence. WebHint rows are search leads, not verified providers.",
+    providers: unified.sourceResults.map((s) => ({
+      source: s.sourceLabel,
+      count: s.count,
+      ok: s.ok,
+      error: s.error,
+    })),
+    note: "Legacy route — now delegating to unified provider-sources orchestrator with Neon persistence.",
   };
 }
 

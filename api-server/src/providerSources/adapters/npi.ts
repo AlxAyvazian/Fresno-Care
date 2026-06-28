@@ -1,10 +1,11 @@
-import type { ProviderCandidate } from "../types";
+import type { ProviderCandidate, CoordinateStatus, TrustTier } from "../types";
 
 const NPI_TAXONOMY_MAP: Record<string, string[]> = {
   urgent: ["Clinic/Center, Urgent Care", "Urgent Care", "Urgent Care Medicine"],
   occupational: ["Occupational Medicine", "Preventive Medicine, Occupational Medicine"],
   primaryCare: ["Family Medicine", "General Practice", "Internal Medicine", "Pediatric Medicine"],
   dentist: ["Dentist", "Dentist General Practice", "Dental Public Health", "Pediatric Dentistry"],
+  dental: ["Dentist", "Dentist General Practice", "Dental Public Health", "Endodontics", "Oral and Maxillofacial Surgery", "Orthodontics and Dentofacial Orthopedics", "Pediatric Dentistry", "Periodontics", "Prosthodontics"],
   radiology: ["Diagnostic Radiology", "Radiology"],
   pulmonary: ["Pulmonary Disease", "Internal Medicine", "Critical Care Medicine"],
   lab: ["Clinical Medical Laboratory", "Clinical Laboratory Technician", "Phlebotomy"],
@@ -17,6 +18,11 @@ const NPI_TAXONOMY_MAP: Record<string, string[]> = {
   stressTest: ["Cardiovascular Disease", "Cardiology", "Internal Medicine"],
   mammogram: ["Diagnostic Radiology", "Radiology"],
   drugscreen: ["Clinical Medical Laboratory"],
+  urgentCare: ["Clinic/Center, Urgent Care", "Urgent Care", "Urgent Care Medicine"],
+  physicalExam: ["Occupational Medicine", "Preventive Medicine", "Family Medicine", "Internal Medicine"],
+  pharmacy: ["Pharmacy", "Community/Retail Pharmacy"],
+  vaccinations: ["Public Health & General Preventive Medicine", "Family Medicine", "Pharmacy"],
+  fqhc: ["Federally Qualified Health Center"],
 };
 
 export async function searchNpi(city: string, state: string, serviceType: string): Promise<ProviderCandidate[]> {
@@ -49,7 +55,8 @@ export async function searchNpi(city: string, state: string, serviceType: string
           taxonomy: tax.desc || taxonomy, taxonomyCode: tax.code || "",
           source: "NPI", sourceDetail: `NPI ${r.enumeration_type || ""}`.trim(),
           sourceUrl: npi ? `https://npiregistry.cms.hhs.gov/provider-view/${npi}` : "",
-          confidence: "medium" as const, score: isOrg ? 35 : 30, badges: ["NPI"], evidence: [], _rawSources: ["NPI"],
+          coordinateStatus: "unverified" as CoordinateStatus,
+          confidence: "medium" as const, trustTier: "registry" as TrustTier, score: isOrg ? 35 : 30, badges: ["NPI"], evidence: [], _rawSources: ["NPI"],
         };
       }).filter((c) => c.address && c.city && c.state);
     }),

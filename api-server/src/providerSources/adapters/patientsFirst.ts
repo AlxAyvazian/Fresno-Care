@@ -1,4 +1,4 @@
-import type { ProviderCandidate } from "../types";
+import type { ProviderCandidate, CoordinateStatus, TrustTier } from "../types";
 
 const RAW = `
 Patients First Urgent Care|705 N. Battlefield Boulevard|Chesapeake|VA|23322-4901|(757)547-0688|(757)547-2902
@@ -95,10 +95,12 @@ function parse(): ProviderCandidate[] {
       phone: phone || "",
       fax: fax || "",
       website: "",
+      coordinateStatus: "unverified" as CoordinateStatus,
       source: "Patients First",
       sourceDetail: "Patients First Urgent Care — Manual Import",
       sourceUrl: "",
       confidence: "high" as const,
+      trustTier: "verified" as TrustTier,
       score: 100,
       badges: ["Occu-Med Confirmed", "Patients First"],
       evidence: [{

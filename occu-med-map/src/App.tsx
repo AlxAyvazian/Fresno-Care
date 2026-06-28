@@ -12,10 +12,37 @@ import {
 } from './lib/procedurePrices';
 import { buildCitiesInRadius, buildFacilityRows, queryFacilitiesInRadius, type FacilityResult } from './lib/radiusExtractor';
 import { NPI_CATEGORY_MAP, NPI_CATEGORY_KEYS, isNpiCategory } from './lib/npiTaxonomies';
-import { searchNpiCustom, type NpiCustomSearchParams } from './lib/npiSearch';
 import type { ProviderCandidate, UnifiedSearchResponse, SearchAudit } from './lib/providerSources/types';
 import { SOURCE_BADGES } from './lib/providerSources/types';
 import { buildExplanation } from './lib/providerSources/scoring';
+
+type NpiCustomSearchParams = {
+  city: string;
+  state: string;
+  centerLat: number;
+  centerLng: number;
+  limit?: number;
+  organization_name?: string;
+  first_name?: string;
+  last_name?: string;
+  taxonomy_description?: string;
+  taxonomy_code?: string;
+  enumeration_type?: string;
+};
+
+async function searchNpiCustom(params: NpiCustomSearchParams): Promise<{ results: ProviderCandidate[]; normalizedCount: number; geocodedCount: number; finalMarkerCount: number; error?: string }> {
+  const resp = await fetch('/api/provider-sources/npi-custom', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error((err as any).error || `HTTP ${resp.status}`);
+  }
+  return resp.json();
+}
 
 async function searchProviderSources(body: { city: string; state: string; serviceType: string; radiusMiles: number; centerLat: number; centerLng: number }): Promise<UnifiedSearchResponse> {
   const resp = await fetch('/api/provider-sources/search', {
@@ -1031,18 +1058,7 @@ export default function App() {
   const [pfReportPrice, setPfReportPrice] = useState('');
   const [pfShareCopied, setPfShareCopied] = useState(false);
 
-  async function pfSearchNpi(city: string, state: string, taxonomyDesc: string) {
-    const params = new URLSearchParams({
-      version: '2.1', city: city.trim(),
-      state: state.trim().toUpperCase(),
-      taxonomy_description: taxonomyDesc,
-      enumeration_type: 'NPI-2', limit: '15',
-    });
-    const resp = await fetch(`https://npiregistry.cms.hhs.gov/api/?${params}`, {signal: AbortSignal.timeout(8000)});
-    if (!resp.ok) throw new Error(`NPI ${resp.status}`);
-    const data = await resp.json() as {results?: any[]};
-    return data.results || [];
-  }
+  // pfSearchNpi removed — Price Finder now uses the backend unified orchestrator via /api/price-finder
 
   async function runPriceSearch() {
     if (!pfCity.trim()) return;
@@ -2107,31 +2123,33 @@ export default function App() {
     const state=(rd.queryState||'').trim().toUpperCase();
     if(!city||!state) return null;
     const taxonomy=examTaxonomyHint(rd.examKey);
-    const params=new URLSearchParams({
-      version:'2.1',
-      city,
-      state,
-      taxonomy_description:taxonomy,
-      enumeration_type:'NPI-2',
-      limit:'10',
-    });
-    const sourceUrl=`https://npiregistry.cms.hhs.gov/api/?${params.toString()}`;
+    const sourceUrl=`https://npiregistry.cms.hhs.gov/search`;
     try {
-      const resp=await fetch(sourceUrl,{signal:AbortSignal.timeout(12000)});
+      // Use the backend NPI custom search instead of direct browser API call
+      const resp=await fetch('/api/provider-sources/npi-custom',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          city,
+          state,
+          centerLat:0,
+          centerLng:0,
+          taxonomy_description:taxonomy,
+          enumeration_type:'NPI-2',
+          limit:10,
+        }),
+        signal:AbortSignal.timeout(30000),
+      });
       if(!resp.ok) throw new Error(`NPI HTTP ${resp.status}`);
       const data=await resp.json() as {results?:any[]};
-      const providers=(data.results||[]).map((r:any)=>{
-        const basic=r.basic||{};
-        const tax=(r.taxonomies||[]).find((t:any)=>t.primary)||r.taxonomies?.[0]||{};
-        const addr=(r.addresses||[]).find((a:any)=>a.address_purpose==='LOCATION')||r.addresses?.[0]||{};
-        const npi=String(r.number||'');
+      const providers=((data as any).results||[]).map((r:any)=>{
         return {
-          name:basic.organization_name || [basic.first_name,basic.last_name].filter(Boolean).join(' ') || 'Unknown',
-          npi,
-          taxonomy:tax.desc || taxonomy,
-          address:[addr.address_1,addr.city,addr.state,addr.postal_code].filter(Boolean).join(', '),
-          phone:addr.telephone_number || '',
-          detailsUrl:npi?`https://npiregistry.cms.hhs.gov/provider-view/${npi}`:'https://npiregistry.cms.hhs.gov/',
+          name:r.name || 'Unknown',
+          npi:r.npi || '',
+          taxonomy:r.taxonomy || taxonomy,
+          address:r.address || '',
+          phone:r.phone || '',
+          detailsUrl:r.npi?`https://npiregistry.cms.hhs.gov/provider-view/${r.npi}`:'https://npiregistry.cms.hhs.gov/',
         } as VerifiedProviderRef;
       });
       return {
@@ -2139,7 +2157,7 @@ export default function App() {
         fetchedAt:new Date().toISOString(),
         querySummary:`${city}, ${state} · ${MLBL[rd.examKey]||rd.examKey} · taxonomy hint "${taxonomy}"`,
         sourceLinks:[
-          {label:'NPPES NPI Registry API',url:sourceUrl},
+          {label:'NPPES NPI Registry (via backend)',url:sourceUrl},
           {label:'NPPES Provider Search',url:'https://npiregistry.cms.hhs.gov/search'},
         ],
         warning:providers.length?'':'No exact providers returned by NPPES for this city/state and taxonomy filter.',
@@ -2149,7 +2167,7 @@ export default function App() {
         providers:[],
         fetchedAt:new Date().toISOString(),
         querySummary:`${city}, ${state} · ${MLBL[rd.examKey]||rd.examKey} · taxonomy hint "${taxonomy}"`,
-        sourceLinks:[{label:'NPPES NPI Registry API',url:sourceUrl}],
+        sourceLinks:[{label:'NPPES NPI Registry (via backend)',url:sourceUrl}],
         warning:`Live NPPES lookup failed: ${e?.message||'unknown error'}`,
       };
     }
@@ -2385,32 +2403,8 @@ export default function App() {
         setNpiError(response.error);
       }
       
-      // Convert NPI results to ProviderCandidate format
-      const candidates: ProviderCandidate[] = response.results.map((r) => ({
-        id: `npi-${r.npi}`,
-        name: r.name,
-        address: r.address,
-        city: r.city,
-        state: r.state,
-        postalCode: r.postalCode,
-        phone: r.phone,
-        website: '',
-        npi: r.npi,
-        taxonomy: r.taxonomyDescription,
-        taxonomyCode: r.taxonomyCode,
-        source: 'NPI',
-        sourceDetail: 'Custom Search',
-        sourceUrl: `https://npiregistry.cms.hhs.gov/provider-view/${r.npi}`,
-        confidence: 'medium' as const,
-        score: r.providerType === 'organization' ? 35 : 30,
-        badges: ['NPI'],
-        evidence: [],
-        _rawSources: ['NPI'],
-        lat: r.lat ?? undefined,
-        lng: r.lng ?? undefined,
-      }));
-      
-      setNpiResults(candidates);
+      // Results are already in ProviderCandidate format from the backend
+      setNpiResults(response.results);
       setNpiSearchMeta({
         normalizedCount: response.normalizedCount,
         dedupedCount: response.normalizedCount,
@@ -2438,7 +2432,9 @@ export default function App() {
     const label=config?.label||'Provider';
 
     results.forEach((p,i)=>{
+      // Only render map pins for providers with verified coordinates (imported or geocoded)
       if(p.lat==null||p.lng==null) return;
+      if((p as any).coordinateStatus==='unverified') return;
       const lat=p.lat;
       const lng=p.lng;
       // Internal map pin: show provider name

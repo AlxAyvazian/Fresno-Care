@@ -6,19 +6,32 @@ import liveFinderRouter from "./liveFinder";
 import priceFinderUnifiedRouter from "./priceFinderUnified";
 import priceFinderRouter from "./priceFinder";
 import searchHistoryRouter from "./searchHistory";
-import providerSourcesRouter from "./providerSources";
 import providerSourcesImportRouter from "./providerSourcesImport";
+// New unified architecture routes
+import universalDiscoveryRouter from "./universalDiscovery";
+import mapInventoryRouter from "./mapInventory";
+import indexingJobsRouter from "./indexingJobs";
+import priceDiscoveryRouter from "./priceDiscovery";
+import npiCustomSearchRouter from "./npiCustomSearch";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+
+// --- New unified architecture (takes precedence) ---
+router.use(universalDiscoveryRouter);
+router.use(mapInventoryRouter);
+router.use(indexingJobsRouter);
+router.use(priceDiscoveryRouter);
+router.use(npiCustomSearchRouter);
+
+// --- Legacy routes (kept as compatibility wrappers until fully migrated) ---
 router.use(providerSearchRouter);
 router.use(dentalProviderDiscoveryRouter);
 router.use(liveFinderRouter);
 router.use(priceFinderUnifiedRouter);
 router.use(priceFinderRouter);
 router.use(searchHistoryRouter);
-router.use(providerSourcesRouter);
 router.use(providerSourcesImportRouter);
 
 export default router;

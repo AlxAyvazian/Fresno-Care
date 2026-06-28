@@ -1,4 +1,4 @@
-import type { ProviderCandidate } from "./types";
+import type { ProviderCandidate, TrustTier } from "./types";
 
 export function scoreProvider(c: ProviderCandidate): number {
   let score = 0;
@@ -20,4 +20,32 @@ export function scoreProvider(c: ProviderCandidate): number {
   if (c.phone) score += 5;
   if (c.fax) score += 10;
   return Math.min(score, 250);
+}
+
+/**
+ * Assign trust tier based on source data.
+ * verified: Occu-Med confirmed, manual imports, trusted internal records
+ * registry: NPI, FMCSA, FAA, official registries
+ * directory: OpenStreetMap, chain locators, public directories
+ * lead: web hints, search engine results, weak discovered pages
+ */
+export function assignTrustTier(c: ProviderCandidate): TrustTier {
+  const sources = (c._rawSources || [c.source]).map((s) => s.toLowerCase());
+  const hasVerified = sources.some((s) =>
+    s.includes("occu-med") || s.includes("manual import") || s.includes("patients first") || s.includes("database"),
+  );
+  if (hasVerified) return "verified";
+
+  const hasRegistry = sources.some((s) =>
+    s.includes("npi") || s.includes("fmcsa") || s.includes("faa"),
+  );
+  if (hasRegistry) return "registry";
+
+  const hasDirectory = sources.some((s) =>
+    s.includes("openstreetmap") || s.includes("osm") || s.includes("concentra") ||
+    s.includes("afc") || s.includes("quest") || s.includes("labcorp"),
+  );
+  if (hasDirectory) return "directory";
+
+  return "lead";
 }

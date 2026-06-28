@@ -64,7 +64,9 @@ function rowToCandidate(row: CsvRow, sourceTag: string): ProviderCandidate | nul
     source: sourceTag,
     sourceDetail: `${sourceTag} — CSV Import`,
     sourceUrl: "",
+    coordinateStatus: "unverified" as const,
     confidence: "high",
+    trustTier: "verified" as const,
     score: 95,
     badges: ["Occu-Med Confirmed", sourceTag],
     evidence: [{

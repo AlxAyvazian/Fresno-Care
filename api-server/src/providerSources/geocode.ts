@@ -1,4 +1,6 @@
-import type { ProviderCandidate } from "./types";
+import type { ProviderCandidate, CoordinateStatus } from "./types";
+import { getCachedGeocode, cacheGeocode } from "./persistence";
+import { isPersistenceConfigured } from "../lib/networkMapPersistence";
 
 type GeocodePoint = { lat: number; lng: number };
 
@@ -67,43 +69,77 @@ async function geocodeWithNominatim(query: string): Promise<GeocodePoint | null>
   return { lat, lng };
 }
 
-async function geocodeAddress(query: string): Promise<GeocodePoint | null> {
-  if (configuredGeocodioKeys().length) {
-    const point = await geocodeWithGeocodio(query);
-    if (point) return point;
+export async function geocodeAddress(query: string): Promise<GeocodePoint | null> {
+  // Check geocode_cache first (if DB is configured)
+  if (isPersistenceConfigured()) {
+    try {
+      const cached = await getCachedGeocode(query);
+      if (cached) return cached;
+    } catch {
+      // Cache miss or DB error — fall through to live geocoding
+    }
   }
 
-  try {
-    return await geocodeWithNominatim(query);
-  } catch (e) {
-    console.warn("[Provider geocode] Nominatim failed", String(e));
-    return null;
+  let point: GeocodePoint | null = null;
+  let provider = "nominatim";
+
+  if (configuredGeocodioKeys().length) {
+    point = await geocodeWithGeocodio(query);
+    if (point) provider = "geocodio";
   }
+
+  if (!point) {
+    try {
+      point = await geocodeWithNominatim(query);
+    } catch (e) {
+      console.warn("[Provider geocode] Nominatim failed", String(e));
+    }
+  }
+
+  // Save result to cache (if DB is configured)
+  if (isPersistenceConfigured()) {
+    try {
+      await cacheGeocode(query, point?.lat ?? null, point?.lng ?? null, provider, point !== null);
+    } catch {
+      // Ignore cache write failures
+    }
+  }
+
+  return point;
 }
 
-export async function geocodeProviders(candidates: ProviderCandidate[], centerLat: number, centerLng: number): Promise<ProviderCandidate[]> {
+/**
+ * Geocode providers — NO jittering. Providers without verified coordinates
+ * remain with lat/lng undefined and coordinateStatus="unverified".
+ */
+export async function geocodeProviders(candidates: ProviderCandidate[], _centerLat: number, _centerLng: number): Promise<ProviderCandidate[]> {
   const results: ProviderCandidate[] = [];
-  const jitterRadius = 0.03;
   const hasGeocodio = configuredGeocodioKeys().length > 0;
   const geocodeLimit = hasGeocodio ? 25 : 8;
   const geocodeDelayMs = hasGeocodio ? 250 : 1100;
 
   for (let i = 0; i < candidates.length; i++) {
     const p = candidates[i];
-    if (!p.address || !p.city || !p.state) continue;
-    const shouldGeocode = i < geocodeLimit;
-    if (shouldGeocode) {
+
+    // Already has coordinates from import — keep as-is
+    if (p.lat !== undefined && p.lng !== undefined && p.coordinateStatus === "imported") {
+      results.push(p);
+      continue;
+    }
+
+    // Try geocoding if within limit and has address data
+    if (i < geocodeLimit && p.address && p.city && p.state) {
       const query = `${p.address}, ${p.city}, ${p.state}`;
       const point = await geocodeAddress(query);
       if (point) {
-        results.push({ ...p, lat: point.lat, lng: point.lng });
+        results.push({ ...p, lat: point.lat, lng: point.lng, coordinateStatus: "geocoded" as CoordinateStatus });
         await new Promise((r) => setTimeout(r, geocodeDelayMs));
         continue;
       }
     }
-    const angle = ((i * 137.5) % 360) * (Math.PI / 180);
-    const radius = jitterRadius * (0.3 + ((i % 5) / 5) * 0.7);
-    results.push({ ...p, lat: centerLat + Math.cos(angle) * radius, lng: centerLng + Math.sin(angle) * radius });
+
+    // No jittering — leave as unverified with no coordinates
+    results.push({ ...p, lat: undefined, lng: undefined, coordinateStatus: "unverified" as CoordinateStatus });
   }
   return results;
 }

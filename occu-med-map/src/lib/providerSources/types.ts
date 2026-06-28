@@ -1,3 +1,6 @@
+export type CoordinateStatus = 'imported' | 'geocoded' | 'unverified';
+export type TrustTier = 'verified' | 'registry' | 'directory' | 'lead';
+
 export interface ProviderCandidate {
   id: string;
   name: string;
@@ -10,6 +13,7 @@ export interface ProviderCandidate {
   website: string;
   lat?: number;
   lng?: number;
+  coordinateStatus?: CoordinateStatus;
   taxonomy?: string;
   taxonomyCode?: string;
   npi?: string;
@@ -17,6 +21,7 @@ export interface ProviderCandidate {
   sourceDetail?: string;
   sourceUrl?: string;
   confidence: 'high' | 'medium' | 'low';
+  trustTier?: TrustTier;
   score: number;
   badges: string[];
   evidence: ProviderEvidence[];

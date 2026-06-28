@@ -1,10 +1,10 @@
-import type { ProviderCandidate, SearchParams, SourceResult, SearchAudit, UnifiedSearchResponse } from "./types";
+import type { ProviderCandidate, SearchParams, SourceResult, SearchAudit, UnifiedSearchResponse, TrustTier } from "./types";
 import { searchNpi } from "./adapters/npi";
 import { searchFmcsa } from "./adapters/fmcsa";
 import { searchClinicImports } from "./adapters/clinicImportsDb";
 import { dedupeCandidates } from "./dedupe";
 import { geocodeProviders } from "./geocode";
-import { scoreProvider } from "./scoring";
+import { scoreProvider, assignTrustTier } from "./scoring";
 
 const SERVICE_ROUTING: Record<string, string[]> = {
   dotExam: ["npi", "fmcsa", "clinicimports"],
@@ -31,6 +31,14 @@ const ADAPTER_REGISTRY: Record<string, (city: string, state: string, serviceType
   fmcsa: (c, s) => searchFmcsa(c, s),
   clinicimports: (c, s) => searchClinicImports(c, s),
 };
+
+export function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 3958.8;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLng = (lng2 - lng1) * (Math.PI / 180);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 export async function runUnifiedSearch(params: SearchParams): Promise<UnifiedSearchResponse> {
   const startMs = performance.now();
@@ -75,23 +83,38 @@ export async function runUnifiedSearch(params: SearchParams): Promise<UnifiedSea
     let confidence: "high" | "medium" | "low" = "low";
     if (score >= 100) confidence = "high";
     else if (score >= 50) confidence = "medium";
-    return { ...c, score, confidence };
+    const trustTier: TrustTier = assignTrustTier(c);
+    return { ...c, score, confidence, trustTier };
   });
 
   const geocoded = await geocodeProviders(scored, centerLat, centerLng);
-  const geocodedCount = geocoded.filter((p) => p.lat !== undefined && p.lng !== undefined).length;
+  const geocodedCount = geocoded.filter((p) => p.coordinateStatus !== "unverified").length;
 
   const withDistance = geocoded.map((p) => {
     if (p.lat === undefined || p.lng === undefined) return p;
     return { ...p, distanceMiles: haversineMiles(centerLat, centerLng, p.lat, p.lng) };
   });
 
-  const sorted = withDistance.sort((a, b) => {
+  // Enforce radius filtering for radius-mode searches
+  const filtered = radiusMiles > 0
+    ? withDistance.filter((p) => {
+        // Always include unplaced results (they appear in list only)
+        if (p.coordinateStatus === "unverified") return true;
+        // Filter placed results by radius
+        return p.distanceMiles !== undefined && p.distanceMiles <= radiusMiles;
+      })
+    : withDistance;
+
+  const sorted = filtered.sort((a, b) => {
+    // Placed results first, then unplaced
+    const aPlaced = a.coordinateStatus !== "unverified" ? 0 : 1;
+    const bPlaced = b.coordinateStatus !== "unverified" ? 0 : 1;
+    if (aPlaced !== bPlaced) return aPlaced - bPlaced;
     if (b.score !== a.score) return b.score - a.score;
     return (a.distanceMiles || 999) - (b.distanceMiles || 999);
   });
 
-  const finalMarkerCount = sorted.filter((p) => p.lat !== undefined && p.lng !== undefined).length;
+  const finalMarkerCount = sorted.filter((p) => p.coordinateStatus !== "unverified").length;
   const durationMs = Math.round(performance.now() - startMs);
 
   return {
@@ -111,12 +134,4 @@ export async function runUnifiedSearch(params: SearchParams): Promise<UnifiedSea
       durationMs,
     },
   };
-}
-
-function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 3958.8;
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLng = (lng2 - lng1) * (Math.PI / 180);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
