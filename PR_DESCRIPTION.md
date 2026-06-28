@@ -1,7 +1,7 @@
-# PR Description: API Source Registry and Unified Web Evidence Adapter
+# PR Description: LangSearch Web Evidence + API Source Registry
 
 ## Overview
-This PR implements an env-driven API source registry for the unified search engine, enabling the backend to track, categorize, and report on all configured API keys. It also updates the web evidence adapter to support multiple search APIs (LangSearch, Serper, Tavily) instead of being LangSearch-only.
+This PR implements LangSearch web evidence integration for provider discovery, along with a comprehensive API source registry for the unified search engine. The registry enables the backend to track, categorize, and report on all configured API keys, while the web evidence adapter supports multiple search APIs (LangSearch, Serper, Tavily) for enhanced provider discovery.
 
 ## Environment Variables Added
 Added the following environment variables to `render.yaml` as backend env vars with `sync: false` for secrets:
@@ -45,6 +45,14 @@ Added the following environment variables to `render.yaml` as backend env vars w
 
 ## Implementation Details
 
+### Original LangSearch Web Evidence Implementation
+This PR initially implemented LangSearch integration for provider discovery:
+- **LangSearch Client** (`api-server/src/lib/langSearchClient.ts`): Backend client for LangSearch API
+- **LangSearch Adapter** (`api-server/src/providerSources/adapters/langSearch.ts`): Adapter that converts LangSearch results to ProviderCandidate format
+- **Trust Tier System**: Added `trustTier` field to ProviderCandidate to indicate source reliability (verified, registry, directory, lead)
+- **Coordinate Status System**: Added `coordinateStatus` field to track geocoding state (imported, geocoded, unverified)
+- **Optional Evidence Layer**: LangSearch runs as an optional lead/evidence layer when `LANGSEARCH_API_KEY` is configured, never replacing NPI or imported data
+
 ### 1. API Source Registry (`api-server/src/lib/apiSourceRegistry.ts`)
 Created a comprehensive registry that:
 - Categorizes each API source into 5 categories: web_search, web_extraction, ai_extraction, geocoding, vector_index
@@ -81,12 +89,12 @@ Created a unified web evidence adapter that:
 - Converts web search results to ProviderCandidate format
 - Includes evidence snippets and URLs for each result
 
-The adapter is now integrated into the orchestrator and added to all service routing configurations for provider discovery.
+The adapter is integrated into the orchestrator alongside the existing LangSearch adapter, providing a fallback mechanism for web evidence collection.
 
 ## API Wiring Status
 
 ### Actively Wired (in this PR)
-- **Web Evidence**: LangSearch, Serper, Tavily (via unified web evidence adapter)
+- **Web Evidence**: LangSearch (original adapter + unified adapter), Serper, Tavily
 - **Geocoding**: Geocodio (primary, secondary, tertiary, quaternary), RapidAPI (all flags)
 - **Existing**: NPI, FMCSA, ClinicImports, RapidAPI provider search
 
