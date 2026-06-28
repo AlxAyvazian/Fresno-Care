@@ -82,6 +82,7 @@ export async function searchLangSearchEvidence(city: string, state: string, serv
     freshness: "noLimit",
     summary: true,
     count: Number(process.env.LANGSEARCH_PROVIDER_EVIDENCE_COUNT || 5),
+    timeoutMs: Number(process.env.LANGSEARCH_PROVIDER_EVIDENCE_TIMEOUT_MS || 2500),
   });
 
   const seen = new Set<string>();
