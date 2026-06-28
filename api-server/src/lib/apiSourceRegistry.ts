@@ -220,6 +220,34 @@ const API_SOURCE_REGISTRY: ApiSourceConfig[] = [
     adapterStatus: "active",
     usedBy: ["geocoding"],
   },
+  {
+    name: "RapidAPI Provider Search URL",
+    envVar: "RAPIDAPI_PROVIDER_SEARCH_URL",
+    category: "geocoding",
+    adapterStatus: "active",
+    usedBy: ["provider_discovery"],
+  },
+  {
+    name: "RapidAPI Provider Search Host",
+    envVar: "RAPIDAPI_PROVIDER_SEARCH_HOST",
+    category: "geocoding",
+    adapterStatus: "active",
+    usedBy: ["provider_discovery"],
+  },
+  {
+    name: "RapidAPI Provider Search Path",
+    envVar: "RAPIDAPI_PROVIDER_SEARCH_PATH",
+    category: "geocoding",
+    adapterStatus: "active",
+    usedBy: ["provider_discovery"],
+  },
+  {
+    name: "RapidAPI Provider Search Timeout",
+    envVar: "RAPIDAPI_PROVIDER_SEARCH_TIMEOUT_MS",
+    category: "geocoding",
+    adapterStatus: "active",
+    usedBy: ["provider_discovery"],
+  },
 
   // Vector / semantic index.
   {
@@ -259,4 +287,39 @@ export function getSourceStatusReport(): SourceStatusReport[] {
  */
 export function getSourcesByCategory(category: ApiSourceCategory): SourceStatusReport[] {
   return getSourceStatusReport().filter((s) => s.category === category);
+}
+
+/**
+ * Get configured sources by category
+ */
+export function getConfiguredSourcesByCategory(category: ApiSourceCategory): SourceStatusReport[] {
+  return getSourcesByCategory(category).filter((s) => s.configured);
+}
+
+/**
+ * Get sources by usage context
+ */
+export function getSourcesByUsage(usage: UsedBy): SourceStatusReport[] {
+  return getSourceStatusReport().filter((s) => s.usedBy.includes(usage));
+}
+
+/**
+ * Get configured sources by usage context
+ */
+export function getConfiguredSourcesByUsage(usage: UsedBy): SourceStatusReport[] {
+  return getSourcesByUsage(usage).filter((s) => s.configured);
+}
+
+/**
+ * Check if RapidAPI provider search is fully configured
+ * Requires: RAPIDAPI_KEY, RAPIDAPI_ENABLED, RAPIDAPI_PROVIDER_SEARCH_ENABLED
+ * And either: RAPIDAPI_PROVIDER_SEARCH_URL or RAPIDAPI_PROVIDER_SEARCH_HOST
+ */
+export function isRapidApiProviderSearchConfigured(): boolean {
+  return (
+    isEnvConfigured("RAPIDAPI_KEY") &&
+    isEnvConfigured("RAPIDAPI_ENABLED") &&
+    isEnvConfigured("RAPIDAPI_PROVIDER_SEARCH_ENABLED") &&
+    (isEnvConfigured("RAPIDAPI_PROVIDER_SEARCH_URL") || isEnvConfigured("RAPIDAPI_PROVIDER_SEARCH_HOST"))
+  );
 }

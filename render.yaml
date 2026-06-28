@@ -69,6 +69,14 @@ services:
         sync: false
       - key: RAPIDAPI_ROUTING_DISTANCE_ENABLED
         sync: false
+      - key: RAPIDAPI_PROVIDER_SEARCH_URL
+        sync: false
+      - key: RAPIDAPI_PROVIDER_SEARCH_HOST
+        sync: false
+      - key: RAPIDAPI_PROVIDER_SEARCH_PATH
+        sync: false
+      - key: RAPIDAPI_PROVIDER_SEARCH_TIMEOUT_MS
+        sync: false
 
 databases:
   - name: network-map-db
