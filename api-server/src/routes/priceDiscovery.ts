@@ -44,6 +44,14 @@ type PriceCandidate = {
   };
 };
 
+type LangSearchPriceDiscoveryResult = {
+  prices: PriceCandidate[];
+  queries: string[];
+  pagesChecked: number;
+  errors: string[];
+  ran: boolean;
+};
+
 function normalizeServiceName(serviceType: string | undefined, query: string): string {
   if (serviceType && SERVICE_LABELS[serviceType]) return SERVICE_LABELS[serviceType];
   if (serviceType) return serviceType;
@@ -74,10 +82,6 @@ function extractDollarRanges(text: string): Array<{ min: number; max: number | n
     }
   }
   return results;
-}
-
-function looksLikePricePage(text: string): boolean {
-  return /\b(price|pricing|fee|fees|cost|costs|self[- ]?pay|cash pay|rate|rates|charge|fee schedule)\b/i.test(text);
 }
 
 function cleanProviderName(page: LangSearchWebPage): string {
@@ -132,8 +136,8 @@ async function discoverLangSearchPrices(args: {
   city?: string;
   state?: string;
   serviceType?: string;
-}): Promise<{ prices: PriceCandidate[]; queries: string[]; pagesChecked: number }> {
-  if (!isLangSearchConfigured()) return { prices: [], queries: [], pagesChecked: 0 };
+}): Promise<LangSearchPriceDiscoveryResult> {
+  if (!isLangSearchConfigured()) return { prices: [], queries: [], pagesChecked: 0, errors: [], ran: false };
 
   const city = String(args.city || "").trim();
   const state = String(args.state || "").trim().toUpperCase();
@@ -141,16 +145,25 @@ async function discoverLangSearchPrices(args: {
   const queries = buildLangSearchPriceQueries(args.query, city, state, args.serviceType);
   const seenUrls = new Set<string>();
   const prices: PriceCandidate[] = [];
+  const errors: string[] = [];
   let pagesChecked = 0;
 
   for (const q of queries) {
-    const response = await searchLangSearchWeb({
-      query: q,
-      freshness: "noLimit",
-      summary: true,
-      count: Number(process.env.LANGSEARCH_PRICE_RESULT_COUNT || 10),
-      timeoutMs: 15000,
-    });
+    let response;
+    try {
+      response = await searchLangSearchWeb({
+        query: q,
+        freshness: "noLimit",
+        summary: true,
+        count: Number(process.env.LANGSEARCH_PRICE_RESULT_COUNT || 10),
+        timeoutMs: Number(process.env.LANGSEARCH_PRICE_TIMEOUT_MS || 15000),
+      });
+    } catch (err: any) {
+      const message = err?.message || String(err);
+      errors.push(`${q}: ${message}`);
+      console.warn("[PriceDiscovery] LangSearch query failed:", message);
+      continue;
+    }
 
     for (const page of response.results) {
       if (!page.url || seenUrls.has(page.url)) continue;
@@ -159,25 +172,23 @@ async function discoverLangSearchPrices(args: {
 
       const text = [page.name, page.displayUrl, page.snippet, page.summary].filter(Boolean).join("\n");
       const ranges = extractDollarRanges(text);
-      if (!ranges.length && !looksLikePricePage(text)) continue;
+      if (!ranges.length) continue;
 
       const providerCandidate = pageToProviderCandidate(page, city, state, serviceName);
       const firstRange = ranges[0];
-      const confidence = ranges.length ? 75 : 45;
+      const confidence = 75;
 
       prices.push({
         providerCandidate,
         serviceName,
-        priceMin: firstRange?.min ?? null,
-        priceMax: firstRange?.max ?? null,
+        priceMin: firstRange.min,
+        priceMax: firstRange.max,
         priceCurrency: "USD",
         priceType: /fee schedule/i.test(text) ? "fee_schedule" : "self_pay",
         sourceUrl: page.url,
         sourceLabel: page.name || page.displayUrl || "LangSearch result",
         confidence,
-        extractionNotes: ranges.length
-          ? `LangSearch extracted ${ranges.length} dollar amount(s) from result text.`
-          : "LangSearch found a likely pricing page, but no exact dollar amount was extracted.",
+        extractionNotes: `LangSearch extracted ${ranges.length} dollar amount(s) from result text.`,
         evidence: {
           url: page.url,
           snippet: (page.summary || page.snippet || "").slice(0, 1800),
@@ -188,7 +199,7 @@ async function discoverLangSearchPrices(args: {
     }
   }
 
-  return { prices, queries, pagesChecked };
+  return { prices, queries, pagesChecked, errors, ran: true };
 }
 
 /**
@@ -204,33 +215,41 @@ router.post("/price-discovery/run", async (req: Request, res: Response) => {
     }
 
     const { query, city, state, serviceType, mode, sourcesUsed, prices, durationMs } = req.body;
+    const queryText = typeof query === "string" ? query.trim() : "";
+    const cityText = typeof city === "string" ? city.trim() : "";
+    const stateText = typeof state === "string" ? state.trim() : "";
+    const serviceTypeText = typeof serviceType === "string" ? serviceType.trim() : undefined;
+    const modeText = typeof mode === "string" && mode.trim() ? mode.trim() : "open_web";
 
-    if (!query) {
+    if (!queryText) {
       res.status(400).json({ error: "query is required" });
       return;
     }
 
     const startMs = performance.now();
-    const suppliedPrices: PriceCandidate[] = Array.isArray(prices) ? prices : [];
-    const shouldRunLangSearch = req.body.runLangSearch === true || (suppliedPrices.length === 0 && mode !== "known_provider");
+    const pricesProvided = Array.isArray(prices);
+    const suppliedPrices: PriceCandidate[] = pricesProvided ? prices : [];
+    const langSearchConfigured = isLangSearchConfigured();
+    const langSearchRequested = req.body.runLangSearch === true || (!pricesProvided && modeText !== "known_provider");
+    const shouldRunLangSearch = langSearchRequested && langSearchConfigured;
     const langSearch = shouldRunLangSearch
-      ? await discoverLangSearchPrices({ query, city, state, serviceType })
-      : { prices: [], queries: [], pagesChecked: 0 };
+      ? await discoverLangSearchPrices({ query: queryText, city: cityText, state: stateText, serviceType: serviceTypeText })
+      : { prices: [], queries: [], pagesChecked: 0, errors: [], ran: false };
     const allPrices = [...suppliedPrices, ...langSearch.prices];
 
     const db = getDb();
-    const sourceSet = new Set<string>(Array.isArray(sourcesUsed) ? sourcesUsed : []);
-    if (langSearch.prices.length > 0 || shouldRunLangSearch) sourceSet.add("LangSearch");
+    const sourceSet = new Set<string>(Array.isArray(sourcesUsed) ? sourcesUsed.filter((source): source is string => typeof source === "string") : []);
+    if (langSearch.ran) sourceSet.add("LangSearch");
 
     // Create discovery run
     const [run] = await db.insert(priceDiscoveryRunsTable).values({
-      query,
-      city: city || null,
-      state: state || null,
-      serviceType: serviceType || null,
-      mode: mode || "open_web",
+      query: queryText,
+      city: cityText || null,
+      state: stateText || null,
+      serviceType: serviceTypeText || null,
+      mode: modeText,
       sourcesUsed: Array.from(sourceSet),
-      resultsFound: allPrices.length,
+      resultsFound: allPrices.filter((price) => price.priceMin != null || price.priceMax != null).length,
       durationMs: durationMs || Math.round(performance.now() - startMs),
     }).returning();
 
@@ -238,16 +257,28 @@ router.post("/price-discovery/run", async (req: Request, res: Response) => {
     const savedPrices: any[] = [];
     for (const price of allPrices) {
       try {
+        const hasPriceAmount = price.priceMin != null || price.priceMax != null;
+        if (!hasPriceAmount) {
+          console.warn("[PriceDiscovery] Skipping price row with no extracted amount:", price.sourceUrl || price.serviceName || queryText);
+          continue;
+        }
+
         let providerId = price.providerId || null;
-        if (!providerId && price.providerCandidate) {
-          const upserted = await upsertProvider(price.providerCandidate, serviceType || price.serviceName || query);
+        const providerCandidate = price.providerCandidate;
+        const canSafelyUpsertProvider = Boolean(
+          providerCandidate &&
+            (providerCandidate.npi || (providerCandidate.address && providerCandidate.postalCode)),
+        );
+
+        if (!providerId && providerCandidate && canSafelyUpsertProvider) {
+          const upserted = await upsertProvider(providerCandidate, serviceTypeText || price.serviceName || queryText);
           providerId = upserted.providerId;
         }
 
         const [savedPrice] = await db.insert(providerPricesTable).values({
           providerId,
           discoveryRunId: run.id,
-          serviceName: price.serviceName || query,
+          serviceName: price.serviceName || queryText,
           priceMin: price.priceMin ?? null,
           priceMax: price.priceMax ?? null,
           priceCurrency: price.priceCurrency || "USD",
@@ -280,11 +311,13 @@ router.post("/price-discovery/run", async (req: Request, res: Response) => {
       savedPrices: savedPrices.length,
       total: allPrices.length,
       langSearch: {
-        configured: isLangSearchConfigured(),
-        ran: shouldRunLangSearch,
+        configured: langSearchConfigured,
+        requested: langSearchRequested,
+        ran: langSearch.ran,
         queries: langSearch.queries,
         pagesChecked: langSearch.pagesChecked,
         pricesFound: langSearch.prices.length,
+        errors: langSearch.errors,
       },
     });
   } catch (e: any) {
