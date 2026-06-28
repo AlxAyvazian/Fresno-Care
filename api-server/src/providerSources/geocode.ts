@@ -1,4 +1,6 @@
 import type { ProviderCandidate, CoordinateStatus } from "./types";
+import { getCachedGeocode, cacheGeocode } from "./persistence";
+import { isPersistenceConfigured } from "../lib/networkMapPersistence";
 
 type GeocodePoint = { lat: number; lng: number };
 
@@ -68,17 +70,42 @@ async function geocodeWithNominatim(query: string): Promise<GeocodePoint | null>
 }
 
 export async function geocodeAddress(query: string): Promise<GeocodePoint | null> {
-  if (configuredGeocodioKeys().length) {
-    const point = await geocodeWithGeocodio(query);
-    if (point) return point;
+  // Check geocode_cache first (if DB is configured)
+  if (isPersistenceConfigured()) {
+    try {
+      const cached = await getCachedGeocode(query);
+      if (cached) return cached;
+    } catch {
+      // Cache miss or DB error — fall through to live geocoding
+    }
   }
 
-  try {
-    return await geocodeWithNominatim(query);
-  } catch (e) {
-    console.warn("[Provider geocode] Nominatim failed", String(e));
-    return null;
+  let point: GeocodePoint | null = null;
+  let provider = "nominatim";
+
+  if (configuredGeocodioKeys().length) {
+    point = await geocodeWithGeocodio(query);
+    if (point) provider = "geocodio";
   }
+
+  if (!point) {
+    try {
+      point = await geocodeWithNominatim(query);
+    } catch (e) {
+      console.warn("[Provider geocode] Nominatim failed", String(e));
+    }
+  }
+
+  // Save result to cache (if DB is configured)
+  if (isPersistenceConfigured()) {
+    try {
+      await cacheGeocode(query, point?.lat ?? null, point?.lng ?? null, provider, point !== null);
+    } catch {
+      // Ignore cache write failures
+    }
+  }
+
+  return point;
 }
 
 /**

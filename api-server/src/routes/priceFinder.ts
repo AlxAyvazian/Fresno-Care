@@ -1,4 +1,7 @@
 import { Router } from "express";
+import { searchNpi as searchNpiCentral } from "../providerSources/adapters/npi";
+import { upsertProvider } from "../providerSources/persistence";
+import { isPersistenceConfigured } from "../lib/networkMapPersistence";
 
 const router = Router();
 
@@ -388,47 +391,41 @@ async function huntPrices(queries: string[]): Promise<HuntFetchResult[]> {
   return ranked.slice(0, 8);
 }
 
-async function searchNpi(city: string, state: string, taxonomyDesc: string, limit = 20): Promise<NpiResult[]> {
-  const params = new URLSearchParams({
-    version: '2.1',
-    city: city.trim(),
-    state: state.trim().toUpperCase(),
-    taxonomy_description: taxonomyDesc,
-    enumeration_type: 'NPI-2',
-    limit: String(limit),
-  });
+/**
+ * Uses the central NPI adapter and converts results to the local format.
+ * This removes the duplicate NPI API call — all NPI queries go through
+ * api-server/src/providerSources/adapters/npi.ts
+ */
+async function fetchNpiClinics(city: string, state: string, serviceType: string) {
+  const candidates = await searchNpiCentral(city, state, serviceType);
 
-  const url = `https://npiregistry.cms.hhs.gov/api/?${params}`;
-  const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
-  if (!resp.ok) throw new Error(`NPI API error ${resp.status}`);
-  const data = await resp.json() as { results?: NpiResult[]; result_count?: number };
-  return data.results || [];
+  // Upsert into Neon (non-blocking)
+  if (isPersistenceConfigured()) {
+    for (const c of candidates) {
+      try { await upsertProvider(c, serviceType); } catch { /* ignore */ }
+    }
+  }
+
+  return candidates.map((c) => formatCandidate(c));
 }
 
-function formatNpiResult(r: NpiResult, serviceType: string) {
-  const name = r.basic?.organization_name ||
-    `${r.basic?.first_name || ''} ${r.basic?.last_name || ''}`.trim();
-  const addr = r.addresses?.[0];
-  const address = addr
-    ? `${addr.address_1}, ${addr.city}, ${addr.state} ${addr.postal_code?.slice(0, 5)}`
-    : '';
-  const phone = addr?.telephone_number || '';
-  const taxonomy = r.taxonomies?.find(t => t.primary)?.desc || r.taxonomies?.[0]?.desc || '';
+function formatCandidate(c: { name: string; address: string; phone: string; taxonomy?: string; npi?: string; sourceUrl?: string }) {
+  const taxonomy = c.taxonomy || '';
   const isFqhc = taxonomy.toLowerCase().includes('federally qualified') ||
     taxonomy.toLowerCase().includes('fqhc');
 
   return {
-    name: name || 'Unknown',
-    address,
-    phone,
+    name: c.name || 'Unknown',
+    address: c.address,
+    phone: c.phone,
     taxonomy,
     isFqhc,
-    npiUrl: `https://npiregistry.cms.hhs.gov/provider-view/${r.basic?.npi || ''}`,
-    searchUrl: `https://www.google.com/search?q=${encodeURIComponent(name + ' ' + (addr?.city || '') + ' ' + (addr?.state || '') + ' pricing cost')}`,
+    npiUrl: c.sourceUrl || `https://npiregistry.cms.hhs.gov/provider-view/${c.npi || ''}`,
+    searchUrl: `https://www.google.com/search?q=${encodeURIComponent(c.name + ' ' + c.address + ' pricing cost')}`,
   };
 }
 
-function occHuntScore(c: ReturnType<typeof formatNpiResult>) {
+function occHuntScore(c: ReturnType<typeof formatCandidate>) {
   const txt = `${c.name} ${c.taxonomy}`.toLowerCase();
   let score = 0;
   const reasons: string[] = [];
@@ -452,29 +449,20 @@ router.get('/price-finder', async (req, res) => {
       return;
     }
 
-    const taxonomies = TAXONOMY_MAP[serviceType] || TAXONOMY_MAP.urgentCare;
-    const fqhcTaxonomies = TAXONOMY_MAP.fqhc;
+    // Use central NPI adapter + FQHC search
+    const [mainClinics, fqhcClinics] = await Promise.all([
+      fetchNpiClinics(city, state, serviceType).catch(() => []),
+      fetchNpiClinics(city, state, "fqhc").catch(() => []),
+    ]);
 
-    // Search NPI in parallel — primary taxonomy + FQHCs
-    const searches: Promise<NpiResult[]>[] = [];
-    for (const tax of taxonomies.slice(0, 2)) {
-      searches.push(searchNpi(city, state, tax, 15).catch(() => []));
-    }
-    // Always include FQHCs (they publish pricing by law)
-    searches.push(searchNpi(city, state, fqhcTaxonomies[0], 10).catch(() => []));
-
-    const allResults = await Promise.all(searches);
-
-    // Deduplicate by organization name
+    // Deduplicate by name
     const seen = new Set<string>();
-    const clinics: ReturnType<typeof formatNpiResult>[] = [];
-    for (const batch of allResults) {
-      for (const r of batch) {
-        const key = r.basic?.organization_name || `${r.basic?.first_name}-${r.basic?.last_name}`;
-        if (key && !seen.has(key)) {
-          seen.add(key);
-          clinics.push(formatNpiResult(r, serviceType));
-        }
+    const clinics: ReturnType<typeof formatCandidate>[] = [];
+    for (const c of [...fqhcClinics, ...mainClinics]) {
+      const key = c.name.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        clinics.push(c);
       }
     }
 
@@ -507,15 +495,10 @@ router.get('/price-hunt', async (req, res) => {
       return;
     }
 
-    const taxonomies = TAXONOMY_MAP[serviceType] || TAXONOMY_MAP.urgentCare;
-    const batches = await Promise.all([
-      ...taxonomies.slice(0, 3).map((tax) => searchNpi(city, state, tax, 12).catch(() => [])),
-      ...taxonomies.slice(0, 2).map((tax) => searchNpi(city, state, tax, 8).catch(() => [])),
-    ]);
+    // Use central NPI adapter for Price Hunt provider discovery
+    const allClinics = await fetchNpiClinics(city, state, serviceType).catch((): ReturnType<typeof formatCandidate>[] => []);
     const seen = new Set<string>();
-    const clinics = batches
-      .flat()
-      .map((r) => formatNpiResult(r, serviceType))
+    const clinics = allClinics
       .filter((c) => {
         const k = c.name.toLowerCase();
         if (seen.has(k)) return false;
@@ -568,13 +551,10 @@ router.get('/occ-hunt', async (req, res) => {
       return;
     }
 
-    const batches = await Promise.all(
-      OCC_HUNT_TAXONOMIES.slice(0, 4).map((tax) => searchNpi(city, state, tax, 15).catch(() => [])),
-    );
+    // Use central NPI adapter for Occ Hunt
+    const allClinics = await fetchNpiClinics(city, state, "occupational").catch((): ReturnType<typeof formatCandidate>[] => []);
     const seen = new Set<string>();
-    const ranked = batches
-      .flat()
-      .map((r) => formatNpiResult(r, "physicalExam"))
+    const ranked = allClinics
       .filter((c) => {
         const k = c.name.toLowerCase();
         if (seen.has(k)) return false;

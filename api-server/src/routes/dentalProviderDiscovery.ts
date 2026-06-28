@@ -1,4 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
+import { searchNpi } from "../providerSources/adapters/npi";
+import { upsertProvider } from "../providerSources/persistence";
+import { isPersistenceConfigured } from "../lib/networkMapPersistence";
 
 const router = Router();
 
@@ -108,29 +111,33 @@ function dedupeProviders(providers: DentalProvider[]): DentalProvider[] {
   });
 }
 
-async function searchNpiDental(city: string, state: string, taxonomy: string, limit = 50): Promise<NpiResult[]> {
-  const params = new URLSearchParams({
-    version: "2.1",
-    city: city.trim(),
-    state: state.trim().toUpperCase(),
-    taxonomy_description: taxonomy,
-    limit: String(limit),
-  });
-
-  const resp = await fetch(`https://npiregistry.cms.hhs.gov/api/?${params}`, {
-    signal: AbortSignal.timeout(9000),
-  });
-  if (!resp.ok) return [];
-  const data = await resp.json() as { results?: NpiResult[] };
-  return data.results || [];
-}
-
 async function discoverDentalProviders(city: string, state: string): Promise<DentalProvider[]> {
-  const batches = await Promise.all(
-    DENTAL_TAXONOMIES.map((taxonomy) => searchNpiDental(city, state, taxonomy).catch(() => [])),
-  );
+  // Use the central NPI adapter (single authoritative NPI implementation)
+  const candidates = await searchNpi(city, state, "dental");
 
-  return dedupeProviders(batches.flat().map(formatProvider))
+  const providers = candidates.map((c) => formatProvider({
+    number: c.npi ? Number(c.npi) : undefined,
+    enumeration_type: c.sourceDetail?.includes("NPI-2") ? "NPI-2" : "NPI-1",
+    basic: { organization_name: c.name, first_name: "", last_name: "" },
+    addresses: [{
+      address_1: c.address,
+      city: c.city,
+      state: c.state,
+      postal_code: c.postalCode,
+      telephone_number: c.phone,
+      address_purpose: "LOCATION",
+    }],
+    taxonomies: [{ desc: c.taxonomy || "Dentist", code: c.taxonomyCode, primary: true }],
+  }));
+
+  // Upsert dental providers into Neon
+  if (isPersistenceConfigured()) {
+    for (const c of candidates) {
+      try { await upsertProvider(c, "dental"); } catch { /* ignore */ }
+    }
+  }
+
+  return dedupeProviders(providers)
     .sort((a, b) => {
       const aOrg = a.npiType === "NPI-2" ? 0 : 1;
       const bOrg = b.npiType === "NPI-2" ? 0 : 1;

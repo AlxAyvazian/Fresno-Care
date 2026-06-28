@@ -4,6 +4,7 @@ import { getDb, indexingJobsTable, indexingJobStepsTable } from "@workspace/db";
 import { searchNpi } from "../providerSources/adapters/npi";
 import { upsertProvider } from "../providerSources/persistence";
 import { geocodeAddress } from "../providerSources/geocode";
+import { isPersistenceConfigured } from "../lib/networkMapPersistence";
 import type { ProviderCandidate, CoordinateStatus } from "../providerSources/types";
 
 const router = Router();
@@ -27,6 +28,11 @@ router.post("/indexing-jobs", async (req: Request, res: Response) => {
 
     if (!mode || !sourceAdapter) {
       res.status(400).json({ error: "mode and sourceAdapter are required" });
+      return;
+    }
+
+    if (!isPersistenceConfigured()) {
+      res.status(503).json({ error: "Database not configured — indexing jobs require DATABASE_URL" });
       return;
     }
 
@@ -57,6 +63,11 @@ router.get("/indexing-jobs", async (req: Request, res: Response) => {
     const status = req.query.status as string | undefined;
     const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
 
+    if (!isPersistenceConfigured()) {
+      res.json({ jobs: [], note: "Database not configured" });
+      return;
+    }
+
     const db = getDb();
     let jobs;
     if (status) {
@@ -84,6 +95,12 @@ router.get("/indexing-jobs", async (req: Request, res: Response) => {
 router.post("/indexing-jobs/:id/run", async (req: Request, res: Response) => {
   try {
     const jobId = Number(req.params.id);
+
+    if (!isPersistenceConfigured()) {
+      res.status(503).json({ error: "Database not configured — indexing jobs require DATABASE_URL" });
+      return;
+    }
+
     const db = getDb();
 
     const [job] = await db.select().from(indexingJobsTable).where(eq(indexingJobsTable.id, jobId)).limit(1);

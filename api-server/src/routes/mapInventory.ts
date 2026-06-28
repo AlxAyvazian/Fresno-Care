@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { getDb, providersTable, providerLocationsTable, providerContactsTable, providerServicesTable, providerSourcesTable } from "@workspace/db";
 import { and, gte, lte, eq, sql, inArray } from "drizzle-orm";
+import { isPersistenceConfigured } from "../lib/networkMapPersistence";
 
 const router = Router();
 
@@ -21,6 +22,11 @@ router.get("/map-inventory", async (req: Request, res: Response) => {
 
     if (!Number.isFinite(north) || !Number.isFinite(south) || !Number.isFinite(east) || !Number.isFinite(west)) {
       res.status(400).json({ error: "Missing required bounds: north, south, east, west" });
+      return;
+    }
+
+    if (!isPersistenceConfigured()) {
+      res.json({ providers: [], total: 0, note: "Database not configured — no indexed providers available" });
       return;
     }
 
