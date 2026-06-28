@@ -1,4 +1,4 @@
-import type { ProviderCandidate } from "../types";
+import type { ProviderCandidate, CoordinateStatus, TrustTier } from "../types";
 
 export async function searchFmcsa(city: string, state: string): Promise<ProviderCandidate[]> {
   const results: ProviderCandidate[] = [];
@@ -44,9 +44,10 @@ export async function searchFmcsa(city: string, state: string): Promise<Provider
         city: cityMatch, state: stateMatch, postalCode: "",
         phone: phone.replace(/\D/g, "").length >= 10 ? phone : "",
         website: "",
+        coordinateStatus: "unverified" as CoordinateStatus,
         source: "FMCSA", sourceDetail: "FMCSA National Registry",
         sourceUrl: "https://ai.fmcsa.dot.gov/mcs150/commonMESearchForm.aspx",
-        confidence: "high", score: 50, badges: ["FMCSA"],
+        confidence: "high", trustTier: "registry" as TrustTier, score: 50, badges: ["FMCSA"],
         evidence: [{
           serviceDetected: "DOT physical",
           evidenceUrl: "https://ai.fmcsa.dot.gov/mcs150/commonMESearchForm.aspx",

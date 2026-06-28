@@ -53,7 +53,7 @@ export async function getMedicalProvidersByBounds(
     AND permanently_closed = false
   `;
   
-  const params = [bounds.south, bounds.north, bounds.west, bounds.east];
+  const params: (number | string[])[] = [bounds.south, bounds.north, bounds.west, bounds.east];
   
   if (categories && categories.length > 0) {
     query += ` AND category = ANY($5)`;

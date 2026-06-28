@@ -12,10 +12,37 @@ import {
 } from './lib/procedurePrices';
 import { buildCitiesInRadius, buildFacilityRows, queryFacilitiesInRadius, type FacilityResult } from './lib/radiusExtractor';
 import { NPI_CATEGORY_MAP, NPI_CATEGORY_KEYS, isNpiCategory } from './lib/npiTaxonomies';
-import { searchNpiCustom, type NpiCustomSearchParams } from './lib/npiSearch';
 import type { ProviderCandidate, UnifiedSearchResponse, SearchAudit } from './lib/providerSources/types';
 import { SOURCE_BADGES } from './lib/providerSources/types';
 import { buildExplanation } from './lib/providerSources/scoring';
+
+type NpiCustomSearchParams = {
+  city: string;
+  state: string;
+  centerLat: number;
+  centerLng: number;
+  limit?: number;
+  organization_name?: string;
+  first_name?: string;
+  last_name?: string;
+  taxonomy_description?: string;
+  taxonomy_code?: string;
+  enumeration_type?: string;
+};
+
+async function searchNpiCustom(params: NpiCustomSearchParams): Promise<{ results: ProviderCandidate[]; normalizedCount: number; geocodedCount: number; finalMarkerCount: number; error?: string }> {
+  const resp = await fetch('/api/provider-sources/npi-custom', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error((err as any).error || `HTTP ${resp.status}`);
+  }
+  return resp.json();
+}
 
 async function searchProviderSources(body: { city: string; state: string; serviceType: string; radiusMiles: number; centerLat: number; centerLng: number }): Promise<UnifiedSearchResponse> {
   const resp = await fetch('/api/provider-sources/search', {
@@ -2385,32 +2412,8 @@ export default function App() {
         setNpiError(response.error);
       }
       
-      // Convert NPI results to ProviderCandidate format
-      const candidates: ProviderCandidate[] = response.results.map((r) => ({
-        id: `npi-${r.npi}`,
-        name: r.name,
-        address: r.address,
-        city: r.city,
-        state: r.state,
-        postalCode: r.postalCode,
-        phone: r.phone,
-        website: '',
-        npi: r.npi,
-        taxonomy: r.taxonomyDescription,
-        taxonomyCode: r.taxonomyCode,
-        source: 'NPI',
-        sourceDetail: 'Custom Search',
-        sourceUrl: `https://npiregistry.cms.hhs.gov/provider-view/${r.npi}`,
-        confidence: 'medium' as const,
-        score: r.providerType === 'organization' ? 35 : 30,
-        badges: ['NPI'],
-        evidence: [],
-        _rawSources: ['NPI'],
-        lat: r.lat ?? undefined,
-        lng: r.lng ?? undefined,
-      }));
-      
-      setNpiResults(candidates);
+      // Results are already in ProviderCandidate format from the backend
+      setNpiResults(response.results);
       setNpiSearchMeta({
         normalizedCount: response.normalizedCount,
         dedupedCount: response.normalizedCount,
@@ -2438,7 +2441,9 @@ export default function App() {
     const label=config?.label||'Provider';
 
     results.forEach((p,i)=>{
+      // Only render map pins for providers with verified coordinates (imported or geocoded)
       if(p.lat==null||p.lng==null) return;
+      if((p as any).coordinateStatus==='unverified') return;
       const lat=p.lat;
       const lng=p.lng;
       // Internal map pin: show provider name

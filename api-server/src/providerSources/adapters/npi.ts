@@ -1,4 +1,4 @@
-import type { ProviderCandidate } from "../types";
+import type { ProviderCandidate, CoordinateStatus, TrustTier } from "../types";
 
 const NPI_TAXONOMY_MAP: Record<string, string[]> = {
   urgent: ["Clinic/Center, Urgent Care", "Urgent Care", "Urgent Care Medicine"],
@@ -49,7 +49,8 @@ export async function searchNpi(city: string, state: string, serviceType: string
           taxonomy: tax.desc || taxonomy, taxonomyCode: tax.code || "",
           source: "NPI", sourceDetail: `NPI ${r.enumeration_type || ""}`.trim(),
           sourceUrl: npi ? `https://npiregistry.cms.hhs.gov/provider-view/${npi}` : "",
-          confidence: "medium" as const, score: isOrg ? 35 : 30, badges: ["NPI"], evidence: [], _rawSources: ["NPI"],
+          coordinateStatus: "unverified" as CoordinateStatus,
+          confidence: "medium" as const, trustTier: "registry" as TrustTier, score: isOrg ? 35 : 30, badges: ["NPI"], evidence: [], _rawSources: ["NPI"],
         };
       }).filter((c) => c.address && c.city && c.state);
     }),
