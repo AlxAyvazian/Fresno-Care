@@ -4,7 +4,7 @@ This folder adds a separate Scrapy-based ingestion layer for the Network Map. It
 
 ## Purpose
 
-Use Scrapy to collect clinic directory data from public location pages, normalize it into Network Map provider rows, and import those rows into the existing provider import endpoint.
+Use Scrapy to collect clinic directory data from public location pages, normalize it into Network Map provider rows, validate and dedupe those rows, and import them through the existing provider import endpoint.
 
 Expected fields:
 
@@ -33,27 +33,53 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Run the generic clinic directory spider
+## Run a clinic directory spider
+
+Use this when the public site has a normal locations page with cards, pagination, and optional detail links:
 
 ```bash
 scrapy crawl clinic_directory \
   -a config=sources/example_clinic_directory.json \
-  -O output/example-clinics.jsonl
+  -O output/example-clinics.raw.jsonl
 ```
 
-Use `-O` to overwrite an output file, or `-o` to append.
+## Run a sitemap-driven spider
+
+Use this when a clinic chain exposes a sitemap and location pages are spread across many URLs:
+
+```bash
+scrapy crawl sitemap_directory \
+  -a config=sources/example_sitemap_directory.json \
+  -O output/example-clinics.raw.jsonl
+```
+
+## Validate and dedupe output
+
+```bash
+python tools/validate_provider_jsonl.py \
+  --input output/example-clinics.raw.jsonl \
+  --output output/example-clinics.clean.jsonl
+```
+
+The validator reports total rows, valid rows, invalid rows, duplicate rows, and invalid samples.
 
 ## Convert JSONL for the existing import endpoint
 
 ```bash
 python tools/jsonl_to_import_csv.py \
-  --input output/example-clinics.jsonl \
+  --input output/example-clinics.clean.jsonl \
   --output output/example-clinics-import.csv
 ```
 
 Then post that CSV text to the existing `/api/provider-sources/import` endpoint with a `sourceTag`.
 
 The CSV converter intentionally replaces commas inside cell values with semicolons because the current API parser is simple and splits rows on commas.
+
+## Recommended workflow
+
+```text
+Scrapy crawl -> raw JSONL -> validate/dedupe -> clean JSONL -> import CSV -> Network Map database
+```
 
 ## Important implementation rule
 
