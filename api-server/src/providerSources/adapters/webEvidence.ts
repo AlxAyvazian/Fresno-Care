@@ -1,5 +1,6 @@
 import type { ProviderCandidate, SearchParams, CoordinateStatus, TrustTier } from "../types";
 import { searchLangSearchWeb } from "../../lib/langSearchClient";
+import { extractEvidenceWithAi, hasConfiguredAiExtractionSource } from "../../lib/aiExtractionClient";
 
 interface WebSearchResult {
   title: string;
@@ -247,6 +248,98 @@ function buildEvidenceQuery(city: string, state: string, serviceType: string): s
   ].filter(Boolean).join(" ");
 }
 
+function makeCandidate(sourceName: string, result: WebSearchResult, city: string, state: string, serviceType: string, idx: number): ProviderCandidate {
+  return {
+    id: `webevidence-${sourceName.toLowerCase()}-${stableId(result.url || `${serviceType}-${idx}`)}`,
+    name: extractProviderName(result.title, result.snippet),
+    address: "",
+    city,
+    state,
+    postalCode: "",
+    phone: "",
+    website: result.url,
+    coordinateStatus: "unverified" as CoordinateStatus,
+    source: sourceName,
+    sourceDetail: `Web Evidence (${sourceName})`,
+    sourceUrl: result.url,
+    confidence: "low" as const,
+    trustTier: "lead" as TrustTier,
+    score: 20,
+    badges: ["Web Evidence"],
+    evidence: [{
+      serviceDetected: serviceType,
+      evidenceUrl: result.url,
+      evidenceTextSnippet: result.snippet.slice(0, 1200),
+      confidence: 50,
+      source: sourceName,
+    }],
+    _rawSources: [sourceName.toLowerCase()],
+  };
+}
+
+async function enrichCandidatesWithAi(candidates: ProviderCandidate[], serviceType: string): Promise<ProviderCandidate[]> {
+  if (process.env.WEB_EVIDENCE_AI_EXTRACTION === "false" || !hasConfiguredAiExtractionSource()) return candidates;
+
+  const limit = Math.min(Math.max(Number(process.env.WEB_EVIDENCE_AI_EXTRACTION_LIMIT || 3), 0), 10);
+  if (limit === 0) return candidates;
+
+  const enriched: ProviderCandidate[] = [];
+  for (const [index, candidate] of candidates.entries()) {
+    if (index >= limit) {
+      enriched.push(candidate);
+      continue;
+    }
+
+    const text = [candidate.name, candidate.sourceUrl, candidate.evidence?.[0]?.evidenceTextSnippet]
+      .filter(Boolean)
+      .join("\n");
+
+    try {
+      const extraction = await extractEvidenceWithAi({
+        task: "provider_evidence",
+        title: candidate.name,
+        url: candidate.sourceUrl,
+        text,
+        serviceType,
+      });
+
+      if (!extraction) {
+        enriched.push(candidate);
+        continue;
+      }
+
+      const evidenceSnippet = [
+        candidate.evidence?.[0]?.evidenceTextSnippet,
+        extraction.summary ? `AI summary: ${extraction.summary}` : "",
+        extraction.services?.length ? `AI services: ${extraction.services.join(", ")}` : "",
+      ].filter(Boolean).join("\n").slice(0, 1800);
+
+      enriched.push({
+        ...candidate,
+        name: extraction.providerName || candidate.name,
+        address: extraction.address || candidate.address,
+        phone: extraction.phone || candidate.phone,
+        website: extraction.website || candidate.website,
+        score: Math.max(candidate.score || 0, extraction.confidence ? Math.round(extraction.confidence / 2) : candidate.score || 20),
+        badges: [...new Set([...(candidate.badges || []), `AI:${extraction.source}`])],
+        evidence: [{
+          serviceDetected: serviceType,
+          evidenceUrl: candidate.sourceUrl || "",
+          evidenceTextSnippet: evidenceSnippet,
+          confidence: Math.max(candidate.evidence?.[0]?.confidence || 50, extraction.confidence || 50),
+          source: `${candidate.source}+${extraction.source}`,
+        }],
+        _rawSources: [...new Set([...(candidate._rawSources || []), extraction.source.toLowerCase()])],
+      });
+    } catch (error) {
+      console.warn(`[WebEvidence AI] ${String(error)}`);
+      enriched.push(candidate);
+    }
+  }
+
+  return enriched;
+}
+
 /**
  * Unified web evidence adapter that tries multiple configured search APIs.
  * Returns low-trust provider candidates extracted from web search results.
@@ -264,37 +357,13 @@ export async function searchWebEvidence(city: string, state: string, serviceType
       continue;
     }
 
-    const candidates = (result.results || []).map((r, idx) => ({
-      id: `webevidence-${source.name.toLowerCase()}-${stableId(r.url || `${query}-${idx}`)}`,
-      name: extractProviderName(r.title, r.snippet),
-      address: "",
-      city,
-      state,
-      postalCode: "",
-      phone: "",
-      website: r.url,
-      coordinateStatus: "unverified" as CoordinateStatus,
-      source: source.name,
-      sourceDetail: `Web Evidence (${source.name})`,
-      sourceUrl: r.url,
-      confidence: "low" as const,
-      trustTier: "lead" as TrustTier,
-      score: 20,
-      badges: ["Web Evidence"],
-      evidence: [{
-        serviceDetected: serviceType,
-        evidenceUrl: r.url,
-        evidenceTextSnippet: r.snippet.slice(0, 1200),
-        confidence: 50,
-        source: source.name,
-      }],
-      _rawSources: [source.name.toLowerCase()],
-    }));
+    const candidates = (result.results || []).map((r, idx) => makeCandidate(source.name, r, city, state, serviceType, idx));
 
     allCandidates.push(...candidates);
   }
 
-  return dedupeWebCandidates(allCandidates);
+  const deduped = dedupeWebCandidates(allCandidates);
+  return enrichCandidatesWithAi(deduped, serviceType);
 }
 
 function stableId(input: string): string {
