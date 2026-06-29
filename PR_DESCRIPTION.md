@@ -174,21 +174,35 @@ This returns safe diagnostics only. It never exposes secret values.
 
 This makes it visible when a key exists but is not actually wired yet.
 
-## Registered but not fully wired yet
+## Browser/page extraction adapters
 
-These keys are visible through `/api/source-status`, but still need dedicated adapters:
+Implemented in `browserExtractionClient.ts` and exposed via `POST /api/browser-extraction/run`:
 
-- `BROWSE_AI_API_KEY`
-- `OLOSTEP_API_KEY`
-- `BROWSERBASE_API_KEY`
-- `GEMINI_API_KEY`
-- `GROQ_API_KEY`
-- `OPENROUTER_KEY`
-- `CEREBRAS_API_KEY`
-- `HUGGINGFACE_API_KEY`
-- `MINIMAX_API_KEY`
-- `CLOD_API_KEY`
-- `PINECONE_API_KEY`
+- `BROWSE_AI_API_KEY` — Browse AI robot/task extraction (requires `BROWSE_AI_ROBOT_ID` or `BROWSE_AI_TASK_ID`).
+- `OLOSTEP_API_KEY` — Olostep page extraction (requires `OLOSTEP_BASE_URL`).
+- `BROWSERBASE_API_KEY` — Browserbase managed browser sessions (requires `BROWSERBASE_PROJECT_ID` or `BROWSERBASE_BASE_URL`).
+
+These are background/directory extraction workflows. They do not run during normal live provider search.
+
+## Vector indexing adapter
+
+Implemented in `vectorIndexClient.ts` and exposed via `POST /api/vector-index/upsert` and `POST /api/vector-index/query`:
+
+- `PINECONE_API_KEY` — Pinecone vector index client (requires `PINECONE_INDEX_HOST`).
+
+The client accepts pre-computed vectors only. If records lack `values`, the client returns a clear error: "Embedding provider not configured."
+
+## Configured but not runtime-ready
+
+Some APIs require companion configuration beyond just the API key. `/api/source-status` exposes exactly what is missing via `runtimeReady` and `missingRequiredConfig`:
+
+- **Browse AI** requires `BROWSE_AI_ROBOT_ID` or `BROWSE_AI_TASK_ID`.
+- **Olostep** requires `OLOSTEP_BASE_URL` (no verified default endpoint is known).
+- **Browserbase** requires `BROWSERBASE_PROJECT_ID` or `BROWSERBASE_BASE_URL`.
+- **Pinecone** requires `PINECONE_INDEX_HOST`.
+- **RapidAPI provider search** requires `RAPIDAPI_PROVIDER_SEARCH_URL` or `RAPIDAPI_PROVIDER_SEARCH_HOST`.
+- **Clod** requires `CLOD_API_BASE_URL` and `CLOD_EXTRACTION_MODEL`.
+- **MiniMax** requires `MINIMAX_API_BASE_URL`.
 
 Follow-up implementation details are documented in:
 
@@ -201,11 +215,19 @@ TODO_API_ADAPTERS.md
 ```json
 {
   "summary": {
-    "total": 27,
+    "total": 30,
     "configured": 5,
-    "notConfigured": 22,
-    "active": 16,
-    "configuredNotWired": 4,
+    "notConfigured": 25,
+    "runtimeReady": 3,
+    "configuredButNotRuntimeReady": [
+      {
+        "sourceName": "Browse AI",
+        "envVar": "BROWSE_AI_API_KEY",
+        "missingRequiredConfig": ["BROWSE_AI_ROBOT_ID or BROWSE_AI_TASK_ID"]
+      }
+    ],
+    "active": 30,
+    "configuredNotWired": 0,
     "planned": 0
   },
   "sources": [
@@ -215,7 +237,20 @@ TODO_API_ADAPTERS.md
       "configured": true,
       "category": "web_search",
       "adapterStatus": "active",
-      "usedBy": ["provider_discovery"]
+      "usedBy": ["provider_discovery"],
+      "runtimeReady": true,
+      "missingRequiredConfig": []
+    },
+    {
+      "sourceName": "Browse AI",
+      "envVar": "BROWSE_AI_API_KEY",
+      "configured": true,
+      "category": "web_extraction",
+      "adapterStatus": "active",
+      "usedBy": ["enrichment"],
+      "runtimeReady": false,
+      "missingRequiredConfig": ["BROWSE_AI_ROBOT_ID or BROWSE_AI_TASK_ID"],
+      "notes": "Requires BROWSE_AI_ROBOT_ID or BROWSE_AI_TASK_ID to run extraction jobs."
     }
   ]
 }
@@ -227,7 +262,11 @@ Recommended checks after deployment:
 
 1. Set at least one web evidence API key.
 2. Call `GET /api/source-status`.
-3. Call `POST /api/provider-sources/search`.
-4. Confirm `audit.activeAdapters` includes `webevidence` when a supported web evidence key is configured.
-5. Confirm web evidence candidates are unverified leads, not fake map pins.
-6. Confirm registered-but-not-wired keys appear in diagnostics without being claimed as active.
+3. Confirm `runtimeReady` and `missingRequiredConfig` are present for every source.
+4. Call `POST /api/provider-sources/search`.
+5. Confirm `audit.activeAdapters` includes `webevidence` when a supported web evidence key is configured.
+6. Confirm web evidence candidates are unverified leads, not fake map pins.
+7. Set `BROWSE_AI_API_KEY` without `BROWSE_AI_ROBOT_ID` — confirm `runtimeReady: false` and `missingRequiredConfig` lists the missing var.
+8. Call `POST /api/browser-extraction/run` with `source: "BrowseAI"` — confirm it returns `runtimeReady: false` when companion config is missing.
+9. Call `GET /api/vector-index/status` — confirm Pinecone readiness is reported.
+10. Run `pnpm --filter @workspace/scripts smoke:api-sources` to verify readiness logic without real keys.

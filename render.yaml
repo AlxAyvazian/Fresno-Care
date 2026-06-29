@@ -77,6 +77,40 @@ services:
         sync: false
       - key: RAPIDAPI_PROVIDER_SEARCH_TIMEOUT_MS
         sync: false
+      - key: BROWSE_AI_ROBOT_ID
+        sync: false
+      - key: BROWSE_AI_TASK_ID
+        sync: false
+      - key: BROWSE_AI_BASE_URL
+        sync: false
+      - key: BROWSE_AI_TIMEOUT_MS
+        sync: false
+      - key: OLOSTEP_BASE_URL
+        sync: false
+      - key: OLOSTEP_TIMEOUT_MS
+        sync: false
+      - key: BROWSERBASE_PROJECT_ID
+        sync: false
+      - key: BROWSERBASE_BASE_URL
+        sync: false
+      - key: BROWSERBASE_TIMEOUT_MS
+        sync: false
+      - key: PINECONE_INDEX_HOST
+        sync: false
+      - key: PINECONE_NAMESPACE
+        sync: false
+      - key: PINECONE_TIMEOUT_MS
+        sync: false
+      - key: AI_EXTRACTION_PROVIDER
+        sync: false
+      - key: AI_EXTRACTION_TIMEOUT_MS
+        sync: false
+      - key: AI_EXTRACTION_MAX_CHARS
+        sync: false
+      - key: WEB_EVIDENCE_AI_EXTRACTION
+        sync: false
+      - key: WEB_EVIDENCE_AI_EXTRACTION_LIMIT
+        sync: false
 
 databases:
   - name: network-map-db

@@ -2,11 +2,12 @@
 
 This document keeps the unified API source work honest.
 
-The app can now report all configured API keys through `/api/source-status`, but a key being present does not mean the API is fully used everywhere. The source registry must distinguish between:
+The app reports all configured API keys through `/api/source-status`, including `runtimeReady` and `missingRequiredConfig` for each source. A key being present does not mean the API is fully ready to run. The source registry distinguishes between:
 
-- `active`: real code currently calls this API.
-- `configured_not_wired`: the key is visible in diagnostics, but there is no dedicated adapter yet.
-- `planned`: intentionally listed for later implementation.
+- `configured: true` — the env var has a non-empty value.
+- `runtimeReady: true` — all required companion config is also present and the adapter can actually run.
+- `adapterStatus: "active"` — real code currently calls this API.
+- `adapterStatus: "configured_not_wired"` — the key is visible in diagnostics, but no dedicated adapter consumes it yet.
 
 ## Active in PR #43
 
@@ -20,11 +21,23 @@ These sources are called by the backend-only unified web evidence adapter:
 - `EXA_API_KEY` — Exa web evidence search.
 - `FIRECRAWL_API_KEY` — Firecrawl search used as a web evidence source. Deeper page extraction is still follow-up work.
 
-These results must remain low-trust leads:
+These results remain low-trust leads:
 
 - `trustTier: "lead"`
 - `coordinateStatus: "unverified"`
 - evidence/list-only until independently geocoded and verified
+
+### AI evidence enrichment
+
+These providers are called by `aiExtractionClient.ts` from `webEvidence.ts` for capped low-cost evidence enrichment:
+
+- `GEMINI_API_KEY` — Gemini extraction (runtime-ready with key only).
+- `GROQ_API_KEY` — Groq extraction (runtime-ready with key only).
+- `OPENROUTER_KEY` — OpenRouter extraction (runtime-ready with key only).
+- `CEREBRAS_API_KEY` — Cerebras extraction (runtime-ready with key only).
+- `HUGGINGFACE_API_KEY` — HuggingFace extraction (runtime-ready with key only).
+- `MINIMAX_API_KEY` — MiniMax extraction (requires `MINIMAX_API_BASE_URL` companion config).
+- `CLOD_API_KEY` — Clod extraction (requires `CLOD_API_BASE_URL` and `CLOD_EXTRACTION_MODEL` companion config).
 
 ### Price discovery
 
@@ -38,118 +51,39 @@ These results must remain low-trust leads:
 - `GEOCODIO_SECONDARY_TOKEN`
 - `GEOCODIO_TERTIARY_TOKEN`
 - `GEOCODIO_QUATERNARY_TOKEN`
-- `RAPIDAPI_KEY`
-- `RAPIDAPI_ENABLED`
-- `RAPIDAPI_PROVIDER_SEARCH_ENABLED`
-- `RAPIDAPI_GEOCODING_ENABLED`
-- `RAPIDAPI_LOCATION_LOOKUP_ENABLED`
-- `RAPIDAPI_MAP_DISPLAY_ENABLED`
-- `RAPIDAPI_ROUTING_DISTANCE_ENABLED`
+- `RAPIDAPI_KEY` + `RAPIDAPI_ENABLED` + `RAPIDAPI_PROVIDER_SEARCH_ENABLED` + endpoint config
 
-RapidAPI provider search is routed by the orchestrator only when the required key and enable flags are set.
+RapidAPI provider search is routed by the orchestrator only when the required key, enable flags, and endpoint URL or host are all set.
 
-## Registered but not fully wired yet
+### Browser/page extraction
 
-These env vars are tracked by the registry and visible in `/api/source-status`, but need dedicated adapters before being considered fully integrated.
+These adapters are implemented in `browserExtractionClient.ts` and exposed via `POST /api/browser-extraction/run`:
 
-### Browse AI
+- `BROWSE_AI_API_KEY` — Browse AI robot/task extraction (requires `BROWSE_AI_ROBOT_ID` or `BROWSE_AI_TASK_ID`).
+- `OLOSTEP_API_KEY` — Olostep page extraction (requires `OLOSTEP_BASE_URL`).
+- `BROWSERBASE_API_KEY` — Browserbase managed browser sessions (requires `BROWSERBASE_PROJECT_ID` or `BROWSERBASE_BASE_URL`).
 
-Env var:
+These are background/directory extraction workflows. They do not run during normal live provider search. Results are low-trust leads.
 
-- `BROWSE_AI_API_KEY`
+### Vector indexing
 
-Intended use:
+- `PINECONE_API_KEY` — Pinecone vector index client (requires `PINECONE_INDEX_HOST`).
 
-- Repeatable directory extraction workflows.
-- Sites where a Browse AI robot has already been trained.
-- Batch ingestion/enrichment, not live map rendering.
+Implemented in `vectorIndexClient.ts` and exposed via `POST /api/vector-index/upsert` and `POST /api/vector-index/query`.
 
-Needed adapter:
+The client accepts pre-computed vectors only. If records lack `values`, the client returns a clear error: "Embedding provider not configured." No fake embeddings are generated.
 
-- Robot/run invocation adapter.
-- Result normalization into provider evidence or CSV import rows.
-- Job tracking so browser automation does not block interactive searches.
+## Configured but not runtime-ready
 
-### Olostep
+Some APIs require companion configuration beyond just the API key. `/api/source-status` exposes exactly what is missing:
 
-Env var:
-
-- `OLOSTEP_API_KEY`
-
-Intended use:
-
-- Browser/page extraction for difficult websites.
-- Pricing page extraction.
-- Directory enrichment when simple search snippets are insufficient.
-
-Needed adapter:
-
-- Page fetch/extraction client.
-- Timeout and retry controls.
-- Evidence persistence into provider or price evidence tables.
-
-### Browserbase
-
-Env var:
-
-- `BROWSERBASE_API_KEY`
-
-Intended use:
-
-- Managed browser sessions.
-- JavaScript-heavy provider directories.
-- Batch workflows, not normal user-facing search.
-
-Needed adapter:
-
-- Session lifecycle helper.
-- Browser task runner.
-- Output normalization into provider evidence or ingestion rows.
-
-### AI extraction / ranking providers
-
-Env vars:
-
-- `GEMINI_API_KEY`
-- `GROQ_API_KEY`
-- `OPENROUTER_KEY`
-- `CEREBRAS_API_KEY`
-- `HUGGINGFACE_API_KEY`
-- `MINIMAX_API_KEY`
-- `CLOD_API_KEY`
-
-Intended use:
-
-- Extract provider names, addresses, services, hours, and prices from page text.
-- Summarize evidence.
-- Rank provider confidence.
-- Categorize whether a page proves occupational-health services.
-
-Needed adapter:
-
-- Shared extraction interface.
-- Provider/price extraction schemas.
-- Strict JSON output validation.
-- No direct map pins from model output alone.
-
-### Pinecone
-
-Env var:
-
-- `PINECONE_API_KEY`
-
-Intended use:
-
-- Semantic evidence indexing.
-- Similar-provider search.
-- Retrieval over saved provider evidence and price evidence.
-
-Needed adapter:
-
-- Vector index client.
-- Embedding pipeline.
-- Evidence chunking and upsert job.
-- Retrieval endpoint for enrichment/search assistance.
+- **Browse AI** requires `BROWSE_AI_ROBOT_ID` or `BROWSE_AI_TASK_ID`.
+- **Olostep** requires `OLOSTEP_BASE_URL` (no verified default endpoint is known).
+- **Browserbase** requires `BROWSERBASE_PROJECT_ID` or `BROWSERBASE_BASE_URL`.
+- **Pinecone** requires `PINECONE_INDEX_HOST`.
+- **RapidAPI provider search** requires `RAPIDAPI_PROVIDER_SEARCH_URL` or `RAPIDAPI_PROVIDER_SEARCH_HOST`.
+- **Clod** requires `CLOD_API_BASE_URL` and `CLOD_EXTRACTION_MODEL`.
+- **MiniMax** requires `MINIMAX_API_BASE_URL`.
 
 ## Non-goals
 

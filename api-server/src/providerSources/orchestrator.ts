@@ -7,7 +7,7 @@ import { dedupeCandidates } from "./dedupe";
 import { geocodeProviders } from "./geocode";
 import { scoreProvider, assignTrustTier } from "./scoring";
 import { searchProviders as searchRapidApiProviders } from "../services/rapidApi/adapters/providerSearchAdapter.js";
-import { getSourceStatusReport } from "../lib/apiSourceRegistry";
+import { getSourceStatusReport, isRapidApiProviderSearchConfigured } from "../lib/apiSourceRegistry";
 
 const SERVICE_ROUTING: Record<string, string[]> = {
   dotExam: ["npi", "fmcsa", "clinicimports"],
@@ -47,18 +47,6 @@ const SOURCE_LABELS: Record<string, string> = {
 
 function isTruthyFlag(value: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
-}
-
-function isRapidApiProviderSearchConfigured(): boolean {
-  const hasEndpoint = Boolean(
-    process.env.RAPIDAPI_PROVIDER_SEARCH_URL?.trim() ||
-    process.env.RAPIDAPI_PROVIDER_SEARCH_HOST?.trim(),
-  );
-
-  return Boolean(process.env.RAPIDAPI_KEY?.trim()) &&
-    isTruthyFlag(process.env.RAPIDAPI_ENABLED) &&
-    isTruthyFlag(process.env.RAPIDAPI_PROVIDER_SEARCH_ENABLED) &&
-    hasEndpoint;
 }
 
 async function searchRapidApiFromOrchestrator(params: SearchParams): Promise<ProviderCandidate[]> {
