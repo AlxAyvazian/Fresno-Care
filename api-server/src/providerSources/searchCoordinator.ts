@@ -338,16 +338,6 @@ export function shouldEscalateSearch(
 
 // ── TASK 6: Source planning ────────────────────────────────────────────────
 
-/**
- * Build a complete search plan that decides which sources to run, in what order,
- * and whether escalation is warranted.
- *
- * Internal/free sources always run. External sources (web evidence, RapidAPI,
- * AI enrichment, browser extraction, vector query) run only when the baseline
- * quality fails thresholds, the source is runtime-ready, and the mode's budget
- * permits it. Every decision includes a human-readable reason.
- */
-
 function isWebEvidenceSourceReady(sources: SourceStatusReport[]): boolean {
   const webSearchSources = sources.filter(
     (s) => s.category === "web_search" && s.runtimeReady,
@@ -384,6 +374,15 @@ function isRapidApiReady(sources: SourceStatusReport[]): boolean {
 
 const FMCSA_SERVICES = new Set(["dotExam"]);
 
+/**
+ * Build a complete search plan that decides which sources to run, in what order,
+ * and whether escalation is warranted.
+ *
+ * Internal/free sources always run. External sources (web evidence, RapidAPI,
+ * AI enrichment, browser extraction, vector query) run only when the baseline
+ * quality fails thresholds, the source is runtime-ready, and the mode's budget
+ * permits it. Every decision includes a human-readable reason.
+ */
 export function buildSearchPlan(args: {
   mode: SearchMode;
   serviceType: string;
