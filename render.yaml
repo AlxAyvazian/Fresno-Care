@@ -23,6 +23,94 @@ services:
         sync: false
       - key: GEOCODIO_QUATERNARY_TOKEN
         sync: false
+      - key: BROWSE_AI_API_KEY
+        sync: false
+      - key: CLOD_API_KEY
+        sync: false
+      - key: EXA_API_KEY
+        sync: false
+      - key: FIRECRAWL_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OLOSTEP_API_KEY
+        sync: false
+      - key: OPENROUTER_KEY
+        sync: false
+      - key: SERPER_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: LANGSEARCH_API_KEY
+        sync: false
+      - key: HUGGINGFACE_API_KEY
+        sync: false
+      - key: MINIMAX_API_KEY
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: BROWSERBASE_API_KEY
+        sync: false
+      - key: RAPIDAPI_ENABLED
+        sync: false
+      - key: RAPIDAPI_GEOCODING_ENABLED
+        sync: false
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: RAPIDAPI_LOCATION_LOOKUP_ENABLED
+        sync: false
+      - key: RAPIDAPI_MAP_DISPLAY_ENABLED
+        sync: false
+      - key: RAPIDAPI_PROVIDER_SEARCH_ENABLED
+        sync: false
+      - key: RAPIDAPI_ROUTING_DISTANCE_ENABLED
+        sync: false
+      - key: RAPIDAPI_PROVIDER_SEARCH_URL
+        sync: false
+      - key: RAPIDAPI_PROVIDER_SEARCH_HOST
+        sync: false
+      - key: RAPIDAPI_PROVIDER_SEARCH_PATH
+        sync: false
+      - key: RAPIDAPI_PROVIDER_SEARCH_TIMEOUT_MS
+        sync: false
+      - key: BROWSE_AI_ROBOT_ID
+        sync: false
+      - key: BROWSE_AI_TASK_ID
+        sync: false
+      - key: BROWSE_AI_BASE_URL
+        sync: false
+      - key: BROWSE_AI_TIMEOUT_MS
+        sync: false
+      - key: OLOSTEP_BASE_URL
+        sync: false
+      - key: OLOSTEP_TIMEOUT_MS
+        sync: false
+      - key: BROWSERBASE_PROJECT_ID
+        sync: false
+      - key: BROWSERBASE_BASE_URL
+        sync: false
+      - key: BROWSERBASE_TIMEOUT_MS
+        sync: false
+      - key: PINECONE_INDEX_HOST
+        sync: false
+      - key: PINECONE_NAMESPACE
+        sync: false
+      - key: PINECONE_TIMEOUT_MS
+        sync: false
+      - key: AI_EXTRACTION_PROVIDER
+        sync: false
+      - key: AI_EXTRACTION_TIMEOUT_MS
+        sync: false
+      - key: AI_EXTRACTION_MAX_CHARS
+        sync: false
+      - key: WEB_EVIDENCE_AI_EXTRACTION
+        sync: false
+      - key: WEB_EVIDENCE_AI_EXTRACTION_LIMIT
+        sync: false
 
 databases:
   - name: network-map-db
