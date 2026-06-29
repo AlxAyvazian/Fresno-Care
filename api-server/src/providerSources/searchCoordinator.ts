@@ -101,6 +101,11 @@ function normalizeName(name: string): string {
 
 // ── TASK 2: Quality scoring ────────────────────────────────────────────────
 
+/**
+ * Compute aggregate quality metrics from a set of provider candidates.
+ * Returns counts by trust tier, coverage percentages for address/phone/website,
+ * an estimated duplicate rate, and score statistics.
+ */
 export function calculateSearchQuality(results: ProviderCandidate[]): SearchQualityMetrics {
   const totalResults = results.length;
   if (totalResults === 0) {
@@ -171,6 +176,10 @@ export function calculateSearchQuality(results: ProviderCandidate[]): SearchQual
 
 // ── TASK 3: Thresholds by mode ─────────────────────────────────────────────
 
+/**
+ * Return the quality thresholds for a given search mode.
+ * Each threshold can be overridden by a corresponding SEARCH_* environment variable.
+ */
 export function getThresholdsForMode(mode: SearchMode): SearchQualityThresholds {
   const defaults: Record<SearchMode, SearchQualityThresholds> = {
     fast: {
@@ -234,6 +243,12 @@ export function getThresholdsForMode(mode: SearchMode): SearchQualityThresholds 
 
 // ── TASK 4: API budgets by mode ────────────────────────────────────────────
 
+/**
+ * Return the API call budget for a given search mode.
+ * Controls how many web evidence sources, AI enrichments, and whether
+ * browser extraction or vector queries are permitted.
+ * Each field can be overridden by a corresponding SEARCH_* environment variable.
+ */
 export function getBudgetForMode(mode: SearchMode): ApiBudget {
   const defaults: Record<SearchMode, ApiBudget> = {
     fast: {
@@ -285,6 +300,11 @@ export function getBudgetForMode(mode: SearchMode): ApiBudget {
 
 // ── TASK 5: Escalation decision ────────────────────────────────────────────
 
+/**
+ * Compare quality metrics against thresholds and decide whether to escalate.
+ * Returns a boolean and a list of machine-readable reason codes explaining
+ * which threshold was missed (e.g. "too_few_total_results", "weak_phone_coverage").
+ */
 export function shouldEscalateSearch(
   quality: SearchQualityMetrics,
   thresholds: SearchQualityThresholds,
@@ -317,6 +337,16 @@ export function shouldEscalateSearch(
 }
 
 // ── TASK 6: Source planning ────────────────────────────────────────────────
+
+/**
+ * Build a complete search plan that decides which sources to run, in what order,
+ * and whether escalation is warranted.
+ *
+ * Internal/free sources always run. External sources (web evidence, RapidAPI,
+ * AI enrichment, browser extraction, vector query) run only when the baseline
+ * quality fails thresholds, the source is runtime-ready, and the mode's budget
+ * permits it. Every decision includes a human-readable reason.
+ */
 
 function isWebEvidenceSourceReady(sources: SourceStatusReport[]): boolean {
   const webSearchSources = sources.filter(

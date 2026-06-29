@@ -1,19 +1,18 @@
-import type { ProviderCandidate, SearchParams, SourceResult, SearchAudit, UnifiedSearchResponse, TrustTier } from "./types";
+import type { ProviderCandidate, SearchParams, SourceResult, UnifiedSearchResponse, TrustTier } from "./types";
 import { searchNpi } from "./adapters/npi";
 import { searchFmcsa } from "./adapters/fmcsa";
 import { searchClinicImports } from "./adapters/clinicImportsDb";
-import { searchWebEvidence, hasConfiguredWebEvidenceSource, type WebEvidenceOptions } from "./adapters/webEvidence";
+import { searchWebEvidence, type WebEvidenceOptions } from "./adapters/webEvidence";
 import { dedupeCandidates } from "./dedupe";
 import { geocodeProviders } from "./geocode";
 import { scoreProvider, assignTrustTier } from "./scoring";
 import { searchProviders as searchRapidApiProviders } from "../services/rapidApi/adapters/providerSearchAdapter.js";
-import { getSourceStatusReport, isRapidApiProviderSearchConfigured } from "../lib/apiSourceRegistry";
+import { getSourceStatusReport } from "../lib/apiSourceRegistry";
 import {
   buildSearchPlan,
   calculateSearchQuality,
   type SearchMode,
   type SearchCoordinatorAudit,
-  type SearchQualityMetrics,
 } from "./searchCoordinator";
 
 const SERVICE_ROUTING: Record<string, string[]> = {
@@ -51,10 +50,6 @@ const SOURCE_LABELS: Record<string, string> = {
   rapidapi: "RapidAPI Provider Search",
   webevidence: "Unified Web Evidence",
 };
-
-function isTruthyFlag(value: string | undefined): boolean {
-  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
-}
 
 async function searchRapidApiFromOrchestrator(params: SearchParams): Promise<ProviderCandidate[]> {
   const { city, state, radiusMiles, serviceType, centerLat, centerLng } = params;
