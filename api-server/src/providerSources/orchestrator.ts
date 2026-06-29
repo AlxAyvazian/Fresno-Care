@@ -15,6 +15,8 @@ import {
   type SearchCoordinatorAudit,
 } from "./searchCoordinator";
 
+const VALID_MODES: SearchMode[] = ["fast", "balanced", "deep", "background_indexing", "price_discovery"];
+
 const SERVICE_ROUTING: Record<string, string[]> = {
   dotExam: ["npi", "fmcsa", "clinicimports"],
   faamedical: ["npi", "clinicimports"],
@@ -107,7 +109,8 @@ export function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: n
 export async function runUnifiedSearch(params: SearchParams): Promise<UnifiedSearchResponse> {
   const startMs = performance.now();
   const { city, state, radiusMiles, serviceType, centerLat, centerLng } = params;
-  const mode: SearchMode = params.mode || (process.env.SEARCH_DEFAULT_MODE as SearchMode) || "balanced";
+  const envMode = params.mode || (process.env.SEARCH_DEFAULT_MODE as SearchMode) || "balanced";
+  const mode: SearchMode = VALID_MODES.includes(envMode) ? envMode : "balanced";
 
   const sourceStatus = getSourceStatusReport();
   const configuredApiSources = sourceStatus.filter((s) => s.configured).map((s) => s.sourceName);
