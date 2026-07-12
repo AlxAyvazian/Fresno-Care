@@ -40,6 +40,7 @@ const PUBLICATION_LABELS: Record<PublicationStatus, string> = {
 };
 
 const EVENT_LABELS: Record<ModerationEvent["eventType"], string> = {
+  report_submitted: "Report submitted for review",
   case_status_changed: "Case status changed",
   publication_status_changed: "Publication decision changed",
   note_added: "Reviewer note",
@@ -259,7 +260,7 @@ export default function ModerationReviewPage() {
               </div>
               <h1 className="font-heading text-3xl font-bold sm:text-4xl">Report review queue</h1>
               <p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted-foreground">
-                Every status change, publication decision, and reviewer note is appended to an immutable moderation timeline.
+                Every submission, status change, publication decision, and reviewer note is appended to an immutable moderation timeline.
               </p>
               <div className="mt-4 inline-flex items-center gap-2 rounded-xl bg-muted/50 px-3 py-2 text-xs font-medium">
                 <UserRound size={14} /> Reviewing as {actorLabel}
