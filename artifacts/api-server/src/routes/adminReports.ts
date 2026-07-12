@@ -1,11 +1,17 @@
 import { Router, type IRouter } from "express";
 import { desc, eq } from "drizzle-orm";
-import { db, REPORT_STATUSES, reportsTable } from "@workspace/db";
+import {
+  db,
+  PUBLICATION_STATUSES,
+  REPORT_STATUSES,
+  reportsTable,
+} from "@workspace/db";
 import { requireAdmin } from "../middleware/adminAuth";
 
 const adminReportsRouter: IRouter = Router();
 
 type ReportStatus = (typeof REPORT_STATUSES)[number];
+type PublicationStatus = (typeof PUBLICATION_STATUSES)[number];
 
 function toAdminReport(report: typeof reportsTable.$inferSelect) {
   return {
@@ -13,6 +19,7 @@ function toAdminReport(report: typeof reportsTable.$inferSelect) {
     publicId: report.publicId,
     createdAt: report.createdAt,
     updatedAt: report.updatedAt,
+    publishedAt: report.publishedAt,
     animalType: report.animalType,
     count: report.count,
     location: report.location,
@@ -28,6 +35,7 @@ function toAdminReport(report: typeof reportsTable.$inferSelect) {
     anonymous: report.anonymous,
     reporterContact: report.reporterContact,
     status: report.status,
+    publicationStatus: report.publicationStatus,
   };
 }
 
@@ -71,6 +79,44 @@ adminReportsRouter.patch("/admin/reports/:publicId/status", async (req, res, nex
     const [updated] = await db
       .update(reportsTable)
       .set({ status, updatedAt: new Date() })
+      .where(eq(reportsTable.publicId, req.params.publicId))
+      .returning();
+
+    if (!updated) {
+      res.status(404).json({ error: "Report not found" });
+      return;
+    }
+
+    res.json({ report: toAdminReport(updated) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminReportsRouter.patch("/admin/reports/:publicId/publication", async (req, res, next) => {
+  try {
+    const requestedStatus = req.body?.publicationStatus;
+
+    if (
+      typeof requestedStatus !== "string" ||
+      !(PUBLICATION_STATUSES as readonly string[]).includes(requestedStatus)
+    ) {
+      res.status(400).json({
+        error: "Invalid publication status",
+        allowedPublicationStatuses: PUBLICATION_STATUSES,
+      });
+      return;
+    }
+
+    const publicationStatus = requestedStatus as PublicationStatus;
+    const now = new Date();
+    const [updated] = await db
+      .update(reportsTable)
+      .set({
+        publicationStatus,
+        publishedAt: publicationStatus === "approved" ? now : null,
+        updatedAt: now,
+      })
       .where(eq(reportsTable.publicId, req.params.publicId))
       .returning();
 
