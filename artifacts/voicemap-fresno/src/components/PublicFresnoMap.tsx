@@ -37,17 +37,30 @@ const NEIGHBORHOOD_COORDS: Record<string, [number, number]> = {
   palm: [36.805, -119.791],
 };
 
+const CONTEXT_ZONES: Array<{
+  center: [number, number];
+  radius: number;
+  color: string;
+}> = [
+  { center: [36.7775, -119.7929], radius: 1500, color: "#F8E2AA" },
+  { center: [36.806, -119.819], radius: 1700, color: "#FAEDCD" },
+  { center: [36.7378, -119.7871], radius: 1450, color: "#8FBAE1" },
+  { center: [36.835, -119.774], radius: 1800, color: "#CAE7FF" },
+  { center: [36.7379, -119.7383], radius: 1700, color: "#FDFAE0" },
+  { center: [36.722, -119.81], radius: 1800, color: "#F8E2AA" },
+];
+
 const DANGER_COLORS: Record<PublicMapReport["inDanger"], string> = {
-  yes: "#ff5b45",
-  unsure: "#f7b955",
-  no: "#28d7d0",
+  yes: "#D86F5E",
+  unsure: "#D9A44A",
+  no: "#6C9FCA",
 };
 
 const STATUS_RINGS: Record<string, string> = {
-  resolved: "#62e6a7",
-  routed: "#f7b955",
-  "follow-up": "#ff7a66",
-  submitted: "#8be8ff",
+  resolved: "#5F9F87",
+  routed: "#F8E2AA",
+  "follow-up": "#D86F5E",
+  submitted: "#8FBAE1",
 };
 
 function hashString(value: string): number {
@@ -126,11 +139,26 @@ export function PublicFresnoMap({
         scrollWheelZoom: !compact,
       });
 
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; CARTO',
         subdomains: "abcd",
         maxZoom: 20,
       }).addTo(map);
+
+      const contextLayer = L.layerGroup().addTo(map);
+      CONTEXT_ZONES.forEach((zone) => {
+        L.circle(zone.center, {
+          radius: zone.radius,
+          stroke: true,
+          color: zone.color,
+          weight: 1,
+          opacity: compact ? 0.24 : 0.32,
+          fillColor: zone.color,
+          fillOpacity: compact ? 0.08 : 0.11,
+          interactive: false,
+          className: "public-map-context-zone",
+        }).addTo(contextLayer);
+      });
 
       markersRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
@@ -165,14 +193,14 @@ export function PublicFresnoMap({
       reports.forEach((report) => {
         const coordinates = neighborhoodCoordinates(report);
         const fill = DANGER_COLORS[report.inDanger] ?? DANGER_COLORS.unsure;
-        const ring = STATUS_RINGS[report.status] ?? "#ffffff";
+        const ring = STATUS_RINGS[report.status] ?? "#FDFAE0";
         const marker = L.circleMarker(coordinates, {
           radius: report.inDanger === "yes" ? 11 : 9,
           color: ring,
           weight: 3,
           opacity: 1,
           fillColor: fill,
-          fillOpacity: 0.92,
+          fillOpacity: 0.94,
           className: "public-map-dot",
         });
 
@@ -204,10 +232,15 @@ export function PublicFresnoMap({
         <span className="public-map__pulse" />
         {reports.length} approved concern{reports.length === 1 ? "" : "s"} mapped
       </div>
+      <div className="public-map__legend" aria-label="Map color legend">
+        <span><i className="is-sand" /> Neighborhood context</span>
+        <span><i className="is-blue" /> Approved report</span>
+        <span><i className="is-urgent" /> Immediate concern</span>
+      </div>
       {reports.length === 0 && (
         <div className="public-map__empty">
           <strong>Community map is ready</strong>
-          <span>Approved neighborhood-level reports will illuminate here.</span>
+          <span>Approved neighborhood-level reports will appear here.</span>
         </div>
       )}
     </div>
