@@ -11,7 +11,6 @@ import {
   Sparkles,
   TrendingUp,
 } from "lucide-react";
-import { AnimalArt, AnimalPhotoCloud } from "@/components/AnimalArt";
 import { PublicFresnoMap } from "@/components/PublicFresnoMap";
 import { getPublicReports, type ApiReport } from "@/lib/reportsApi";
 
@@ -115,7 +114,6 @@ export default function LandingPage() {
                 <div className="liquid-badge mt-2">
                   <Shield size={14} /> Independent public-interest tool
                 </div>
-                <AnimalArt variant="cat-black" size={92} decorative className="animal-art-float animal-art-float--hero" />
               </div>
 
               <h1 className="max-w-2xl font-heading text-4xl font-extrabold leading-[1.04] sm:text-5xl lg:text-[3.45rem]">
@@ -150,10 +148,6 @@ export default function LandingPage() {
                   </div>
                 ))}
               </div>
-
-              <div className="mt-auto flex justify-end pt-7">
-                <AnimalArt variant="dog-cream" size={128} decorative className="animal-art-float animal-art-float--lower" />
-              </div>
             </div>
 
             <div className="glass-card glass-card--map flex h-full min-h-[520px] flex-col rounded-[1.8rem] p-3">
@@ -175,15 +169,12 @@ export default function LandingPage() {
         </section>
 
         <section>
-          <div className="mb-5 grid gap-5 px-1 lg:grid-cols-[1fr_auto] lg:items-end">
-            <div>
-              <p className="text-xs font-extrabold uppercase tracking-[.16em] text-primary">How it works</p>
-              <h2 className="mt-2 max-w-3xl font-heading text-3xl font-extrabold">One clear workflow from observation to action.</h2>
-              <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-                Each step is separated so residents can document, organize, and share information without confusing private and public data.
-              </p>
-            </div>
-            <AnimalArt variant="cat-grey" size={104} decorative className="animal-art-float animal-art-float--workflow justify-self-end" />
+          <div className="mb-5 px-1">
+            <p className="text-xs font-extrabold uppercase tracking-[.16em] text-primary">How it works</p>
+            <h2 className="mt-2 max-w-3xl font-heading text-3xl font-extrabold">One clear workflow from observation to action.</h2>
+            <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+              Each step is separated so residents can document, organize, and share information without confusing private and public data.
+            </p>
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">
@@ -201,8 +192,6 @@ export default function LandingPage() {
             ))}
           </div>
         </section>
-
-        <AnimalPhotoCloud className="my-4" />
 
         <section className="grid gap-6 lg:grid-cols-[1.15fr_.85fr]">
           <article className="glass-card rounded-[2rem] p-7 sm:p-9">
@@ -227,20 +216,15 @@ export default function LandingPage() {
           </article>
 
           <article className="glass-card luminous-edge rounded-[2rem] p-7 sm:p-9">
-            <div className="grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
-              <div>
-                <Sparkles size={22} className="text-primary" />
-                <h2 className="mt-5 font-heading text-2xl font-extrabold">Responsible by design</h2>
-                <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-                  Reports remain private until reviewed. Public views use neighborhood-level placement, exclude reporter contact details, and never present allegations as established facts.
-                </p>
-                <div className="mt-7">
-                  <ActionButton href="/submit" variant="primary" dataTestId="button-cta-submit">
-                    Start documenting <ArrowRight size={16} />
-                  </ActionButton>
-                </div>
-              </div>
-              <AnimalArt variant="dog-black" size={118} decorative className="animal-art-float animal-art-float--responsible" />
+            <Sparkles size={22} className="text-primary" />
+            <h2 className="mt-5 font-heading text-2xl font-extrabold">Responsible by design</h2>
+            <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+              Reports remain private until reviewed. Public views use neighborhood-level placement, exclude reporter contact details, and never present allegations as established facts.
+            </p>
+            <div className="mt-7">
+              <ActionButton href="/submit" variant="primary" dataTestId="button-cta-submit">
+                Start documenting <ArrowRight size={16} />
+              </ActionButton>
             </div>
           </article>
         </section>
