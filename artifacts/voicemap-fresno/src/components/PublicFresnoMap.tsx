@@ -38,14 +38,14 @@ const NEIGHBORHOOD_COORDS: Record<string, [number, number]> = {
 };
 
 const DANGER_COLORS: Record<PublicMapReport["inDanger"], string> = {
-  yes: "#E64B45",
-  unsure: "#E39B2F",
-  no: "#3579B8",
+  yes: "#D94A3D",
+  unsure: "#C9842E",
+  no: "#326F8E",
 };
 
 const STATUS_RINGS: Record<string, string> = {
   resolved: "#3D8D6F",
-  routed: "#F4C85A",
+  routed: "#D49C38",
   "follow-up": "#C96052",
   submitted: "#8FBAE1",
 };
@@ -186,11 +186,12 @@ export function PublicFresnoMap({
       map.getContainer().style.cursor = "crosshair";
 
       L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+        "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
         {
-          attribution: "Tiles &copy; Esri",
+          attribution: "&copy; OpenStreetMap &copy; CARTO",
           maxZoom: 20,
-          className: "public-map-street-tiles",
+          subdomains: "abcd",
+          className: "public-map-neutral-tiles",
         },
       ).addTo(map);
 

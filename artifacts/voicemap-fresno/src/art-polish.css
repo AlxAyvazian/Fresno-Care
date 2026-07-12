@@ -1,4 +1,4 @@
-/* Focused visual corrections: contained artwork, readable map, and no teal controls. */
+/* Focused visual corrections: frameless artwork, neutral map, and no teal controls. */
 
 .anim-bounce,
 .anim-bounce-slow,
@@ -17,41 +17,72 @@
 
 .animal-art-slot {
   display: inline-flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-  overflow: hidden;
-  border: 1px solid rgba(255,255,255,.76);
-  border-radius: 1.4rem;
-  background: linear-gradient(145deg, rgba(253,250,224,.6), rgba(202,231,255,.42));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 12px 28px rgba(62,87,111,.1);
+  overflow: visible;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .animal-art-slot img,
-.animal-art-slot svg {
+.animal-art-slot svg,
+.animal-art-float {
   display: block;
   max-width: 100%;
-  max-height: 100%;
+  height: auto;
   object-fit: contain;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
   animation: none !important;
   transform: none !important;
 }
 
-.animal-art-slot--small {
-  width: 7rem;
-  height: 6.25rem;
-  padding: .35rem .55rem 0;
+.animal-art-float--hero {
+  width: clamp(4.25rem, 7vw, 6.5rem) !important;
 }
 
-.animal-art-slot--medium {
-  width: 8.5rem;
-  height: 8rem;
-  padding: .4rem .65rem 0;
+.animal-art-float--lower {
+  width: clamp(5.5rem, 9vw, 8rem) !important;
 }
 
-.animal-art-slot--wide {
-  width: 11rem;
-  height: 7.2rem;
-  padding: .35rem .7rem 0;
+.animal-art-float--workflow,
+.animal-art-float--responsible {
+  width: clamp(4.5rem, 8vw, 7rem) !important;
+}
+
+.animal-photo-cloud {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  align-items: end;
+  gap: clamp(.75rem, 2vw, 1.35rem);
+  padding: .25rem 1rem;
+  pointer-events: none;
+}
+
+.animal-photo-cloud__image {
+  width: min(100%, 9rem);
+  max-height: 8.75rem;
+  object-fit: contain;
+  justify-self: center;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: drop-shadow(0 12px 18px rgba(42, 61, 82, .12));
+}
+
+.animal-photo-cloud__image--2,
+.animal-photo-cloud__image--5 {
+  transform: translateY(.4rem);
+}
+
+.animal-photo-cloud__image--3,
+.animal-photo-cloud__image--6 {
+  transform: translateY(-.25rem);
 }
 
 /* Catch legacy inline teal styles on utility pages. */
@@ -74,10 +105,10 @@ a[style*="rgb(2, 131, 145)"],
   height: min(80vh, 900px) !important;
   min-height: 680px !important;
   border: 1px solid rgba(255,255,255,.86) !important;
-  background: #7fa7c9 !important;
+  background: #dfe9ef !important;
   box-shadow:
-    inset 0 0 0 2px rgba(86,127,165,.18),
-    0 22px 54px rgba(40,65,91,.22) !important;
+    inset 0 0 0 2px rgba(86,127,165,.12),
+    0 22px 54px rgba(40,65,91,.18) !important;
 }
 
 .public-map-shell--compact {
@@ -87,26 +118,25 @@ a[style*="rgb(2, 131, 145)"],
 }
 
 .public-map {
-  background: #7fa7c9 !important;
+  background: #dfe9ef !important;
 }
 
 .public-map .leaflet-tile-pane,
-.public-map .leaflet-overlay-pane {
+.public-map .leaflet-overlay-pane,
+.public-map-neutral-tiles,
+.public-map-street-tiles {
   filter: none !important;
 }
 
-.public-map-street-tiles {
-  filter: saturate(1.28) contrast(1.12) brightness(.9) !important;
-}
-
+.public-map__click-hint,
 .public-map__badge,
 .public-map__legend,
 .public-map .leaflet-control-zoom,
 .public-map .leaflet-control-attribution {
   color: #fff !important;
   border-color: rgba(255,255,255,.24) !important;
-  background: rgba(27,55,85,.88) !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 10px 26px rgba(13,34,55,.24) !important;
+  background: rgba(35,67,98,.88) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 10px 26px rgba(13,34,55,.22) !important;
   backdrop-filter: blur(18px) saturate(130%);
 }
 
@@ -122,25 +152,26 @@ a[style*="rgb(2, 131, 145)"],
 }
 
 .public-map__pulse {
-  background: #6fb7e9 !important;
-  box-shadow: 0 0 0 .24rem rgba(111,183,233,.16), 0 0 14px rgba(111,183,233,.78) !important;
+  background: #8fbae1 !important;
+  box-shadow: 0 0 0 .24rem rgba(143,186,225,.16), 0 0 14px rgba(143,186,225,.78) !important;
 }
 
 .public-map__legend i.is-blue {
-  background: #3579b8 !important;
+  background: #326f8e !important;
 }
 
 .public-map__legend i.is-urgent {
-  background: #e64b45 !important;
+  background: #d94a3d !important;
 }
 
-.public-map-dot {
-  filter: drop-shadow(0 0 8px rgba(255,255,255,.82)) drop-shadow(0 5px 10px rgba(20,42,64,.42)) !important;
+.public-map-dot,
+.public-map-selection-dot {
+  filter: drop-shadow(0 0 8px rgba(255,255,255,.82)) drop-shadow(0 5px 10px rgba(20,42,64,.38)) !important;
 }
 
 .public-map .leaflet-popup-content-wrapper,
 .public-map .leaflet-popup-tip {
-  background: rgba(253,250,224,.96) !important;
+  background: rgba(253,250,224,.97) !important;
   color: #253d56 !important;
 }
 
@@ -161,21 +192,57 @@ a[style*="rgb(2, 131, 145)"],
   background: rgba(143,186,225,.2) !important;
 }
 
+.public-map-popup__action {
+  margin-top: .55rem;
+  width: 100%;
+  border: 0;
+  border-radius: .8rem;
+  background: #426f9d;
+  color: #fff;
+  padding: .65rem .8rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .nav-pill.is-active {
   background: linear-gradient(135deg, #426f9d, #345f8c) !important;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.32), 0 8px 22px rgba(38,67,94,.3) !important;
 }
 
+/* Preview-side flyer cleanup. Inline print styles still define the exported page; these rules make the on-screen studio less harsh. */
+#print-flyer {
+  border-radius: 0 !important;
+  background: #fffdf0 !important;
+  box-shadow: 0 18px 44px rgba(24,44,67,.12) !important;
+}
+
+#print-flyer header {
+  background: linear-gradient(135deg, #426f9d, #8fbae1) !important;
+  border-bottom: 0 !important;
+}
+
+#print-flyer main {
+  background: #fffdf0 !important;
+}
+
+#print-flyer img {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
 @media (max-width: 720px) {
-  .animal-art-slot--small {
-    width: 5.5rem;
-    height: 5rem;
+  .animal-art-float--hero,
+  .animal-art-float--workflow,
+  .animal-art-float--responsible {
+    width: 4.5rem !important;
   }
 
-  .animal-art-slot--medium,
-  .animal-art-slot--wide {
-    width: 7rem;
-    height: 6.2rem;
+  .animal-photo-cloud {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .animal-photo-cloud__image {
+    max-height: 5.25rem;
   }
 
   .public-map-shell {
