@@ -18,7 +18,17 @@ export const REPORT_STATUSES = [
   "resolved",
 ] as const;
 
+export const PUBLICATION_STATUSES = [
+  "pending",
+  "approved",
+  "rejected",
+] as const;
+
 export const reportStatusEnum = pgEnum("report_status", REPORT_STATUSES);
+export const reportPublicationEnum = pgEnum(
+  "report_publication_status",
+  PUBLICATION_STATUSES,
+);
 
 export const reportDangerEnum = pgEnum("report_danger", [
   "yes",
@@ -31,6 +41,7 @@ export const reportsTable = pgTable("reports", {
   publicId: uuid("public_id").defaultRandom().notNull().unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
   animalType: text("animal_type").notNull(),
   count: integer("animal_count").notNull(),
   location: text("location_description").notNull(),
@@ -46,6 +57,9 @@ export const reportsTable = pgTable("reports", {
   anonymous: boolean("anonymous").default(true).notNull(),
   reporterContact: text("reporter_contact"),
   status: reportStatusEnum("status").default("submitted").notNull(),
+  publicationStatus: reportPublicationEnum("publication_status")
+    .default("pending")
+    .notNull(),
 });
 
 export const createReportSchema = createInsertSchema(reportsTable, {
@@ -68,7 +82,9 @@ export const createReportSchema = createInsertSchema(reportsTable, {
   publicId: true,
   createdAt: true,
   updatedAt: true,
+  publishedAt: true,
   status: true,
+  publicationStatus: true,
 });
 
 export type CreateReport = z.infer<typeof createReportSchema>;
