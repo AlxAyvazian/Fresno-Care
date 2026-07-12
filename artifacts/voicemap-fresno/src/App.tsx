@@ -8,7 +8,7 @@ import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/LandingPage";
 import SubmitReport from "@/pages/SubmitReport";
 import ReportGenerator from "@/pages/ReportGenerator";
-import Dashboard from "@/pages/Dashboard";
+import Dashboard from "@/pages/PublicDashboardPage";
 import EscalationCenter from "@/pages/EscalationCenter";
 import ResourceLibrary from "@/pages/ResourceLibrary";
 import AboutPage from "@/pages/AboutPage";
