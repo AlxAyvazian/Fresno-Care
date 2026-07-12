@@ -13,6 +13,7 @@ type CreateReportReceipt = {
   createdAt: string;
   status: Report["status"];
   publicationStatus: "pending";
+  deduplicated: boolean;
 };
 
 type CreateReportResponse = {
@@ -55,6 +56,7 @@ export async function createReport(report: Report): Promise<CreateReportReceipt>
       responseReceived: report.responseReceived || undefined,
       reporterContact: report.anonymous ? undefined : report.contactInfo,
       anonymous: report.anonymous,
+      website: "",
     }),
   });
 

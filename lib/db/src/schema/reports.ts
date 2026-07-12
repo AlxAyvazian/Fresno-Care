@@ -1,5 +1,6 @@
 import {
   boolean,
+  index,
   integer,
   jsonb,
   pgEnum,
@@ -36,31 +37,41 @@ export const reportDangerEnum = pgEnum("report_danger", [
   "unsure",
 ]);
 
-export const reportsTable = pgTable("reports", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  publicId: uuid("public_id").defaultRandom().notNull().unique(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-  publishedAt: timestamp("published_at", { withTimezone: true }),
-  animalType: text("animal_type").notNull(),
-  count: integer("animal_count").notNull(),
-  location: text("location_description").notNull(),
-  neighborhood: text("neighborhood").notNull(),
-  dateObserved: text("incident_date").notNull(),
-  timeObserved: text("incident_time").default("").notNull(),
-  inDanger: reportDangerEnum("immediate_danger").default("unsure").notNull(),
-  concernTypes: jsonb("concern_types").$type<string[]>().default([]).notNull(),
-  description: text("description").notNull(),
-  evidenceNotes: text("evidence_notes").default("").notNull(),
-  agenciesContacted: text("agencies_contacted").default("").notNull(),
-  responseReceived: text("agency_response").default("").notNull(),
-  anonymous: boolean("anonymous").default(true).notNull(),
-  reporterContact: text("reporter_contact"),
-  status: reportStatusEnum("status").default("submitted").notNull(),
-  publicationStatus: reportPublicationEnum("publication_status")
-    .default("pending")
-    .notNull(),
-});
+export const reportsTable = pgTable(
+  "reports",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    publicId: uuid("public_id").defaultRandom().notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    animalType: text("animal_type").notNull(),
+    count: integer("animal_count").notNull(),
+    location: text("location_description").notNull(),
+    neighborhood: text("neighborhood").notNull(),
+    dateObserved: text("incident_date").notNull(),
+    timeObserved: text("incident_time").default("").notNull(),
+    inDanger: reportDangerEnum("immediate_danger").default("unsure").notNull(),
+    concernTypes: jsonb("concern_types").$type<string[]>().default([]).notNull(),
+    description: text("description").notNull(),
+    evidenceNotes: text("evidence_notes").default("").notNull(),
+    agenciesContacted: text("agencies_contacted").default("").notNull(),
+    responseReceived: text("agency_response").default("").notNull(),
+    anonymous: boolean("anonymous").default(true).notNull(),
+    reporterContact: text("reporter_contact"),
+    submissionFingerprint: text("submission_fingerprint"),
+    status: reportStatusEnum("status").default("submitted").notNull(),
+    publicationStatus: reportPublicationEnum("publication_status")
+      .default("pending")
+      .notNull(),
+  },
+  (table) => [
+    index("reports_submission_fingerprint_created_idx").on(
+      table.submissionFingerprint,
+      table.createdAt,
+    ),
+  ],
+);
 
 export const createReportSchema = createInsertSchema(reportsTable, {
   animalType: z.enum(["cat", "dog", "other"]),
@@ -83,6 +94,7 @@ export const createReportSchema = createInsertSchema(reportsTable, {
   createdAt: true,
   updatedAt: true,
   publishedAt: true,
+  submissionFingerprint: true,
   status: true,
   publicationStatus: true,
 });

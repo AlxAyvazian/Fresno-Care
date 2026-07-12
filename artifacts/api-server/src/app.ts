@@ -13,6 +13,11 @@ const allowedOrigins = (process.env.CORS_ORIGINS ?? "")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+if (process.env.NODE_ENV === "production") {
+  // Render and similar platforms place the app behind one trusted proxy hop.
+  app.set("trust proxy", 1);
+}
+
 app.use(
   pinoHttp({
     logger,
@@ -32,6 +37,11 @@ app.use(
     },
   }),
 );
+app.use((req, res, next) => {
+  res.setHeader("X-Request-Id", String(req.id));
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  next();
+});
 app.use(
   cors({
     origin(origin, callback) {
@@ -49,9 +59,12 @@ app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
 app.use("/api", router);
 
-const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
-  logger.error({ err: error }, "Unhandled API error");
-  res.status(500).json({ error: "Internal server error" });
+const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
+  logger.error({ err: error, requestId: req.id }, "Unhandled API error");
+  res.status(500).json({
+    error: "Internal server error",
+    requestId: String(req.id),
+  });
 };
 
 app.use(errorHandler);
