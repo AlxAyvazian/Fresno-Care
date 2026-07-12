@@ -5,10 +5,18 @@ const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
 type ApiReport = Omit<Report, "id" | "contactInfo"> & {
   id: string;
   publicId: string;
+  publishedAt: string | null;
+};
+
+type CreateReportReceipt = {
+  publicId: string;
+  createdAt: string;
+  status: Report["status"];
+  publicationStatus: "pending";
 };
 
 type CreateReportResponse = {
-  report: ApiReport;
+  receipt: CreateReportReceipt;
 };
 
 function apiUrl(path: string): string {
@@ -28,7 +36,7 @@ async function parseJson<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
-export async function createReport(report: Report): Promise<ApiReport> {
+export async function createReport(report: Report): Promise<CreateReportReceipt> {
   const response = await fetch(apiUrl("/reports"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -51,7 +59,7 @@ export async function createReport(report: Report): Promise<ApiReport> {
   });
 
   const payload = await parseJson<CreateReportResponse>(response);
-  return payload.report;
+  return payload.receipt;
 }
 
 export async function getPublicReports(limit = 100): Promise<ApiReport[]> {
@@ -67,4 +75,4 @@ export async function getPublicReport(publicId: string): Promise<ApiReport> {
   return payload.report;
 }
 
-export type { ApiReport };
+export type { ApiReport, CreateReportReceipt };
