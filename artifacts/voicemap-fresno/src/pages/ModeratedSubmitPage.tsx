@@ -54,6 +54,11 @@ type SubmissionResult = {
   error?: string;
 };
 
+type MapPrefill = {
+  location?: string;
+  neighborhood?: string;
+};
+
 function Section({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return (
     <section className="glass-card rounded-3xl p-6 sm:p-8">
@@ -68,6 +73,7 @@ function Section({ title, icon, children }: { title: string; icon: ReactNode; ch
 export default function ModeratedSubmitPage() {
   const [, navigate] = useLocation();
   const [result, setResult] = useState<SubmissionResult | null>(null);
+  const [mapPrefill, setMapPrefill] = useState<MapPrefill | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -91,6 +97,23 @@ export default function ModeratedSubmitPage() {
   });
 
   const anonymous = form.watch("anonymous");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const selectedLocation = params.get("location")?.trim() || "";
+    const selectedNeighborhood = params.get("neighborhood")?.trim() || "";
+
+    if (!selectedLocation && !selectedNeighborhood) return;
+
+    if (selectedLocation) {
+      form.setValue("location", selectedLocation, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
+    }
+    if (selectedNeighborhood) {
+      form.setValue("neighborhood", selectedNeighborhood, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
+    }
+
+    setMapPrefill({ location: selectedLocation || undefined, neighborhood: selectedNeighborhood || undefined });
+  }, [form]);
 
   useEffect(() => {
     if (anonymous && form.getValues("contactInfo")) {
@@ -188,6 +211,7 @@ export default function ModeratedSubmitPage() {
                 onClick={() => {
                   setResult(null);
                   form.reset();
+                  setMapPrefill(null);
                 }}
                 className="rounded-xl"
               >
@@ -212,6 +236,24 @@ export default function ModeratedSubmitPage() {
             Describe only what you directly observed. New submissions remain private until an authorized reviewer makes a publication decision.
           </p>
         </section>
+
+        {mapPrefill && (
+          <section className="glass-card rounded-3xl p-5">
+            <div className="flex items-start gap-3">
+              <MapPin size={20} className="mt-0.5 text-primary" />
+              <div>
+                <p className="font-heading text-lg font-bold">Map selection added</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  The selected map area was added to the private report fields. You can edit it before submitting.
+                </p>
+                <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                  {mapPrefill.location && <span className="rounded-xl bg-muted/45 px-3 py-2">Location: {mapPrefill.location}</span>}
+                  {mapPrefill.neighborhood && <span className="rounded-xl bg-muted/45 px-3 py-2">Neighborhood: {mapPrefill.neighborhood}</span>}
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
