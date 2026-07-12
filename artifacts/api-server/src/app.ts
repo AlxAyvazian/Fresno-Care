@@ -49,8 +49,8 @@ app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
 app.use("/api", router);
 
-const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
-  req.log.error({ err: error }, "Unhandled API error");
+const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
+  logger.error({ err: error }, "Unhandled API error");
   res.status(500).json({ error: "Internal server error" });
 };
 
