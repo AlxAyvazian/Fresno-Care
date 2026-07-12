@@ -1,0 +1,61 @@
+/* Interaction polish: make map clicks and upload actions visibly actionable. */
+
+.public-map__click-hint {
+  position: absolute;
+  z-index: 760;
+  left: 1rem;
+  top: 1rem;
+  max-width: min(20rem, calc(100% - 2rem));
+  border: 1px solid rgba(255,255,255,.34);
+  border-radius: 999px;
+  padding: .55rem .78rem;
+  color: #fff;
+  background: rgba(27,55,85,.88);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 10px 26px rgba(13,34,55,.24);
+  font-size: .72rem;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.public-map-selection-dot {
+  filter: drop-shadow(0 0 10px rgba(253,250,224,.95)) drop-shadow(0 5px 12px rgba(12,29,49,.5));
+}
+
+.public-map-popup--selection {
+  min-width: 210px;
+}
+
+.public-map-popup__action {
+  display: inline-flex;
+  width: 100%;
+  justify-content: center;
+  align-items: center;
+  margin-top: .55rem;
+  border: 0;
+  border-radius: .85rem;
+  padding: .62rem .8rem;
+  color: #fff;
+  background: linear-gradient(135deg, #426F9D, #345F8C);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 8px 18px rgba(38,67,94,.22);
+  font-size: .78rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.public-map-popup__action:hover {
+  background: linear-gradient(135deg, #4E7EAD, #3B6999);
+}
+
+input[type="file"].sr-only:focus-visible + label,
+label[for="lost-found-flyer-photo-upload"]:focus-visible {
+  outline: 3px solid rgba(66,111,157,.55);
+  outline-offset: 4px;
+}
+
+@media (max-width: 640px) {
+  .public-map__click-hint {
+    left: .75rem;
+    top: .75rem;
+    font-size: .68rem;
+  }
+}
