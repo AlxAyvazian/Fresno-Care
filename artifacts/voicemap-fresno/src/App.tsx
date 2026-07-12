@@ -14,7 +14,7 @@ import ResourceLibrary from "@/pages/ResourceLibrary";
 import AboutPage from "@/pages/AboutPage";
 import LostFound from "@/pages/LostFound";
 import FlyerGenerator from "@/pages/FlyerGenerator";
-import ToolsPage from "@/pages/ToolsPage";
+import ToolsPage from "@/pages/CoreToolsPage";
 import NeighborhoodWatch from "@/pages/NeighborhoodWatch";
 import ShareReport from "@/pages/ShareReport";
 
