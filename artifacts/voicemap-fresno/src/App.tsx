@@ -18,7 +18,7 @@ import ToolsPage from "@/pages/CoreToolsPage";
 import NeighborhoodWatch from "@/pages/NeighborhoodWatch";
 import ShareReport from "@/pages/ShareReport";
 import PublicSharePage from "@/pages/PublicSharePage";
-import AdminModerationPage from "@/pages/AdminModerationPage";
+import AdminModerationPage from "@/pages/ModerationReviewPage";
 
 const queryClient = new QueryClient();
 
