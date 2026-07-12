@@ -11,7 +11,7 @@ import {
   Sparkles,
   TrendingUp,
 } from "lucide-react";
-import { AnimalArt } from "@/components/AnimalArt";
+import { AnimalArt, AnimalPhotoCloud } from "@/components/AnimalArt";
 import { PublicFresnoMap } from "@/components/PublicFresnoMap";
 import { getPublicReports, type ApiReport } from "@/lib/reportsApi";
 
@@ -115,9 +115,7 @@ export default function LandingPage() {
                 <div className="liquid-badge mt-2">
                   <Shield size={14} /> Independent public-interest tool
                 </div>
-                <div className="animal-art-slot animal-art-slot--small shrink-0" aria-hidden="true">
-                  <AnimalArt variant="cat-black" size={92} decorative />
-                </div>
+                <AnimalArt variant="cat-black" size={92} decorative className="animal-art-float animal-art-float--hero" />
               </div>
 
               <h1 className="max-w-2xl font-heading text-4xl font-extrabold leading-[1.04] sm:text-5xl lg:text-[3.45rem]">
@@ -154,9 +152,7 @@ export default function LandingPage() {
               </div>
 
               <div className="mt-auto flex justify-end pt-7">
-                <div className="animal-art-slot animal-art-slot--wide" aria-hidden="true">
-                  <AnimalArt variant="dog-cream" size={128} decorative />
-                </div>
+                <AnimalArt variant="dog-cream" size={128} decorative className="animal-art-float animal-art-float--lower" />
               </div>
             </div>
 
@@ -187,9 +183,7 @@ export default function LandingPage() {
                 Each step is separated so residents can document, organize, and share information without confusing private and public data.
               </p>
             </div>
-            <div className="animal-art-slot animal-art-slot--small justify-self-end" aria-hidden="true">
-              <AnimalArt variant="cat-grey" size={104} decorative />
-            </div>
+            <AnimalArt variant="cat-grey" size={104} decorative className="animal-art-float animal-art-float--workflow justify-self-end" />
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">
@@ -207,6 +201,8 @@ export default function LandingPage() {
             ))}
           </div>
         </section>
+
+        <AnimalPhotoCloud className="my-4" />
 
         <section className="grid gap-6 lg:grid-cols-[1.15fr_.85fr]">
           <article className="glass-card rounded-[2rem] p-7 sm:p-9">
@@ -244,9 +240,7 @@ export default function LandingPage() {
                   </ActionButton>
                 </div>
               </div>
-              <div className="animal-art-slot animal-art-slot--medium" aria-hidden="true">
-                <AnimalArt variant="dog-black" size={118} decorative />
-              </div>
+              <AnimalArt variant="dog-black" size={118} decorative className="animal-art-float animal-art-float--responsible" />
             </div>
           </article>
         </section>
