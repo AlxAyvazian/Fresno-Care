@@ -7,7 +7,12 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
-import { reportsTable } from "./reports";
+import { z } from "zod/v4";
+import {
+  PUBLICATION_STATUSES,
+  REPORT_STATUSES,
+  reportsTable,
+} from "./reports";
 
 export const MODERATION_EVENT_TYPES = [
   "report_submitted",
@@ -48,5 +53,25 @@ export const moderationEventsTable = pgTable(
     ),
   ],
 );
+
+const moderationActorSchema = z.string().trim().min(1).max(100);
+const optionalModerationNoteSchema = z.string().trim().max(2000).optional();
+
+export const moderationStatusChangeSchema = z.object({
+  status: z.enum(REPORT_STATUSES),
+  actorLabel: moderationActorSchema,
+  note: optionalModerationNoteSchema,
+});
+
+export const moderationPublicationChangeSchema = z.object({
+  publicationStatus: z.enum(PUBLICATION_STATUSES),
+  actorLabel: moderationActorSchema,
+  note: optionalModerationNoteSchema,
+});
+
+export const moderationNoteSchema = z.object({
+  actorLabel: moderationActorSchema,
+  note: z.string().trim().min(1).max(2000),
+});
 
 export type ModerationEventRecord = typeof moderationEventsTable.$inferSelect;
