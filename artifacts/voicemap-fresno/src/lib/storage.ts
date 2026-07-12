@@ -20,23 +20,34 @@ export interface Report {
 
 const STORAGE_KEY = 'voicemap_reports';
 
+function normalizeReport(report: Report): Report {
+  if (!report.anonymous) return report;
+
+  return {
+    ...report,
+    contactInfo: undefined,
+  };
+}
+
 export function getReports(): Report[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : getDemoReports();
+    const reports = raw ? (JSON.parse(raw) as Report[]) : getDemoReports();
+    return reports.map(normalizeReport);
   } catch {
     return getDemoReports();
   }
 }
 
 export function saveReport(report: Report): void {
-  // TODO: Replace localStorage with Supabase insert when upgrading to v2
+  // TODO: Replace localStorage with the Fresno Care API when backend persistence lands.
+  const safeReport = normalizeReport(report);
   const reports = getReports();
-  const idx = reports.findIndex((r) => r.id === report.id);
+  const idx = reports.findIndex((r) => r.id === safeReport.id);
   if (idx >= 0) {
-    reports[idx] = report;
+    reports[idx] = safeReport;
   } else {
-    reports.push(report);
+    reports.push(safeReport);
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(reports));
 }
