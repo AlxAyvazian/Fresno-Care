@@ -17,6 +17,7 @@ import FlyerGenerator from "@/pages/FlyerGenerator";
 import ToolsPage from "@/pages/CoreToolsPage";
 import NeighborhoodWatch from "@/pages/NeighborhoodWatch";
 import ShareReport from "@/pages/ShareReport";
+import PublicSharePage from "@/pages/PublicSharePage";
 
 const queryClient = new QueryClient();
 
@@ -36,6 +37,7 @@ function Router() {
         <Route path="/escalate" component={EscalationCenter} />
         <Route path="/resources" component={ResourceLibrary} />
         <Route path="/about" component={AboutPage} />
+        <Route path="/share/:publicId" component={PublicSharePage} />
         <Route path="/share" component={ShareReport} />
         <Route component={NotFound} />
       </Switch>
