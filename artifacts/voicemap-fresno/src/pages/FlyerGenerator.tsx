@@ -8,6 +8,7 @@ import {
   Phone,
   Plus,
   Printer,
+  UploadCloud,
   X,
 } from "lucide-react";
 import { useLocation } from "wouter";
@@ -35,6 +36,9 @@ interface FlyerData {
   photoBase64: string;
   tags: string[];
 }
+
+const PHOTO_INPUT_ID = "lost-found-flyer-photo-upload";
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 
 const STATUS_STYLE = {
   lost: {
@@ -326,6 +330,7 @@ export default function FlyerGenerator() {
   const [selectedPostId, setSelectedPostId] = useState("manual");
   const [copied, setCopied] = useState(false);
   const [tagInput, setTagInput] = useState("");
+  const [photoError, setPhotoError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [data, setData] = useState<FlyerData>({
@@ -372,14 +377,44 @@ export default function FlyerGenerator() {
       photoBase64: post.photoBase64 || "",
       tags: post.tags,
     });
+    setPhotoError("");
+    if (fileRef.current) fileRef.current.value = "";
   }
 
   function handlePhoto(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setPhotoError("Choose an image file, such as JPG, PNG, or WebP.");
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > MAX_PHOTO_BYTES) {
+      setPhotoError("Choose an image under 8 MB.");
+      event.target.value = "";
+      return;
+    }
+
     const reader = new FileReader();
-    reader.onload = (loadEvent) => update("photoBase64", loadEvent.target?.result as string);
+    reader.onload = (loadEvent) => {
+      const result = loadEvent.target?.result;
+      if (typeof result === "string") {
+        update("photoBase64", result);
+        setPhotoError("");
+      } else {
+        setPhotoError("The photo could not be read. Try a different image.");
+      }
+    };
+    reader.onerror = () => setPhotoError("The photo could not be read. Try a different image.");
     reader.readAsDataURL(file);
+  }
+
+  function removePhoto() {
+    update("photoBase64", "");
+    setPhotoError("");
+    if (fileRef.current) fileRef.current.value = "";
   }
 
   function addTag() {
@@ -525,22 +560,40 @@ export default function FlyerGenerator() {
             </div>
 
             <div className="glass-card space-y-3 rounded-3xl p-5">
-              <h2 className="font-heading text-lg font-extrabold">Photo and search tags</h2>
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                className="flex w-full flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-[#789FBE]/55 bg-[#CAE7FF]/25 p-5 transition-colors hover:bg-[#CAE7FF]/45"
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="font-heading text-lg font-extrabold">Photo and search tags</h2>
+                {data.photoBase64 && (
+                  <Button type="button" variant="outline" size="sm" onClick={removePhoto} className="rounded-xl gap-2">
+                    <X size={13} /> Remove photo
+                  </Button>
+                )}
+              </div>
+
+              <input
+                ref={fileRef}
+                id={PHOTO_INPUT_ID}
+                type="file"
+                accept="image/*"
+                className="sr-only"
+                onChange={handlePhoto}
+              />
+              <label
+                htmlFor={PHOTO_INPUT_ID}
+                className="flex w-full cursor-pointer flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-[#789FBE]/55 bg-[#CAE7FF]/25 p-5 text-center transition-colors hover:bg-[#CAE7FF]/45 focus-within:ring-2 focus-within:ring-[#426F9D]"
               >
                 {data.photoBase64 ? (
-                  <img src={data.photoBase64} alt="Uploaded pet" className="max-h-36 rounded-xl object-contain" />
+                  <img src={data.photoBase64} alt="Uploaded pet preview" className="max-h-48 rounded-xl object-contain shadow-lg" />
                 ) : (
-                  <>
-                    <AnimalArt variant={artForPet(data.petType)} size={88} decorative />
-                    <span className="text-sm font-semibold text-muted-foreground">Upload a clear pet photo</span>
-                  </>
+                  <AnimalArt variant={artForPet(data.petType)} size={88} decorative />
                 )}
-              </button>
-              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
+                <span className="inline-flex items-center gap-2 rounded-xl bg-[#426F9D] px-4 py-2 text-sm font-bold text-white shadow-md">
+                  <UploadCloud size={16} /> {data.photoBase64 ? "Replace photo" : "Upload photo"}
+                </span>
+                <span className="text-xs leading-relaxed text-muted-foreground">
+                  JPG, PNG, WebP, or HEIC from your device. The preview updates immediately after selection.
+                </span>
+              </label>
+              {photoError && <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-800 dark:text-red-200">{photoError}</p>}
 
               <div className="flex gap-2">
                 <Input value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addTag(); } }} placeholder="Add a tag (shy, indoor-only…)" className="rounded-xl" />
@@ -569,15 +622,12 @@ export default function FlyerGenerator() {
 
           <aside className="self-start xl:sticky xl:top-24">
             <div className="mb-3 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-extrabold uppercase tracking-[.14em] text-primary">Live preview</p>
-                <p className="mt-1 text-sm text-muted-foreground">The printed version preserves this layout.</p>
-              </div>
-              <Button onClick={handlePrint} size="sm" variant="outline" className="gap-2 rounded-xl">
+              <p className="text-sm font-bold text-muted-foreground">Live flyer preview</p>
+              <Button onClick={handlePrint} size="sm" variant="outline" className="rounded-xl gap-2">
                 <Download size={13} /> Print / Save PDF
               </Button>
             </div>
-            <div className="overflow-x-auto pb-4">
+            <div className="overflow-x-auto rounded-3xl bg-white/40 p-3 shadow-inner">
               <PrintFlyer data={data} />
             </div>
           </aside>
