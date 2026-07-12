@@ -6,20 +6,21 @@ const reportsRouter: IRouter = Router();
 
 function toPublicReport(report: typeof reportsTable.$inferSelect) {
   return {
+    id: report.publicId,
     publicId: report.publicId,
     createdAt: report.createdAt,
     animalType: report.animalType,
-    animalCount: report.animalCount,
-    locationDescription: report.locationDescription,
+    count: report.count,
+    location: report.location,
     neighborhood: report.neighborhood,
-    incidentDate: report.incidentDate,
-    incidentTime: report.incidentTime,
-    immediateDanger: report.immediateDanger,
+    dateObserved: report.dateObserved,
+    timeObserved: report.timeObserved,
+    inDanger: report.inDanger,
     concernTypes: report.concernTypes,
     description: report.description,
     evidenceNotes: report.evidenceNotes,
     agenciesContacted: report.agenciesContacted,
-    agencyResponse: report.agencyResponse,
+    responseReceived: report.responseReceived,
     anonymous: report.anonymous,
     status: report.status,
   };
@@ -41,12 +42,14 @@ reportsRouter.post("/reports", async (req, res, next) => {
     const reporterContact = input.anonymous
       ? null
       : input.reporterContact?.trim() || null;
+    const anonymous = input.anonymous || !reporterContact;
 
     const [created] = await db
       .insert(reportsTable)
       .values({
         ...input,
-        reporterContact,
+        anonymous,
+        reporterContact: anonymous ? null : reporterContact,
       })
       .returning();
 
@@ -56,13 +59,18 @@ reportsRouter.post("/reports", async (req, res, next) => {
   }
 });
 
-reportsRouter.get("/reports", async (_req, res, next) => {
+reportsRouter.get("/reports", async (req, res, next) => {
   try {
+    const requestedLimit = Number.parseInt(String(req.query.limit ?? "100"), 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(requestedLimit, 1), 250)
+      : 100;
+
     const reports = await db
       .select()
       .from(reportsTable)
       .orderBy(desc(reportsTable.createdAt))
-      .limit(250);
+      .limit(limit);
 
     res.json({ reports: reports.map(toPublicReport) });
   } catch (error) {
