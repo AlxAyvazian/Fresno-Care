@@ -108,27 +108,19 @@ export default function LandingPage() {
       <div className="liquid-orb liquid-orb--two" aria-hidden="true" />
 
       <div className="relative z-10 mx-auto max-w-7xl space-y-8">
-        <section className="glass-card glass-card--hero luminous-edge relative rounded-[2.2rem] p-5 sm:p-7 lg:p-9">
-          <AnimalArt
-            variant="cat-black"
-            size={118}
-            decorative
-            className="pointer-events-none absolute -left-5 -top-7 hidden rotate-[-8deg] drop-shadow-[0_18px_24px_rgba(35,51,75,.18)] sm:block"
-          />
-          <AnimalArt
-            variant="dog-cream"
-            size={150}
-            decorative
-            className="pointer-events-none absolute -bottom-7 left-[36%] hidden rotate-[3deg] drop-shadow-[0_18px_24px_rgba(95,67,34,.16)] xl:block"
-          />
-
-          <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,.82fr)_minmax(430px,1.18fr)]">
-            <div className="relative px-2 py-4 sm:px-4 lg:py-8">
-              <div className="liquid-badge mb-5">
-                <Shield size={14} /> Independent public-interest tool
+        <section className="glass-card glass-card--hero luminous-edge rounded-[2.2rem] p-5 sm:p-7 lg:p-9">
+          <div className="grid items-stretch gap-8 lg:grid-cols-[minmax(0,.84fr)_minmax(430px,1.16fr)]">
+            <div className="flex min-w-0 flex-col px-2 py-3 sm:px-4 lg:py-6">
+              <div className="mb-5 flex items-start justify-between gap-4">
+                <div className="liquid-badge mt-2">
+                  <Shield size={14} /> Independent public-interest tool
+                </div>
+                <div className="animal-art-slot animal-art-slot--small shrink-0" aria-hidden="true">
+                  <AnimalArt variant="cat-black" size={92} decorative />
+                </div>
               </div>
 
-              <h1 className="max-w-2xl font-heading text-4xl font-extrabold leading-[1.02] sm:text-5xl lg:text-6xl">
+              <h1 className="max-w-2xl font-heading text-4xl font-extrabold leading-[1.04] sm:text-5xl lg:text-[3.45rem]">
                 Give Fresno’s stray animals a visible record.
               </h1>
 
@@ -160,9 +152,15 @@ export default function LandingPage() {
                   </div>
                 ))}
               </div>
+
+              <div className="mt-auto flex justify-end pt-7">
+                <div className="animal-art-slot animal-art-slot--wide" aria-hidden="true">
+                  <AnimalArt variant="dog-cream" size={128} decorative />
+                </div>
+              </div>
             </div>
 
-            <div className="glass-card glass-card--map self-start rounded-[1.8rem] p-3">
+            <div className="glass-card glass-card--map flex h-full min-h-[520px] flex-col rounded-[1.8rem] p-3">
               <div className="flex items-center justify-between gap-4 px-3 pb-3 pt-1">
                 <div>
                   <div className="flex items-center gap-2 text-sm font-semibold">
@@ -180,21 +178,18 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section className="relative">
-          <AnimalArt
-            variant="cat-grey"
-            size={126}
-            decorative
-            className="pointer-events-none absolute -right-5 -top-12 hidden rotate-[8deg] drop-shadow-[0_18px_24px_rgba(53,69,91,.17)] lg:block"
-          />
-          <div className="mb-5 flex flex-col gap-2 px-1 sm:flex-row sm:items-end sm:justify-between">
+        <section>
+          <div className="mb-5 grid gap-5 px-1 lg:grid-cols-[1fr_auto] lg:items-end">
             <div>
               <p className="text-xs font-extrabold uppercase tracking-[.16em] text-primary">How it works</p>
-              <h2 className="mt-2 font-heading text-3xl font-extrabold">One clear workflow from observation to action.</h2>
+              <h2 className="mt-2 max-w-3xl font-heading text-3xl font-extrabold">One clear workflow from observation to action.</h2>
+              <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+                Each step is separated so residents can document, organize, and share information without confusing private and public data.
+              </p>
             </div>
-            <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
-              Each step is separated so residents can document, organize, and share information without confusing private and public data.
-            </p>
+            <div className="animal-art-slot animal-art-slot--small justify-self-end" aria-hidden="true">
+              <AnimalArt variant="cat-grey" size={104} decorative />
+            </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">
@@ -213,13 +208,7 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section className="relative grid gap-6 lg:grid-cols-[1.15fr_.85fr]">
-          <AnimalArt
-            variant="dog-black"
-            size={145}
-            decorative
-            className="pointer-events-none absolute -bottom-8 -right-5 z-20 hidden rotate-[-4deg] drop-shadow-[0_18px_24px_rgba(31,35,52,.2)] xl:block"
-          />
+        <section className="grid gap-6 lg:grid-cols-[1.15fr_.85fr]">
           <article className="glass-card rounded-[2rem] p-7 sm:p-9">
             <div className="liquid-badge">
               <Radio size={14} /> Fast action
@@ -241,16 +230,23 @@ export default function LandingPage() {
             </div>
           </article>
 
-          <article className="glass-card luminous-edge rounded-[2rem] p-7 sm:p-9 xl:pr-28">
-            <Sparkles size={22} className="text-primary" />
-            <h2 className="mt-5 font-heading text-2xl font-extrabold">Responsible by design</h2>
-            <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-              Reports remain private until reviewed. Public views use neighborhood-level placement, exclude reporter contact details, and never present allegations as established facts.
-            </p>
-            <div className="mt-7">
-              <ActionButton href="/submit" variant="primary" dataTestId="button-cta-submit">
-                Start documenting <ArrowRight size={16} />
-              </ActionButton>
+          <article className="glass-card luminous-edge rounded-[2rem] p-7 sm:p-9">
+            <div className="grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
+              <div>
+                <Sparkles size={22} className="text-primary" />
+                <h2 className="mt-5 font-heading text-2xl font-extrabold">Responsible by design</h2>
+                <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+                  Reports remain private until reviewed. Public views use neighborhood-level placement, exclude reporter contact details, and never present allegations as established facts.
+                </p>
+                <div className="mt-7">
+                  <ActionButton href="/submit" variant="primary" dataTestId="button-cta-submit">
+                    Start documenting <ArrowRight size={16} />
+                  </ActionButton>
+                </div>
+              </div>
+              <div className="animal-art-slot animal-art-slot--medium" aria-hidden="true">
+                <AnimalArt variant="dog-black" size={118} decorative />
+              </div>
             </div>
           </article>
         </section>
