@@ -16,6 +16,7 @@ export const PUBLICATION_STATUSES = [
 ] as const;
 
 export const MODERATION_EVENT_TYPES = [
+  "report_submitted",
   "case_status_changed",
   "publication_status_changed",
   "note_added",
