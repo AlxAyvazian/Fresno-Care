@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { createReportSchema, db, reportsTable } from "@workspace/db";
 
 const reportsRouter: IRouter = Router();
@@ -9,6 +9,7 @@ function toPublicReport(report: typeof reportsTable.$inferSelect) {
     id: report.publicId,
     publicId: report.publicId,
     createdAt: report.createdAt,
+    publishedAt: report.publishedAt,
     animalType: report.animalType,
     count: report.count,
     location: report.neighborhood,
@@ -50,10 +51,18 @@ reportsRouter.post("/reports", async (req, res, next) => {
         ...input,
         anonymous,
         reporterContact: anonymous ? null : reporterContact,
+        publicationStatus: "pending",
       })
       .returning();
 
-    res.status(201).json({ report: toPublicReport(created) });
+    res.status(201).json({
+      receipt: {
+        publicId: created.publicId,
+        createdAt: created.createdAt,
+        status: created.status,
+        publicationStatus: created.publicationStatus,
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -69,7 +78,8 @@ reportsRouter.get("/reports", async (req, res, next) => {
     const reports = await db
       .select()
       .from(reportsTable)
-      .orderBy(desc(reportsTable.createdAt))
+      .where(eq(reportsTable.publicationStatus, "approved"))
+      .orderBy(desc(reportsTable.publishedAt), desc(reportsTable.createdAt))
       .limit(limit);
 
     res.json({ reports: reports.map(toPublicReport) });
@@ -83,11 +93,16 @@ reportsRouter.get("/reports/:publicId", async (req, res, next) => {
     const [report] = await db
       .select()
       .from(reportsTable)
-      .where(eq(reportsTable.publicId, req.params.publicId))
+      .where(
+        and(
+          eq(reportsTable.publicId, req.params.publicId),
+          eq(reportsTable.publicationStatus, "approved"),
+        ),
+      )
       .limit(1);
 
     if (!report) {
-      res.status(404).json({ error: "Report not found" });
+      res.status(404).json({ error: "Report not found or not published" });
       return;
     }
 
