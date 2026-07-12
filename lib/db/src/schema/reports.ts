@@ -11,12 +11,14 @@ import {
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
-export const reportStatusEnum = pgEnum("report_status", [
+export const REPORT_STATUSES = [
   "submitted",
   "routed",
   "follow-up",
   "resolved",
-]);
+] as const;
+
+export const reportStatusEnum = pgEnum("report_status", REPORT_STATUSES);
 
 export const reportDangerEnum = pgEnum("report_danger", [
   "yes",
