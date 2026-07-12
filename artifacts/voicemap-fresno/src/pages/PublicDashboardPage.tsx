@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, MapPin, PawPrint, RefreshCw, ShieldCheck } from "lucide-react";
+import {
+  AlertCircle,
+  Map,
+  MapPin,
+  PawPrint,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PublicFresnoMap } from "@/components/PublicFresnoMap";
 import { getPublicReports, type ApiReport } from "@/lib/reportsApi";
 import { getReports, STATUS_LABELS, type Report } from "@/lib/storage";
 
@@ -42,7 +51,7 @@ export default function PublicDashboardPage() {
       setError(
         localReports.length > 0
           ? "The public report service is unavailable. Showing reports saved on this device only."
-          : "The public report service is unavailable and this device has no saved reports.",
+          : "The public report service is unavailable. The map remains available, but approved reports cannot be loaded.",
       );
     } finally {
       setLoading(false);
@@ -63,128 +72,164 @@ export default function PublicDashboardPage() {
   }, [reports]);
 
   return (
-    <main className="min-h-screen px-4 pb-16 pt-24">
-      <div className="mx-auto max-w-6xl space-y-7">
-        <section className="glass-card rounded-3xl p-7 sm:p-9">
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+    <main className="liquid-page min-h-screen px-4 pb-20 pt-28">
+      <div className="liquid-orb liquid-orb--one" aria-hidden="true" />
+      <div className="liquid-orb liquid-orb--two" aria-hidden="true" />
+
+      <div className="relative z-10 mx-auto max-w-7xl space-y-6">
+        <section className="glass-card glass-card--hero luminous-edge rounded-[2rem] p-7 sm:p-10">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-                <ShieldCheck size={14} /> Community documentation
+              <div className="liquid-badge mb-4">
+                <ShieldCheck size={14} /> Public neighborhood intelligence
               </div>
-              <h1 className="font-heading text-3xl font-bold sm:text-4xl">Documented animal concerns</h1>
-              <p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted-foreground sm:text-base">
-                This dashboard summarizes submitted observations. A listing does not establish a legal finding, confirm wrongdoing, or mean a government agency has reviewed the report.
+              <h1 className="max-w-4xl font-heading text-4xl font-bold tracking-[-0.04em] sm:text-5xl">
+                Fresno animal concerns, visible on the map.
+              </h1>
+              <p className="mt-4 max-w-3xl text-sm leading-relaxed text-muted-foreground sm:text-base">
+                Approved reports appear at neighborhood level only. Pins show documented concerns, not legal findings or confirmed wrongdoing.
               </p>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void loadReports()}
-              disabled={loading}
-              className="shrink-0 rounded-xl gap-2"
-            >
-              <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh
-            </Button>
-          </div>
 
-          <div className="mt-5 flex flex-wrap gap-2 text-xs">
-            {source === "public-api" && (
-              <span className="rounded-full bg-primary/10 px-3 py-1 font-semibold text-primary">
-                Public database
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="liquid-status">
+                <span className={`liquid-status__dot ${source === "public-api" ? "is-live" : ""}`} />
+                {source === "public-api"
+                  ? "Public database connected"
+                  : source === "device"
+                    ? "Device-only fallback"
+                    : "Awaiting approved reports"}
               </span>
-            )}
-            {source === "device" && (
-              <span className="rounded-full bg-amber-500/15 px-3 py-1 font-semibold text-amber-800 dark:text-amber-300">
-                Device-only fallback
-              </span>
-            )}
-            {source === "empty" && !loading && (
-              <span className="rounded-full bg-muted px-3 py-1 font-semibold text-muted-foreground">
-                No reports available
-              </span>
-            )}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void loadReports()}
+                disabled={loading}
+                className="liquid-button shrink-0 rounded-2xl gap-2"
+              >
+                <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh
+              </Button>
+            </div>
           </div>
         </section>
 
+        <section className="glass-card glass-card--map rounded-[2rem] p-3 sm:p-4">
+          <div className="flex items-center justify-between gap-4 px-3 pb-3 pt-1 sm:px-4">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <Map size={17} className="text-primary" /> Community map
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Stable neighborhood-level placement protects precise locations.
+              </p>
+            </div>
+            <span className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
+              <Sparkles size={14} className="text-primary" /> Live approved data
+            </span>
+          </div>
+          <PublicFresnoMap reports={reports} />
+        </section>
+
         {error && (
-          <section className="flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
-            <AlertCircle size={18} className="mt-0.5 shrink-0 text-amber-700 dark:text-amber-300" />
-            <p>{error}</p>
+          <section className="glass-alert flex items-start gap-3 rounded-2xl p-4 text-sm">
+            <AlertCircle size={18} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-300" />
+            <div>
+              <p className="font-semibold">The frontend cannot reach the public API.</p>
+              <p className="mt-1 text-muted-foreground">{error}</p>
+            </div>
           </section>
         )}
 
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            ["Reports", stats.reports],
+            ["Approved reports", stats.reports],
             ["Animals observed", stats.animals],
-            ["Immediate concern", stats.urgent],
+            ["Immediate concerns", stats.urgent],
             ["Neighborhoods", stats.neighborhoods],
-          ].map(([label, value]) => (
-            <div key={label} className="glass-card rounded-2xl p-5">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-              <p className="mt-2 font-heading text-3xl font-bold">{value}</p>
+          ].map(([label, value], index) => (
+            <div key={label} className="glass-card stat-glass rounded-3xl p-5">
+              <div className="stat-glass__glow" aria-hidden="true" />
+              <p className="relative text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                {label}
+              </p>
+              <p className="relative mt-3 font-heading text-4xl font-bold tracking-[-0.05em]">{value}</p>
+              <span className="relative mt-4 block text-[11px] text-muted-foreground">
+                0{index + 1} / live summary
+              </span>
             </div>
           ))}
         </section>
 
         <section className="space-y-4">
+          <div className="flex items-end justify-between gap-4 px-1">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Approved reports</p>
+              <h2 className="mt-1 font-heading text-2xl font-bold tracking-[-0.03em]">Community record</h2>
+            </div>
+            <span className="text-xs text-muted-foreground">Precise addresses remain private</span>
+          </div>
+
           {loading && reports.length === 0 ? (
             <div className="glass-card rounded-3xl p-10 text-center text-sm text-muted-foreground">
               Loading documented concerns…
             </div>
           ) : reports.length === 0 ? (
-            <div className="glass-card rounded-3xl p-10 text-center">
-              <PawPrint size={34} className="mx-auto text-primary" />
-              <h2 className="mt-4 font-heading text-xl font-bold">No reports to display</h2>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Submitted reports will appear here after the public database is connected.
+            <div className="glass-card empty-glass rounded-[2rem] p-12 text-center">
+              <div className="empty-glass__icon">
+                <PawPrint size={30} />
+              </div>
+              <h3 className="mt-5 font-heading text-2xl font-bold">No approved reports yet</h3>
+              <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
+                The map is active. Reports will illuminate after private moderation approves neighborhood-level publication.
               </p>
             </div>
           ) : (
-            reports.map((report) => (
-              <article key={report.publicId ?? report.id} className="glass-card rounded-3xl p-6">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold capitalize text-primary">
-                        {report.animalType} · {report.count}
-                      </span>
-                      <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
-                        {STATUS_LABELS[report.status] ?? report.status}
-                      </span>
-                      {report.inDanger === "yes" && (
-                        <span className="rounded-full bg-destructive/10 px-3 py-1 text-xs font-semibold text-destructive">
-                          Immediate concern reported
+            <div className="grid gap-4 lg:grid-cols-2">
+              {reports.map((report) => (
+                <article key={report.publicId ?? report.id} className="glass-card report-glass rounded-3xl p-6">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="liquid-chip capitalize">
+                          {report.animalType} · {report.count}
                         </span>
-                      )}
+                        <span className="liquid-chip liquid-chip--muted">
+                          {STATUS_LABELS[report.status] ?? report.status}
+                        </span>
+                        {report.inDanger === "yes" && (
+                          <span className="liquid-chip liquid-chip--danger">Immediate concern</span>
+                        )}
+                      </div>
+                      <h3 className="mt-5 font-heading text-xl font-bold">{report.neighborhood}</h3>
+                      <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+                        <MapPin size={14} /> Neighborhood-level location
+                      </div>
                     </div>
-                    <h2 className="mt-4 font-heading text-xl font-bold">{report.neighborhood}</h2>
-                    <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
-                      <MapPin size={14} /> Approximate neighborhood-level location
+                    <time className="shrink-0 text-xs text-muted-foreground" dateTime={report.dateObserved}>
+                      {report.dateObserved}
+                    </time>
+                  </div>
+
+                  <p className="mt-5 line-clamp-4 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+                    {report.description}
+                  </p>
+
+                  {report.concernTypes.length > 0 && (
+                    <div className="mt-5 flex flex-wrap gap-2">
+                      {report.concernTypes.slice(0, 4).map((concern) => (
+                        <span key={concern} className="liquid-chip liquid-chip--outline">
+                          {concern}
+                        </span>
+                      ))}
                     </div>
-                  </div>
-                  <time className="shrink-0 text-xs text-muted-foreground" dateTime={report.dateObserved}>
-                    Observed {report.dateObserved}
-                  </time>
-                </div>
+                  )}
 
-                <p className="mt-5 whitespace-pre-wrap text-sm leading-relaxed">{report.description}</p>
-
-                {report.concernTypes.length > 0 && (
-                  <div className="mt-5 flex flex-wrap gap-2">
-                    {report.concernTypes.map((concern) => (
-                      <span key={concern} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
-                        {concern}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                <p className="mt-5 text-xs text-muted-foreground">
-                  Public reference: {report.publicId ?? report.id}
-                </p>
-              </article>
-            ))
+                  <p className="mt-5 truncate text-[11px] text-muted-foreground">
+                    Public reference: {report.publicId ?? report.id}
+                  </p>
+                </article>
+              ))}
+            </div>
           )}
         </section>
       </div>
