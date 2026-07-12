@@ -2,7 +2,7 @@ import type { Report } from "./storage";
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
 
-type ApiReport = Omit<Report, "id" | "contactInfo"> & {
+type ApiReport = Omit<Report, "id" | "contactInfo" | "location"> & {
   id: string;
   publicId: string;
 };
