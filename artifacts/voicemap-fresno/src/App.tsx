@@ -6,7 +6,7 @@ import { ThemeProvider } from "@/lib/theme";
 import { Navbar } from "@/components/Navbar";
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/LandingPage";
-import SubmitReport from "@/pages/ApiSubmitReportPage";
+import SubmitReport from "@/pages/ModeratedSubmitPage";
 import ReportGenerator from "@/pages/ReportGenerator";
 import Dashboard from "@/pages/PublicDashboardPage";
 import EscalationCenter from "@/pages/EscalationCenter";
