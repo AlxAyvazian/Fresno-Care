@@ -59,6 +59,31 @@ function hashString(value: string): number {
   return hash >>> 0;
 }
 
+function titleCase(value: string) {
+  return value
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function nearestNeighborhood(lat: number, lng: number) {
+  let nearest = "central fresno";
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  Object.entries(NEIGHBORHOOD_COORDS).forEach(([name, [nLat, nLng]]) => {
+    const latDistance = (lat - nLat) * 69;
+    const lngDistance = (lng - nLng) * 69 * Math.cos((lat * Math.PI) / 180);
+    const distance = latDistance * latDistance + lngDistance * lngDistance;
+    if (distance < nearestDistance) {
+      nearest = name;
+      nearestDistance = distance;
+    }
+  });
+
+  return titleCase(nearest);
+}
+
 function neighborhoodCoordinates(report: PublicMapReport): [number, number] {
   const neighborhood = report.neighborhood.trim().toLowerCase();
   const base = NEIGHBORHOOD_COORDS[neighborhood] ?? FRESNO_CENTER;
@@ -96,6 +121,37 @@ function popupContent(report: PublicMapReport): HTMLElement {
   return wrapper;
 }
 
+function selectionPopupContent(lat: number, lng: number): HTMLElement {
+  const neighborhood = nearestNeighborhood(lat, lng);
+  const location = `${neighborhood} area near ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  const params = new URLSearchParams({ location, neighborhood });
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "public-map-popup public-map-popup--selection";
+
+  const eyebrow = document.createElement("div");
+  eyebrow.className = "public-map-popup__eyebrow";
+  eyebrow.textContent = "Selected reporting area";
+
+  const title = document.createElement("strong");
+  title.className = "public-map-popup__title";
+  title.textContent = neighborhood;
+
+  const note = document.createElement("p");
+  note.textContent = "This location is only used to start a private report. Public map placement remains neighborhood-level.";
+
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "public-map-popup__action";
+  action.textContent = "Document concern here";
+  action.addEventListener("click", () => {
+    window.location.assign(`/submit?${params.toString()}`);
+  });
+
+  wrapper.append(eyebrow, title, note, action);
+  return wrapper;
+}
+
 export function PublicFresnoMap({
   reports,
   compact = false,
@@ -106,6 +162,7 @@ export function PublicFresnoMap({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import("leaflet").Map | null>(null);
   const markersRef = useRef<import("leaflet").LayerGroup | null>(null);
+  const selectionRef = useRef<import("leaflet").LayerGroup | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -126,6 +183,8 @@ export function PublicFresnoMap({
         scrollWheelZoom: !compact,
       });
 
+      map.getContainer().style.cursor = "crosshair";
+
       L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
         {
@@ -136,6 +195,28 @@ export function PublicFresnoMap({
       ).addTo(map);
 
       markersRef.current = L.layerGroup().addTo(map);
+      selectionRef.current = L.layerGroup().addTo(map);
+
+      map.on("click", (event) => {
+        if (!selectionRef.current) return;
+        selectionRef.current.clearLayers();
+        const marker = L.circleMarker(event.latlng, {
+          radius: compact ? 9 : 11,
+          color: "#FDFAE0",
+          weight: 3,
+          opacity: 1,
+          fillColor: "#426F9D",
+          fillOpacity: 1,
+          className: "public-map-selection-dot",
+        });
+        marker.bindPopup(selectionPopupContent(event.latlng.lat, event.latlng.lng), {
+          closeButton: true,
+          maxWidth: 260,
+        });
+        marker.addTo(selectionRef.current);
+        marker.openPopup();
+      });
+
       mapRef.current = map;
       setReady(true);
       window.setTimeout(() => map.invalidateSize(), 100);
@@ -148,6 +229,7 @@ export function PublicFresnoMap({
       mapRef.current?.remove();
       mapRef.current = null;
       markersRef.current = null;
+      selectionRef.current = null;
       setReady(false);
     };
   }, [compact]);
@@ -200,7 +282,8 @@ export function PublicFresnoMap({
 
   return (
     <div className={`public-map-shell ${compact ? "public-map-shell--compact" : ""}`}>
-      <div ref={containerRef} className="public-map" aria-label="Neighborhood-level map of approved animal concerns" />
+      <div ref={containerRef} className="public-map" aria-label="Clickable neighborhood-level map of approved animal concerns" />
+      <div className="public-map__click-hint">Click the map to start a report from that area</div>
       {reports.length > 0 && (
         <>
           <div className="public-map__badge">
