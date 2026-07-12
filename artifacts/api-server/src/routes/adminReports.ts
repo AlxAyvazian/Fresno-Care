@@ -1,36 +1,16 @@
 import { Router, type IRouter } from "express";
 import { desc, eq } from "drizzle-orm";
-import { z } from "zod/v4";
 import {
   db,
   moderationEventsTable,
-  PUBLICATION_STATUSES,
-  REPORT_STATUSES,
+  moderationNoteSchema,
+  moderationPublicationChangeSchema,
+  moderationStatusChangeSchema,
   reportsTable,
 } from "@workspace/db";
 import { requireAdmin } from "../middleware/adminAuth";
 
 const adminReportsRouter: IRouter = Router();
-
-const actorSchema = z.string().trim().min(1).max(100);
-const optionalNoteSchema = z.string().trim().max(2000).optional();
-
-const statusChangeSchema = z.object({
-  status: z.enum(REPORT_STATUSES),
-  actorLabel: actorSchema,
-  note: optionalNoteSchema,
-});
-
-const publicationChangeSchema = z.object({
-  publicationStatus: z.enum(PUBLICATION_STATUSES),
-  actorLabel: actorSchema,
-  note: optionalNoteSchema,
-});
-
-const noteSchema = z.object({
-  actorLabel: actorSchema,
-  note: z.string().trim().min(1).max(2000),
-});
 
 function toAdminReport(report: typeof reportsTable.$inferSelect) {
   return {
@@ -119,7 +99,7 @@ adminReportsRouter.get("/admin/reports/:publicId/events", async (req, res, next)
 
 adminReportsRouter.post("/admin/reports/:publicId/notes", async (req, res, next) => {
   try {
-    const parsed = noteSchema.safeParse(req.body);
+    const parsed = moderationNoteSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
         error: "Invalid moderation note",
@@ -164,7 +144,7 @@ adminReportsRouter.post("/admin/reports/:publicId/notes", async (req, res, next)
 
 adminReportsRouter.patch("/admin/reports/:publicId/status", async (req, res, next) => {
   try {
-    const parsed = statusChangeSchema.safeParse(req.body);
+    const parsed = moderationStatusChangeSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
         error: "Invalid status change",
@@ -216,7 +196,7 @@ adminReportsRouter.patch("/admin/reports/:publicId/status", async (req, res, nex
 
 adminReportsRouter.patch("/admin/reports/:publicId/publication", async (req, res, next) => {
   try {
-    const parsed = publicationChangeSchema.safeParse(req.body);
+    const parsed = moderationPublicationChangeSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
         error: "Invalid publication change",
