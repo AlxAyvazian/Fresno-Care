@@ -11,6 +11,7 @@ import {
   Sparkles,
   TrendingUp,
 } from "lucide-react";
+import { AnimalArt } from "@/components/AnimalArt";
 import { PublicFresnoMap } from "@/components/PublicFresnoMap";
 import { getPublicReports, type ApiReport } from "@/lib/reportsApi";
 
@@ -27,11 +28,11 @@ function ActionButton({
 }) {
   const styles = {
     primary:
-      "border-white/55 bg-[#6E9FCB] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.4),0_12px_28px_rgba(83,126,165,.26)] hover:bg-[#5F91BE]",
+      "border-white/55 bg-[#426F9D] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.4),0_12px_28px_rgba(38,67,94,.28)] hover:bg-[#345F8C]",
     glass:
-      "border-white/80 bg-[#FDFAE0]/55 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.85),0_10px_24px_rgba(84,112,139,.09)] hover:bg-[#FDFAE0]/75 dark:bg-white/5 dark:hover:bg-white/10",
+      "border-white/80 bg-[#FDFAE0]/72 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.9),0_10px_24px_rgba(54,77,101,.1)] hover:bg-[#FDFAE0]/90 dark:bg-white/5 dark:hover:bg-white/10",
     outline:
-      "border-[#8FBAE1]/55 bg-[#CAE7FF]/35 text-[#4F7699] shadow-[inset_0_1px_0_rgba(255,255,255,.62),0_8px_20px_rgba(84,112,139,.06)] hover:bg-[#CAE7FF]/55",
+      "border-[#547FA9]/55 bg-[#CAE7FF]/45 text-[#345F8C] shadow-[inset_0_1px_0_rgba(255,255,255,.68),0_8px_20px_rgba(54,77,101,.07)] hover:bg-[#CAE7FF]/70",
   };
 
   return (
@@ -92,13 +93,14 @@ export default function LandingPage() {
     };
   }, []);
 
-  const summary = useMemo(() => {
-    return {
+  const summary = useMemo(
+    () => ({
       reports: reports.length,
       urgent: reports.filter((report) => report.inDanger === "yes").length,
       neighborhoods: new Set(reports.map((report) => report.neighborhood.trim()).filter(Boolean)).size,
-    };
-  }, [reports]);
+    }),
+    [reports],
+  );
 
   return (
     <main className="liquid-page min-h-screen overflow-x-hidden px-4 pb-16 pt-28">
@@ -106,9 +108,22 @@ export default function LandingPage() {
       <div className="liquid-orb liquid-orb--two" aria-hidden="true" />
 
       <div className="relative z-10 mx-auto max-w-7xl space-y-8">
-        <section className="glass-card glass-card--hero luminous-edge rounded-[2.2rem] p-5 sm:p-7 lg:p-9">
+        <section className="glass-card glass-card--hero luminous-edge relative rounded-[2.2rem] p-5 sm:p-7 lg:p-9">
+          <AnimalArt
+            variant="cat-black"
+            size={118}
+            decorative
+            className="pointer-events-none absolute -left-5 -top-7 hidden rotate-[-8deg] drop-shadow-[0_18px_24px_rgba(35,51,75,.18)] sm:block"
+          />
+          <AnimalArt
+            variant="dog-cream"
+            size={150}
+            decorative
+            className="pointer-events-none absolute -bottom-7 left-[36%] hidden rotate-[3deg] drop-shadow-[0_18px_24px_rgba(95,67,34,.16)] xl:block"
+          />
+
           <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,.82fr)_minmax(430px,1.18fr)]">
-            <div className="px-2 py-4 sm:px-4 lg:py-8">
+            <div className="relative px-2 py-4 sm:px-4 lg:py-8">
               <div className="liquid-badge mb-5">
                 <Shield size={14} /> Independent public-interest tool
               </div>
@@ -139,7 +154,7 @@ export default function LandingPage() {
                   ["Urgent", summary.urgent],
                   ["Areas", summary.neighborhoods],
                 ].map(([label, value]) => (
-                  <div key={label} className="rounded-2xl border border-white/70 bg-[#FDFAE0]/42 p-3 backdrop-blur-xl">
+                  <div key={label} className="rounded-2xl border border-white/70 bg-[#FDFAE0]/55 p-3 backdrop-blur-xl">
                     <p className="font-heading text-2xl font-extrabold">{value}</p>
                     <p className="mt-1 text-[10px] font-bold uppercase tracking-[.14em] text-muted-foreground">{label}</p>
                   </div>
@@ -165,7 +180,13 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section>
+        <section className="relative">
+          <AnimalArt
+            variant="cat-grey"
+            size={126}
+            decorative
+            className="pointer-events-none absolute -right-5 -top-12 hidden rotate-[8deg] drop-shadow-[0_18px_24px_rgba(53,69,91,.17)] lg:block"
+          />
           <div className="mb-5 flex flex-col gap-2 px-1 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-xs font-extrabold uppercase tracking-[.16em] text-primary">How it works</p>
@@ -192,7 +213,13 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section className="grid gap-6 lg:grid-cols-[1.15fr_.85fr]">
+        <section className="relative grid gap-6 lg:grid-cols-[1.15fr_.85fr]">
+          <AnimalArt
+            variant="dog-black"
+            size={145}
+            decorative
+            className="pointer-events-none absolute -bottom-8 -right-5 z-20 hidden rotate-[-4deg] drop-shadow-[0_18px_24px_rgba(31,35,52,.2)] xl:block"
+          />
           <article className="glass-card rounded-[2rem] p-7 sm:p-9">
             <div className="liquid-badge">
               <Radio size={14} /> Fast action
@@ -205,7 +232,7 @@ export default function LandingPage() {
                 ["Evidence checklist", "Confirm that dates, details, and contact attempts are captured.", "/tools"],
               ].map(([title, description, href]) => (
                 <Link key={title} href={href}>
-                  <span className="block h-full cursor-pointer rounded-2xl border border-white/65 bg-[#FDFAE0]/36 p-4 backdrop-blur-xl transition-all hover:-translate-y-0.5 hover:bg-[#FDFAE0]/56 dark:bg-white/5 dark:hover:bg-white/10">
+                  <span className="block h-full cursor-pointer rounded-2xl border border-white/65 bg-[#FDFAE0]/48 p-4 backdrop-blur-xl transition-all hover:-translate-y-0.5 hover:bg-[#FDFAE0]/72 dark:bg-white/5 dark:hover:bg-white/10">
                     <strong className="text-sm">{title}</strong>
                     <span className="mt-2 block text-xs leading-relaxed text-muted-foreground">{description}</span>
                   </span>
@@ -214,7 +241,7 @@ export default function LandingPage() {
             </div>
           </article>
 
-          <article className="glass-card luminous-edge rounded-[2rem] p-7 sm:p-9">
+          <article className="glass-card luminous-edge rounded-[2rem] p-7 sm:p-9 xl:pr-28">
             <Sparkles size={22} className="text-primary" />
             <h2 className="mt-5 font-heading text-2xl font-extrabold">Responsible by design</h2>
             <p className="mt-4 text-sm leading-relaxed text-muted-foreground">

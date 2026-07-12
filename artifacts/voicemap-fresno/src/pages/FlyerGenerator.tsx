@@ -1,18 +1,20 @@
-import { useState, useRef } from "react";
-import { Printer, Download, Copy, CheckCircle2, ArrowLeft, Plus, X } from "lucide-react";
+import { useRef, useState } from "react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Copy,
+  Download,
+  MapPin,
+  Phone,
+  Plus,
+  Printer,
+  X,
+} from "lucide-react";
+import { useLocation } from "wouter";
+import { AnimalArt, artForPet } from "@/components/AnimalArt";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { AnimatedBackground } from "@/components/AnimatedBackground";
-import { KurzgesagtCat } from "@/components/KurzgesagtCat";
-import { KurzgesagtDog } from "@/components/KurzgesagtDog";
 import { getLostFoundPosts, type LostFoundPost } from "@/lib/lostfound";
-import { useLocation } from "wouter";
-
-const FLYER_COLORS = {
-  lost: { bg: "#F85525", text: "white", border: "#C44020" },
-  found: { bg: "#028391", text: "white", border: "#016570" },
-  reunited: { bg: "#22c55e", text: "white", border: "#16a34a" },
-};
 
 interface FlyerData {
   status: "lost" | "found" | "reunited";
@@ -34,187 +36,294 @@ interface FlyerData {
   tags: string[];
 }
 
+const STATUS_STYLE = {
+  lost: {
+    label: "LOST PET",
+    accent: "#B24F4B",
+    pale: "#F7E4DE",
+    message: "Please help bring this pet home",
+  },
+  found: {
+    label: "FOUND PET",
+    accent: "#326F8E",
+    pale: "#DDECF2",
+    message: "Help identify this pet's family",
+  },
+  reunited: {
+    label: "REUNITED",
+    accent: "#39775F",
+    pale: "#DDECE4",
+    message: "This pet has returned home",
+  },
+} as const;
+
+function formatDate(value: string) {
+  if (!value) return "Not provided";
+  return new Date(`${value}T12:00:00`).toLocaleDateString("en-US", {
+    weekday: "short",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
 function makeTearStrips(phone: string, name: string, count = 8) {
-  return Array.from({ length: count }, (_, i) => ({ id: i, phone, name }));
+  return Array.from({ length: count }, (_, index) => ({ id: index, phone, name }));
 }
 
 function PrintFlyer({ data }: { data: FlyerData }) {
-  const colors = FLYER_COLORS[data.status];
+  const status = STATUS_STYLE[data.status];
   const strips = makeTearStrips(data.contactPhone, data.petName || "Pet");
+  const fallbackVariant = artForPet(data.petType, data.status === "found");
+  const primaryContact = data.contactPhone || data.contactEmail || "Contact information not provided";
+
+  const detailRows = [
+    ["Breed", data.breed || "Not specified"],
+    ["Color / markings", data.color || "Not specified"],
+    ["Date", formatDate(data.dateSeen)],
+    ["Microchip", data.microchipped ? "Yes — please scan" : "Unknown"],
+    ["Collar", data.collarDescription || "Not specified"],
+  ];
 
   return (
     <div
       id="print-flyer"
       style={{
-        width: "680px",
-        fontFamily: "'Arial', sans-serif",
-        background: "white",
-        border: "1px solid #ddd",
-        borderRadius: "12px",
+        width: 680,
         overflow: "hidden",
-        boxShadow: "0 4px 24px rgba(0,0,0,0.12)",
+        border: "2px solid #294866",
+        borderRadius: 18,
+        background: "#FDFAE0",
+        color: "#243A52",
+        fontFamily: "'DM Sans', Arial, sans-serif",
+        boxShadow: "0 18px 50px rgba(24, 44, 67, .18)",
       }}
     >
-      {/* Header banner */}
-      <div style={{ background: colors.bg, color: colors.text, padding: "24px 28px 20px", textAlign: "center" }}>
-        <div style={{ fontSize: "52px", fontWeight: 900, letterSpacing: "6px", lineHeight: 1, textTransform: "uppercase" }}>
-          {data.status === "lost" ? "⚠ LOST" : data.status === "found" ? "✔ FOUND" : "🎉 REUNITED"}
-        </div>
-        <div style={{ fontSize: "22px", fontWeight: 700, marginTop: "6px", textTransform: "capitalize" }}>
-          {data.petType === "cat" ? "🐱" : data.petType === "dog" ? "🐶" : "🐾"} {data.petType}
-        </div>
-      </div>
-
-      {/* Main content */}
-      <div style={{ display: "flex", gap: "0", minHeight: "260px" }}>
-        {/* Photo panel */}
-        <div
-          style={{
-            width: "240px",
-            flexShrink: 0,
-            background: data.photoBase64 ? "transparent" : "#f5f5f5",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            borderRight: "2px dashed #eee",
-          }}
-        >
-          {data.photoBase64 ? (
-            <img src={data.photoBase64} alt="Pet" style={{ width: "100%", height: "240px", objectFit: "cover" }} />
-          ) : (
-            <div style={{ textAlign: "center", color: "#ccc", padding: "20px" }}>
-              <div style={{ fontSize: "64px" }}>{data.petType === "cat" ? "🐱" : data.petType === "dog" ? "🐶" : "🐾"}</div>
-              <div style={{ fontSize: "11px", marginTop: "8px" }}>No photo provided</div>
-            </div>
-          )}
-        </div>
-
-        {/* Details panel */}
-        <div style={{ flex: 1, padding: "20px 24px" }}>
-          {data.petName && (
-            <div style={{ fontSize: "28px", fontWeight: 800, color: "#01204E", marginBottom: "4px" }}>
-              {data.petName}
-            </div>
-          )}
-          {data.breed && (
-            <div style={{ fontSize: "14px", color: "#555", marginBottom: "12px" }}>{data.breed}</div>
-          )}
-
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-            <tbody>
-              {data.color && (
-                <tr>
-                  <td style={{ fontWeight: 700, paddingRight: "10px", paddingBottom: "5px", color: "#333", whiteSpace: "nowrap" }}>Color:</td>
-                  <td style={{ color: "#555", paddingBottom: "5px" }}>{data.color}</td>
-                </tr>
-              )}
-              {data.lastSeen && (
-                <tr>
-                  <td style={{ fontWeight: 700, paddingRight: "10px", paddingBottom: "5px", color: "#333", whiteSpace: "nowrap" }}>Last seen:</td>
-                  <td style={{ color: "#555", paddingBottom: "5px" }}>{data.lastSeen}</td>
-                </tr>
-              )}
-              {data.dateSeen && (
-                <tr>
-                  <td style={{ fontWeight: 700, paddingRight: "10px", paddingBottom: "5px", color: "#333", whiteSpace: "nowrap" }}>Date:</td>
-                  <td style={{ color: "#555", paddingBottom: "5px" }}>{new Date(data.dateSeen + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</td>
-                </tr>
-              )}
-              {data.neighborhood && (
-                <tr>
-                  <td style={{ fontWeight: 700, paddingRight: "10px", paddingBottom: "5px", color: "#333", whiteSpace: "nowrap" }}>Area:</td>
-                  <td style={{ color: "#555", paddingBottom: "5px" }}>{data.neighborhood}, Fresno, CA</td>
-                </tr>
-              )}
-              {data.collarDescription && (
-                <tr>
-                  <td style={{ fontWeight: 700, paddingRight: "10px", paddingBottom: "5px", color: "#333", whiteSpace: "nowrap" }}>Collar:</td>
-                  <td style={{ color: "#555", paddingBottom: "5px" }}>{data.collarDescription}</td>
-                </tr>
-              )}
-              <tr>
-                <td style={{ fontWeight: 700, paddingRight: "10px", paddingBottom: "5px", color: "#333", whiteSpace: "nowrap" }}>Microchip:</td>
-                <td style={{ color: "#555", paddingBottom: "5px" }}>{data.microchipped ? "Yes — please scan" : "Unknown"}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          {data.description && (
-            <div style={{ marginTop: "10px", fontSize: "12px", color: "#555", lineHeight: 1.5, borderTop: "1px solid #eee", paddingTop: "10px" }}>
-              {data.description}
-            </div>
-          )}
-
-          {data.tags.length > 0 && (
-            <div style={{ marginTop: "8px", display: "flex", flexWrap: "wrap", gap: "4px" }}>
-              {data.tags.map((t) => (
-                <span key={t} style={{ background: "#f0f0f0", borderRadius: "999px", padding: "2px 8px", fontSize: "11px", color: "#555" }}>
-                  {t}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Contact / reward bar */}
-      <div style={{ background: colors.bg, color: colors.text, padding: "16px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
+      <header
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr auto",
+          alignItems: "center",
+          gap: 20,
+          padding: "24px 28px",
+          color: "#F8FBFF",
+          background: "linear-gradient(135deg, #1F3650 0%, #315F89 72%, #477DAA 100%)",
+          borderBottom: `8px solid ${status.accent}`,
+        }}
+      >
         <div>
-          <div style={{ fontSize: "11px", opacity: 0.8, textTransform: "uppercase", letterSpacing: "1px" }}>Contact</div>
-          <div style={{ fontSize: "17px", fontWeight: 800 }}>{data.contactPhone || data.contactEmail || "Contact info not provided"}</div>
-          {data.contactName && <div style={{ fontSize: "13px", opacity: 0.85 }}>{data.contactName}</div>}
-          {data.contactEmail && data.contactPhone && <div style={{ fontSize: "12px", opacity: 0.75 }}>{data.contactEmail}</div>}
+          <div
+            style={{
+              display: "inline-block",
+              marginBottom: 10,
+              border: "1px solid rgba(255,255,255,.45)",
+              borderRadius: 999,
+              padding: "6px 11px",
+              color: "#1F3650",
+              background: "#F8E2AA",
+              fontSize: 12,
+              fontWeight: 900,
+              letterSpacing: 1.6,
+            }}
+          >
+            {status.label}
+          </div>
+          <div style={{ fontFamily: "Manrope, Arial, sans-serif", fontSize: 38, fontWeight: 900, lineHeight: 1.05 }}>
+            {data.petName || `${data.petType === "other" ? "Pet" : data.petType} needs help`}
+          </div>
+          <div style={{ marginTop: 8, color: "#DDEBFA", fontSize: 15, fontWeight: 650 }}>{status.message}</div>
         </div>
         {data.reward && (
-          <div style={{ background: "rgba(0,0,0,0.2)", borderRadius: "8px", padding: "10px 16px", textAlign: "center" }}>
-            <div style={{ fontSize: "11px", opacity: 0.8, textTransform: "uppercase", letterSpacing: "1px" }}>Reward</div>
-            <div style={{ fontSize: "24px", fontWeight: 900 }}>{data.reward}</div>
+          <div
+            style={{
+              minWidth: 120,
+              border: "1px solid rgba(255,255,255,.45)",
+              borderRadius: 16,
+              padding: "12px 16px",
+              textAlign: "center",
+              color: "#263A50",
+              background: "#F8E2AA",
+            }}
+          >
+            <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1.5 }}>REWARD</div>
+            <div style={{ marginTop: 2, fontSize: 25, fontWeight: 900 }}>{data.reward}</div>
           </div>
         )}
-      </div>
+      </header>
 
-      {/* Tear-off strips */}
+      <main style={{ padding: 22 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "270px 1fr", gap: 18 }}>
+          <div
+            style={{
+              minHeight: 300,
+              overflow: "hidden",
+              border: "1px solid #A8C7DF",
+              borderRadius: 16,
+              background: "linear-gradient(145deg, #CAE7FF, #FAEDCD)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {data.photoBase64 ? (
+              <img src={data.photoBase64} alt="Pet" style={{ width: "100%", height: 300, objectFit: "cover" }} />
+            ) : (
+              <div style={{ display: "grid", placeItems: "center", padding: 18, textAlign: "center" }}>
+                <AnimalArt variant={fallbackVariant} size={190} />
+                <div style={{ marginTop: 6, color: "#546D86", fontSize: 11, fontWeight: 700 }}>Add a clear recent photo when possible</div>
+              </div>
+            )}
+          </div>
+
+          <section
+            style={{
+              border: "1px solid #B7CCDD",
+              borderRadius: 16,
+              padding: 18,
+              background: "rgba(255,255,255,.62)",
+            }}
+          >
+            <div style={{ marginBottom: 12, fontFamily: "Manrope, Arial, sans-serif", fontSize: 18, fontWeight: 900 }}>
+              Identifying information
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {detailRows.map(([label, value]) => (
+                <div
+                  key={label}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "112px 1fr",
+                    gap: 10,
+                    borderBottom: "1px solid #D8E3EA",
+                    paddingBottom: 7,
+                    fontSize: 12,
+                  }}
+                >
+                  <strong style={{ color: "#36536F" }}>{label}</strong>
+                  <span>{value}</span>
+                </div>
+              ))}
+            </div>
+
+            {data.tags.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 13 }}>
+                {data.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    style={{ borderRadius: 999, padding: "4px 8px", background: "#DDEAF4", color: "#36536F", fontSize: 10, fontWeight: 800 }}
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+
+        <section
+          style={{
+            display: "grid",
+            gridTemplateColumns: "auto 1fr",
+            alignItems: "center",
+            gap: 12,
+            marginTop: 16,
+            borderRadius: 14,
+            padding: "14px 18px",
+            color: "#F7FBFF",
+            background: "#2B557D",
+          }}
+        >
+          <MapPin size={25} />
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1.5, color: "#BBD8EE" }}>
+              {data.status === "found" ? "FOUND NEAR" : "LAST SEEN"}
+            </div>
+            <div style={{ marginTop: 2, fontSize: 17, fontWeight: 900 }}>
+              {data.lastSeen || data.neighborhood || "Location not provided"}
+            </div>
+            {data.neighborhood && data.lastSeen && <div style={{ marginTop: 2, fontSize: 12, color: "#D4E7F5" }}>{data.neighborhood}, Fresno, California</div>}
+          </div>
+        </section>
+
+        {data.description && (
+          <section
+            style={{
+              marginTop: 14,
+              borderLeft: `5px solid ${status.accent}`,
+              borderRadius: 12,
+              padding: "12px 15px",
+              background: status.pale,
+              fontSize: 12,
+              lineHeight: 1.55,
+            }}
+          >
+            <strong style={{ display: "block", marginBottom: 4 }}>Important details</strong>
+            {data.description}
+          </section>
+        )}
+
+        <section
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto",
+            alignItems: "center",
+            gap: 16,
+            marginTop: 16,
+            border: "2px solid #294866",
+            borderRadius: 15,
+            padding: "15px 18px",
+            background: "#F8E2AA",
+          }}
+        >
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, color: "#294866", fontSize: 11, fontWeight: 900, letterSpacing: 1.2 }}>
+              <Phone size={14} /> CONTACT WITH INFORMATION
+            </div>
+            <div style={{ marginTop: 4, fontSize: 20, fontWeight: 900 }}>{primaryContact}</div>
+            {data.contactName && <div style={{ marginTop: 2, fontSize: 12 }}>{data.contactName}</div>}
+            {data.contactPhone && data.contactEmail && <div style={{ marginTop: 2, fontSize: 11 }}>{data.contactEmail}</div>}
+          </div>
+          <div style={{ color: "#5B7187", fontSize: 10, textAlign: "right" }}>Please do not chase.<br />Photograph and report direction of travel.</div>
+        </section>
+      </main>
+
       {data.contactPhone && (
-        <div style={{ borderTop: "2px dashed #ccc", padding: "10px 4px 8px" }}>
-          <div style={{ textAlign: "center", fontSize: "10px", color: "#aaa", marginBottom: "6px" }}>— tear off strips —</div>
-          <div style={{ display: "flex", gap: "4px", justifyContent: "center", flexWrap: "wrap" }}>
-            {strips.map((s) => (
-              <div key={s.id} style={{
-                writingMode: "vertical-rl",
-                textOrientation: "mixed",
-                transform: "rotate(180deg)",
-                fontSize: "11px",
-                padding: "8px 5px",
-                border: `1px solid ${colors.bg}`,
-                borderRadius: "4px",
-                color: colors.bg,
-                fontWeight: 700,
-                letterSpacing: "0.5px",
-                minHeight: "80px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "4px",
-              }}>
-                {data.status === "lost" ? "LOST" : "FOUND"} {s.name} · {s.phone}
+        <div style={{ borderTop: "2px dashed #7993AA", padding: "9px 10px 11px", background: "#F6F0D7" }}>
+          <div style={{ marginBottom: 6, textAlign: "center", color: "#587087", fontSize: 9, fontWeight: 800, letterSpacing: 1.2 }}>TEAR-OFF CONTACT STRIPS</div>
+          <div style={{ display: "flex", justifyContent: "center", gap: 4 }}>
+            {strips.map((strip) => (
+              <div
+                key={strip.id}
+                style={{
+                  minHeight: 80,
+                  border: "1px solid #52789B",
+                  borderRadius: 5,
+                  padding: "7px 4px",
+                  color: "#294866",
+                  fontSize: 9,
+                  fontWeight: 800,
+                  writingMode: "vertical-rl",
+                  transform: "rotate(180deg)",
+                }}
+              >
+                {status.label} · {strip.name} · {strip.phone}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Footer */}
-      <div style={{ padding: "8px 24px 10px", textAlign: "center", fontSize: "10px", color: "#bbb", borderTop: "1px solid #f0f0f0" }}>
-        Please also report sightings to Fresno Animal Center (559) 621-5795 · Generated by VoiceMap Fresno
-      </div>
+      <footer style={{ borderTop: "1px solid #CAD7E1", padding: "8px 20px 10px", textAlign: "center", color: "#6D8294", fontSize: 9 }}>
+        Report sightings to Fresno Animal Center: (559) 621-5795 · Generated by VoiceMap Fresno
+      </footer>
     </div>
   );
 }
 
 export default function FlyerGenerator() {
   const [, setLocation] = useLocation();
-  const existingPosts = getLostFoundPosts().filter((p) => p.status !== "reunited");
-  const [selectedPostId, setSelectedPostId] = useState<string>("manual");
+  const existingPosts = getLostFoundPosts().filter((post) => post.status !== "reunited");
+  const [selectedPostId, setSelectedPostId] = useState("manual");
   const [copied, setCopied] = useState(false);
   const [tagInput, setTagInput] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -239,6 +348,10 @@ export default function FlyerGenerator() {
     tags: [],
   });
 
+  function update<K extends keyof FlyerData>(key: K, value: FlyerData[K]) {
+    setData((previous) => ({ ...previous, [key]: value }));
+  }
+
   function loadFromPost(post: LostFoundPost) {
     setData({
       status: post.status as "lost" | "found",
@@ -261,269 +374,215 @@ export default function FlyerGenerator() {
     });
   }
 
-  function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+  function handlePhoto(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => setData({ ...data, photoBase64: ev.target?.result as string });
+    reader.onload = (loadEvent) => update("photoBase64", loadEvent.target?.result as string);
     reader.readAsDataURL(file);
   }
 
   function addTag() {
-    const t = tagInput.trim().toLowerCase().replace(/\s+/g, "-");
-    if (t && !data.tags.includes(t)) setData({ ...data, tags: [...data.tags, t] });
+    const tag = tagInput.trim().toLowerCase().replace(/\s+/g, "-");
+    if (tag && !data.tags.includes(tag)) update("tags", [...data.tags, tag]);
     setTagInput("");
   }
 
   function handlePrint() {
     const flyer = document.getElementById("print-flyer");
     if (!flyer) return;
-    const printWin = window.open("", "_blank", "width=800,height=900");
-    if (!printWin) return;
-    printWin.document.write(`
+    const printWindow = window.open("", "_blank", "width=800,height=980");
+    if (!printWindow) return;
+    printWindow.document.write(`
       <!DOCTYPE html>
       <html>
-      <head>
-        <title>${data.status === "lost" ? "LOST" : "FOUND"} ${data.petType}${data.petName ? " — " + data.petName : ""} — Fresno CA</title>
-        <style>
-          body { margin: 20px; font-family: Arial, sans-serif; }
-          @media print {
-            body { margin: 0; }
-            @page { margin: 0.5in; }
-          }
-        </style>
-      </head>
-      <body>${flyer.outerHTML}</body>
+        <head>
+          <title>${data.status.toUpperCase()} ${data.petName || data.petType} — Fresno</title>
+          <style>
+            body { margin: 18px; background: white; font-family: Arial, sans-serif; }
+            @media print { body { margin: 0; } @page { margin: .35in; } }
+          </style>
+        </head>
+        <body>${flyer.outerHTML}</body>
       </html>
     `);
-    printWin.document.close();
-    printWin.focus();
-    setTimeout(() => { printWin.print(); }, 400);
+    printWindow.document.close();
+    printWindow.focus();
+    window.setTimeout(() => printWindow.print(), 400);
   }
 
   function handleCopyText() {
     const text = [
-      `${data.status.toUpperCase()} ${data.petType.toUpperCase()}${data.petName ? ": " + data.petName : ""}`,
+      `${data.status.toUpperCase()} ${data.petType.toUpperCase()}${data.petName ? `: ${data.petName}` : ""}`,
       data.breed && `Breed: ${data.breed}`,
-      `Color: ${data.color}`,
-      data.lastSeen && `Last seen: ${data.lastSeen}${data.neighborhood ? ", " + data.neighborhood : ""}, Fresno, CA`,
-      data.dateSeen && `Date: ${new Date(data.dateSeen + "T12:00:00").toLocaleDateString()}`,
+      data.color && `Color: ${data.color}`,
+      data.lastSeen && `Last seen: ${data.lastSeen}${data.neighborhood ? `, ${data.neighborhood}` : ""}, Fresno, CA`,
+      data.dateSeen && `Date: ${formatDate(data.dateSeen)}`,
       data.collarDescription && `Collar: ${data.collarDescription}`,
       data.microchipped && "Microchipped: Yes — please scan",
-      data.description && `\n${data.description}`,
-      data.reward && `\n💰 REWARD: ${data.reward}`,
-      `\n📞 Contact: ${data.contactPhone || data.contactEmail || data.contactName}`,
-      data.contactName && `Name: ${data.contactName}`,
-      "\nPlease also report sightings to Fresno Animal Center: (559) 621-5795",
-      "\n— Generated by VoiceMap Fresno (free civic tool) —",
-    ].filter(Boolean).join("\n");
-    navigator.clipboard.writeText(text);
+      data.description,
+      data.reward && `Reward: ${data.reward}`,
+      `Contact: ${data.contactPhone || data.contactEmail || data.contactName || "Not provided"}`,
+      "Please also report sightings to Fresno Animal Center: (559) 621-5795",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    void navigator.clipboard.writeText(text);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+    window.setTimeout(() => setCopied(false), 2500);
   }
 
-  const set = (k: keyof FlyerData, v: FlyerData[keyof FlyerData]) =>
-    setData((prev) => ({ ...prev, [k]: v }));
-
   return (
-    <div className="relative min-h-screen pt-28 pb-16 px-4">
-      <AnimatedBackground />
-      <div className="relative z-10 max-w-7xl mx-auto">
-
-        {/* Header */}
-        <div className="flex items-center gap-4 mb-8">
-          <button onClick={() => setLocation("/lostfound")} className="p-2 rounded-xl hover:bg-muted transition-colors">
+    <main className="min-h-screen px-4 pb-16 pt-28">
+      <div className="mx-auto max-w-7xl">
+        <header className="mb-7 flex items-start gap-3">
+          <button
+            type="button"
+            onClick={() => setLocation("/lostfound")}
+            className="liquid-button mt-1 rounded-xl p-2"
+            aria-label="Return to Lost and Found"
+          >
             <ArrowLeft size={18} />
           </button>
           <div>
-            <h1 className="font-heading text-4xl font-bold mb-1">Flyer Generator</h1>
-            <p className="text-muted-foreground">Create a printable lost or found pet flyer with tear-off contact strips.</p>
+            <p className="text-xs font-extrabold uppercase tracking-[.16em] text-primary">Printable community notice</p>
+            <h1 className="mt-1 font-heading text-4xl font-extrabold">Lost &amp; found flyer studio</h1>
+            <p className="mt-2 text-muted-foreground">Build a clear, professional flyer that prioritizes the animal, location, and contact information.</p>
           </div>
-        </div>
+        </header>
 
-        <div className="grid lg:grid-cols-2 gap-8">
-          {/* Left: Form */}
-          <div className="space-y-5">
-
-            {/* Load from existing post */}
+        <div className="grid gap-8 xl:grid-cols-[minmax(420px,.85fr)_minmax(680px,1.15fr)]">
+          <section className="space-y-5">
             {existingPosts.length > 0 && (
-              <div className="glass-card rounded-2xl p-5">
-                <p className="text-sm font-semibold mb-3">Load from a Lost & Found post</p>
+              <div className="glass-card rounded-3xl p-5">
+                <label className="mb-3 block text-sm font-bold">Load an existing Lost &amp; Found post</label>
                 <select
                   value={selectedPostId}
-                  onChange={(e) => {
-                    setSelectedPostId(e.target.value);
-                    if (e.target.value !== "manual") {
-                      const p = existingPosts.find((x) => x.id === e.target.value);
-                      if (p) loadFromPost(p);
+                  onChange={(event) => {
+                    setSelectedPostId(event.target.value);
+                    if (event.target.value !== "manual") {
+                      const post = existingPosts.find((candidate) => candidate.id === event.target.value);
+                      if (post) loadFromPost(post);
                     }
                   }}
-                  className="w-full h-10 px-3 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="h-11 w-full rounded-xl border border-input bg-[#FDFAE0]/70 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 >
-                  <option value="manual">— Enter manually —</option>
-                  {existingPosts.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.status.toUpperCase()}: {p.petName || p.color + " " + p.petType} — {p.neighborhood}
+                  <option value="manual">Enter manually</option>
+                  {existingPosts.map((post) => (
+                    <option key={post.id} value={post.id}>
+                      {post.status.toUpperCase()}: {post.petName || `${post.color} ${post.petType}`} — {post.neighborhood}
                     </option>
                   ))}
                 </select>
               </div>
             )}
 
-            {/* Basic info */}
-            <div className="glass-card rounded-2xl p-5 space-y-4">
-              <p className="text-sm font-semibold">Basic Information</p>
+            <div className="glass-card space-y-4 rounded-3xl p-5">
+              <h2 className="font-heading text-lg font-extrabold">Pet and sighting details</h2>
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-medium block mb-1">Status</label>
-                  <select value={data.status} onChange={(e) => set("status", e.target.value as FlyerData["status"])}
-                    className="w-full h-10 px-3 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+                <label className="text-xs font-bold">Status
+                  <select value={data.status} onChange={(event) => update("status", event.target.value as FlyerData["status"])} className="mt-1 h-10 w-full rounded-xl border border-input bg-[#FDFAE0]/70 px-3 text-sm">
                     <option value="lost">Lost</option>
                     <option value="found">Found</option>
                     <option value="reunited">Reunited</option>
                   </select>
-                </div>
-                <div>
-                  <label className="text-xs font-medium block mb-1">Animal Type</label>
-                  <select value={data.petType} onChange={(e) => set("petType", e.target.value as FlyerData["petType"])}
-                    className="w-full h-10 px-3 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+                </label>
+                <label className="text-xs font-bold">Animal type
+                  <select value={data.petType} onChange={(event) => update("petType", event.target.value as FlyerData["petType"])} className="mt-1 h-10 w-full rounded-xl border border-input bg-[#FDFAE0]/70 px-3 text-sm">
                     <option value="cat">Cat</option>
                     <option value="dog">Dog</option>
                     <option value="other">Other</option>
                   </select>
-                </div>
+                </label>
               </div>
-              <div className="grid sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-medium block mb-1">Pet Name</label>
-                  <Input value={data.petName} onChange={(e) => set("petName", e.target.value)} placeholder="e.g. Luna" className="rounded-xl" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium block mb-1">Breed</label>
-                  <Input value={data.breed} onChange={(e) => set("breed", e.target.value)} placeholder="e.g. Domestic Shorthair" className="rounded-xl" />
-                </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="text-xs font-bold">Pet name<Input value={data.petName} onChange={(event) => update("petName", event.target.value)} placeholder="Luna" className="mt-1 rounded-xl" /></label>
+                <label className="text-xs font-bold">Breed<Input value={data.breed} onChange={(event) => update("breed", event.target.value)} placeholder="Domestic Shorthair" className="mt-1 rounded-xl" /></label>
               </div>
-              <div>
-                <label className="text-xs font-medium block mb-1">Color / Markings</label>
-                <Input value={data.color} onChange={(e) => set("color", e.target.value)} placeholder="e.g. Grey tabby with white chest" className="rounded-xl" />
+              <label className="block text-xs font-bold">Color / markings<Input value={data.color} onChange={(event) => update("color", event.target.value)} placeholder="Grey tabby with white chest" className="mt-1 rounded-xl" /></label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="text-xs font-bold">Neighborhood<Input value={data.neighborhood} onChange={(event) => update("neighborhood", event.target.value)} placeholder="Tower District" className="mt-1 rounded-xl" /></label>
+                <label className="text-xs font-bold">Date seen<Input type="date" value={data.dateSeen} onChange={(event) => update("dateSeen", event.target.value)} className="mt-1 rounded-xl" /></label>
               </div>
-              <div className="grid sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-medium block mb-1">Neighborhood</label>
-                  <Input value={data.neighborhood} onChange={(e) => set("neighborhood", e.target.value)} placeholder="e.g. Tower District" className="rounded-xl" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium block mb-1">Date Seen</label>
-                  <Input type="date" value={data.dateSeen} onChange={(e) => set("dateSeen", e.target.value)} className="rounded-xl" />
-                </div>
+              <label className="block text-xs font-bold">Last seen location<Input value={data.lastSeen} onChange={(event) => update("lastSeen", event.target.value)} placeholder="E Olive Ave & N Van Ness Ave" className="mt-1 rounded-xl" /></label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="text-xs font-bold">Collar<Input value={data.collarDescription} onChange={(event) => update("collarDescription", event.target.value)} placeholder="Pink collar, heart tag" className="mt-1 rounded-xl" /></label>
+                <label className="text-xs font-bold">Reward<Input value={data.reward} onChange={(event) => update("reward", event.target.value)} placeholder="$200" className="mt-1 rounded-xl" /></label>
               </div>
-              <div>
-                <label className="text-xs font-medium block mb-1">Last Seen Address / Location</label>
-                <Input value={data.lastSeen} onChange={(e) => set("lastSeen", e.target.value)} placeholder="e.g. E Olive Ave & N Van Ness Ave" className="rounded-xl" />
-              </div>
-              <div className="grid sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-medium block mb-1">Collar Description</label>
-                  <Input value={data.collarDescription} onChange={(e) => set("collarDescription", e.target.value)} placeholder="e.g. Pink collar, heart tag" className="rounded-xl" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium block mb-1">Reward</label>
-                  <Input value={data.reward} onChange={(e) => set("reward", e.target.value)} placeholder="e.g. $200" className="rounded-xl" />
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <input type="checkbox" id="mc" checked={data.microchipped} onChange={(e) => set("microchipped", e.target.checked)} className="w-4 h-4 rounded" />
-                <label htmlFor="mc" className="text-sm">Microchipped</label>
-              </div>
-              <div>
-                <label className="text-xs font-medium block mb-1">Description</label>
-                <textarea value={data.description} onChange={(e) => set("description", e.target.value)} rows={3}
-                  placeholder="Physical description, temperament, circumstances…"
-                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none" />
+              <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={data.microchipped} onChange={(event) => update("microchipped", event.target.checked)} className="h-4 w-4" /> Microchipped</label>
+              <label className="block text-xs font-bold">Description<textarea value={data.description} onChange={(event) => update("description", event.target.value)} rows={3} placeholder="Temperament, physical description, and circumstances…" className="mt-1 w-full resize-none rounded-xl border border-input bg-background px-3 py-2 text-sm" /></label>
+            </div>
+
+            <div className="glass-card space-y-3 rounded-3xl p-5">
+              <h2 className="font-heading text-lg font-extrabold">Contact information</h2>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="text-xs font-bold">Name<Input value={data.contactName} onChange={(event) => update("contactName", event.target.value)} placeholder="Your name" className="mt-1 rounded-xl" /></label>
+                <label className="text-xs font-bold">Phone<Input value={data.contactPhone} onChange={(event) => update("contactPhone", event.target.value)} placeholder="(559) 555-0000" className="mt-1 rounded-xl" /></label>
+                <label className="text-xs font-bold">Email<Input type="email" value={data.contactEmail} onChange={(event) => update("contactEmail", event.target.value)} placeholder="you@email.com" className="mt-1 rounded-xl" /></label>
               </div>
             </div>
 
-            {/* Contact */}
-            <div className="glass-card rounded-2xl p-5 space-y-3">
-              <p className="text-sm font-semibold">Contact Information</p>
-              <div className="grid sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-xs font-medium block mb-1">Name</label>
-                  <Input value={data.contactName} onChange={(e) => set("contactName", e.target.value)} placeholder="Your name" className="rounded-xl" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium block mb-1">Phone</label>
-                  <Input value={data.contactPhone} onChange={(e) => set("contactPhone", e.target.value)} placeholder="(559) 555-0000" className="rounded-xl" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium block mb-1">Email</label>
-                  <Input type="email" value={data.contactEmail} onChange={(e) => set("contactEmail", e.target.value)} placeholder="you@email.com" className="rounded-xl" />
-                </div>
-              </div>
-            </div>
-
-            {/* Photo + tags */}
-            <div className="glass-card rounded-2xl p-5 space-y-3">
-              <p className="text-sm font-semibold">Photo & Tags</p>
-              <div
-                className="rounded-xl border-2 border-dashed border-border/50 p-4 flex flex-col items-center gap-2 cursor-pointer hover:border-primary/50 transition-colors"
+            <div className="glass-card space-y-3 rounded-3xl p-5">
+              <h2 className="font-heading text-lg font-extrabold">Photo and search tags</h2>
+              <button
+                type="button"
                 onClick={() => fileRef.current?.click()}
+                className="flex w-full flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-[#789FBE]/55 bg-[#CAE7FF]/25 p-5 transition-colors hover:bg-[#CAE7FF]/45"
               >
                 {data.photoBase64 ? (
-                  <img src={data.photoBase64} alt="pet" className="max-h-32 rounded-xl object-contain" />
+                  <img src={data.photoBase64} alt="Uploaded pet" className="max-h-36 rounded-xl object-contain" />
                 ) : (
                   <>
-                    <div className="flex gap-2 opacity-40">
-                      <KurzgesagtCat size={48} /> <KurzgesagtDog size={48} />
-                    </div>
-                    <p className="text-sm text-muted-foreground">Click to upload photo</p>
+                    <AnimalArt variant={artForPet(data.petType)} size={88} decorative />
+                    <span className="text-sm font-semibold text-muted-foreground">Upload a clear pet photo</span>
                   </>
                 )}
-              </div>
+              </button>
               <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
 
               <div className="flex gap-2">
-                <Input value={tagInput} onChange={(e) => setTagInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } }}
-                  placeholder="Add a tag (indoor-only, shy…)" className="rounded-xl" />
+                <Input value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addTag(); } }} placeholder="Add a tag (shy, indoor-only…)" className="rounded-xl" />
                 <Button type="button" variant="outline" className="rounded-xl px-3" onClick={addTag}><Plus size={14} /></Button>
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                {data.tags.map((t) => (
-                  <span key={t} className="flex items-center gap-1 text-xs bg-primary/10 text-primary rounded-full px-2.5 py-0.5">
-                    {t}
-                    <button onClick={() => setData({ ...data, tags: data.tags.filter((x) => x !== t) })}><X size={10} /></button>
+              <div className="flex flex-wrap gap-2">
+                {data.tags.map((tag) => (
+                  <span key={tag} className="flex items-center gap-1 rounded-full bg-[#CAE7FF]/70 px-3 py-1 text-xs font-bold text-[#345F8C]">
+                    {tag}
+                    <button type="button" onClick={() => update("tags", data.tags.filter((candidate) => candidate !== tag))}><X size={11} /></button>
                   </span>
                 ))}
               </div>
             </div>
 
-            {/* Actions */}
-            <div className="flex gap-3 flex-wrap">
-              <Button onClick={handlePrint} className="rounded-xl gap-2 flex-1" style={{ background: "#028391", color: "white" }}>
-                <Printer size={15} /> Print Flyer
+            <div className="flex flex-wrap gap-3">
+              <Button onClick={handlePrint} className="flex-1 gap-2 rounded-xl bg-[#426F9D] text-white hover:bg-[#345F8C]">
+                <Printer size={15} /> Print flyer
               </Button>
-              <Button onClick={handleCopyText} variant="outline" className="rounded-xl gap-2 flex-1">
-                {copied ? <CheckCircle2 size={15} className="text-primary" /> : <Copy size={15} />}
-                {copied ? "Copied!" : "Copy Text"}
+              <Button onClick={handleCopyText} variant="outline" className="flex-1 gap-2 rounded-xl">
+                {copied ? <CheckCircle2 size={15} /> : <Copy size={15} />}
+                {copied ? "Copied" : "Copy text"}
               </Button>
             </div>
-          </div>
+          </section>
 
-          {/* Right: Preview */}
-          <div className="sticky top-24">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-sm font-semibold text-muted-foreground">Live Preview</p>
-              <Button onClick={handlePrint} size="sm" variant="outline" className="rounded-xl gap-2">
+          <aside className="self-start xl:sticky xl:top-24">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-extrabold uppercase tracking-[.14em] text-primary">Live preview</p>
+                <p className="mt-1 text-sm text-muted-foreground">The printed version preserves this layout.</p>
+              </div>
+              <Button onClick={handlePrint} size="sm" variant="outline" className="gap-2 rounded-xl">
                 <Download size={13} /> Print / Save PDF
               </Button>
             </div>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto pb-4">
               <PrintFlyer data={data} />
             </div>
-          </div>
+          </aside>
         </div>
       </div>
-    </div>
+    </main>
   );
 }

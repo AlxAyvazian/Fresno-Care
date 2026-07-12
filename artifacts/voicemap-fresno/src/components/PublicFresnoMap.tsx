@@ -42,25 +42,25 @@ const CONTEXT_ZONES: Array<{
   radius: number;
   color: string;
 }> = [
-  { center: [36.7775, -119.7929], radius: 1500, color: "#F8E2AA" },
-  { center: [36.806, -119.819], radius: 1700, color: "#FAEDCD" },
-  { center: [36.7378, -119.7871], radius: 1450, color: "#8FBAE1" },
-  { center: [36.835, -119.774], radius: 1800, color: "#CAE7FF" },
-  { center: [36.7379, -119.7383], radius: 1700, color: "#FDFAE0" },
-  { center: [36.722, -119.81], radius: 1800, color: "#F8E2AA" },
+  { center: [36.7775, -119.7929], radius: 1700, color: "#614D9A" },
+  { center: [36.806, -119.819], radius: 1900, color: "#246B8E" },
+  { center: [36.7378, -119.7871], radius: 1700, color: "#D16F3D" },
+  { center: [36.835, -119.774], radius: 2100, color: "#257C68" },
+  { center: [36.7379, -119.7383], radius: 1900, color: "#2F5597" },
+  { center: [36.722, -119.81], radius: 2000, color: "#A04472" },
 ];
 
 const DANGER_COLORS: Record<PublicMapReport["inDanger"], string> = {
-  yes: "#D86F5E",
-  unsure: "#D9A44A",
-  no: "#6C9FCA",
+  yes: "#FF5A4F",
+  unsure: "#FFB52E",
+  no: "#43B8FF",
 };
 
 const STATUS_RINGS: Record<string, string> = {
-  resolved: "#5F9F87",
-  routed: "#F8E2AA",
-  "follow-up": "#D86F5E",
-  submitted: "#8FBAE1",
+  resolved: "#55E6A5",
+  routed: "#FFD166",
+  "follow-up": "#FF7A66",
+  submitted: "#8FD8FF",
 };
 
 function hashString(value: string): number {
@@ -143,6 +143,7 @@ export function PublicFresnoMap({
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; CARTO',
         subdomains: "abcd",
         maxZoom: 20,
+        className: "public-map-vibrant-tiles",
       }).addTo(map);
 
       const contextLayer = L.layerGroup().addTo(map);
@@ -151,10 +152,10 @@ export function PublicFresnoMap({
           radius: zone.radius,
           stroke: true,
           color: zone.color,
-          weight: 1,
-          opacity: compact ? 0.24 : 0.32,
+          weight: compact ? 2 : 3,
+          opacity: compact ? 0.72 : 0.86,
           fillColor: zone.color,
-          fillOpacity: compact ? 0.08 : 0.11,
+          fillOpacity: compact ? 0.18 : 0.24,
           interactive: false,
           className: "public-map-context-zone",
         }).addTo(contextLayer);
@@ -163,8 +164,7 @@ export function PublicFresnoMap({
       markersRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
       setReady(true);
-
-      window.setTimeout(() => map.invalidateSize(), 80);
+      window.setTimeout(() => map.invalidateSize(), 100);
     }
 
     void initialize();
@@ -193,14 +193,14 @@ export function PublicFresnoMap({
       reports.forEach((report) => {
         const coordinates = neighborhoodCoordinates(report);
         const fill = DANGER_COLORS[report.inDanger] ?? DANGER_COLORS.unsure;
-        const ring = STATUS_RINGS[report.status] ?? "#FDFAE0";
+        const ring = STATUS_RINGS[report.status] ?? "#F5FAFF";
         const marker = L.circleMarker(coordinates, {
-          radius: report.inDanger === "yes" ? 11 : 9,
+          radius: report.inDanger === "yes" ? 13 : 11,
           color: ring,
-          weight: 3,
+          weight: 4,
           opacity: 1,
           fillColor: fill,
-          fillOpacity: 0.94,
+          fillOpacity: 1,
           className: "public-map-dot",
         });
 
@@ -227,20 +227,19 @@ export function PublicFresnoMap({
   return (
     <div className={`public-map-shell ${compact ? "public-map-shell--compact" : ""}`}>
       <div ref={containerRef} className="public-map" aria-label="Neighborhood-level map of approved animal concerns" />
-      <div className="public-map__sheen" aria-hidden="true" />
       <div className="public-map__badge">
         <span className="public-map__pulse" />
         {reports.length} approved concern{reports.length === 1 ? "" : "s"} mapped
       </div>
       <div className="public-map__legend" aria-label="Map color legend">
-        <span><i className="is-sand" /> Neighborhood context</span>
+        <span><i className="is-zone" /> Neighborhood field</span>
         <span><i className="is-blue" /> Approved report</span>
         <span><i className="is-urgent" /> Immediate concern</span>
       </div>
       {reports.length === 0 && (
         <div className="public-map__empty">
-          <strong>Community map is ready</strong>
-          <span>Approved neighborhood-level reports will appear here.</span>
+          <strong>Map ready for approved reports</strong>
+          <span>Neighborhood fields remain visible while the public queue is empty.</span>
         </div>
       )}
     </div>
