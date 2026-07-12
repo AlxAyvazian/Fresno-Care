@@ -1,20 +1,36 @@
 import type { Report } from "./storage";
 
 /**
- * Encodes a Report object into a URL-safe base64 string.
- * Uses encodeURIComponent so non-ASCII characters survive the round-trip.
+ * Public share links must never contain reporter contact information.
+ * The current v1 sharing format still embeds report data in the URL, so this
+ * boundary is intentionally enforced for both encoding and decoding.
  */
-export function encodeReport(r: Report): string {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(r))));
+export function sanitizeReportForSharing(report: Report): Report {
+  return {
+    ...report,
+    contactInfo: undefined,
+  };
 }
 
 /**
- * Decodes a base64 string back into a Report.
+ * Encodes a privacy-filtered Report object into a URL-safe base64 string.
+ * Uses encodeURIComponent so non-ASCII characters survive the round-trip.
+ */
+export function encodeReport(report: Report): string {
+  const publicReport = sanitizeReportForSharing(report);
+  return btoa(unescape(encodeURIComponent(JSON.stringify(publicReport))));
+}
+
+/**
+ * Decodes a base64 string back into a privacy-filtered Report.
  * Returns null on any decoding error.
  */
 export function decodeReport(encoded: string): Report | null {
   try {
-    return JSON.parse(decodeURIComponent(escape(atob(encoded))));
+    const report = JSON.parse(
+      decodeURIComponent(escape(atob(encoded))),
+    ) as Report;
+    return sanitizeReportForSharing(report);
   } catch {
     return null;
   }
@@ -22,11 +38,10 @@ export function decodeReport(encoded: string): Report | null {
 
 /**
  * Builds the full share URL for a report.
- * Works in both dev and production because it reads window.location.origin
- * and uses the current base path.
+ * Works in both development and production because it uses the configured
+ * Vite base path and the current origin.
  */
-export function buildShareUrl(r: Report): string {
-  const base = window.location.origin + window.location.pathname.replace(/\/$/, "");
+export function buildShareUrl(report: Report): string {
   const basePath = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
-  return `${window.location.origin}${basePath}/share?r=${encodeReport(r)}`;
+  return `${window.location.origin}${basePath}/share?r=${encodeReport(report)}`;
 }

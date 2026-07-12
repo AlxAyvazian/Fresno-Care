@@ -6,17 +6,19 @@ import { ThemeProvider } from "@/lib/theme";
 import { Navbar } from "@/components/Navbar";
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/LandingPage";
-import SubmitReport from "@/pages/SubmitReport";
+import SubmitReport from "@/pages/ModeratedSubmitPage";
 import ReportGenerator from "@/pages/ReportGenerator";
-import Dashboard from "@/pages/Dashboard";
+import Dashboard from "@/pages/PublicDashboardPage";
 import EscalationCenter from "@/pages/EscalationCenter";
 import ResourceLibrary from "@/pages/ResourceLibrary";
 import AboutPage from "@/pages/AboutPage";
 import LostFound from "@/pages/LostFound";
 import FlyerGenerator from "@/pages/FlyerGenerator";
-import ToolsPage from "@/pages/ToolsPage";
+import ToolsPage from "@/pages/CoreToolsPage";
 import NeighborhoodWatch from "@/pages/NeighborhoodWatch";
 import ShareReport from "@/pages/ShareReport";
+import PublicSharePage from "@/pages/PublicSharePage";
+import AdminModerationPage from "@/pages/ModerationReviewPage";
 
 const queryClient = new QueryClient();
 
@@ -36,6 +38,8 @@ function Router() {
         <Route path="/escalate" component={EscalationCenter} />
         <Route path="/resources" component={ResourceLibrary} />
         <Route path="/about" component={AboutPage} />
+        <Route path="/admin" component={AdminModerationPage} />
+        <Route path="/share/:publicId" component={PublicSharePage} />
         <Route path="/share" component={ShareReport} />
         <Route component={NotFound} />
       </Switch>

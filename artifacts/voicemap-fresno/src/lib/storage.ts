@@ -1,5 +1,6 @@
 export interface Report {
   id: string;
+  publicId?: string;
   createdAt: string;
   animalType: 'cat' | 'dog' | 'other';
   count: number;
@@ -20,30 +21,42 @@ export interface Report {
 
 const STORAGE_KEY = 'voicemap_reports';
 
+function normalizeReport(report: Report): Report {
+  if (!report.anonymous) return report;
+
+  return {
+    ...report,
+    contactInfo: undefined,
+  };
+}
+
 export function getReports(): Report[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : getDemoReports();
+    if (!raw) return [];
+
+    const reports = JSON.parse(raw) as Report[];
+    return reports.map(normalizeReport);
   } catch {
-    return getDemoReports();
+    return [];
   }
 }
 
 export function saveReport(report: Report): void {
-  // TODO: Replace localStorage with Supabase insert when upgrading to v2
+  const safeReport = normalizeReport(report);
   const reports = getReports();
-  const idx = reports.findIndex((r) => r.id === report.id);
+  const idx = reports.findIndex((r) => r.id === safeReport.id);
   if (idx >= 0) {
-    reports[idx] = report;
+    reports[idx] = safeReport;
   } else {
-    reports.push(report);
+    reports.push(safeReport);
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(reports));
 }
 
 export function updateReportStatus(id: string, status: Report['status']): void {
   const reports = getReports();
-  const r = reports.find((r) => r.id === id);
+  const r = reports.find((report) => report.id === id);
   if (r) {
     r.status = status;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(reports));
@@ -54,7 +67,7 @@ export function generateId(): string {
   return `vm-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function getDemoReports(): Report[] {
+export function getDemoReports(): Report[] {
   return [
     {
       id: 'demo-1',
@@ -134,11 +147,11 @@ function getDemoReports(): Report[] {
 export function getStats(reports: Report[]) {
   return {
     total: reports.length,
-    open: reports.filter((r) => r.status === 'submitted' || r.status === 'draft').length,
-    followUp: reports.filter((r) => r.status === 'follow-up').length,
-    resolved: reports.filter((r) => r.status === 'resolved').length,
-    routed: reports.filter((r) => r.status === 'routed').length,
-    animals: reports.reduce((sum, r) => sum + r.count, 0),
+    open: reports.filter((report) => report.status === 'submitted' || report.status === 'draft').length,
+    followUp: reports.filter((report) => report.status === 'follow-up').length,
+    resolved: reports.filter((report) => report.status === 'resolved').length,
+    routed: reports.filter((report) => report.status === 'routed').length,
+    animals: reports.reduce((sum, report) => sum + report.count, 0),
   };
 }
 
