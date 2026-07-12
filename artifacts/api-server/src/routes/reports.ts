@@ -1,6 +1,11 @@
 import { Router, type IRouter } from "express";
 import { and, desc, eq } from "drizzle-orm";
-import { createReportSchema, db, reportsTable } from "@workspace/db";
+import {
+  createReportSchema,
+  db,
+  moderationEventsTable,
+  reportsTable,
+} from "@workspace/db";
 
 const reportsRouter: IRouter = Router();
 
@@ -45,15 +50,31 @@ reportsRouter.post("/reports", async (req, res, next) => {
       : input.reporterContact?.trim() || null;
     const anonymous = input.anonymous || !reporterContact;
 
-    const [created] = await db
-      .insert(reportsTable)
-      .values({
-        ...input,
-        anonymous,
-        reporterContact: anonymous ? null : reporterContact,
-        publicationStatus: "pending",
-      })
-      .returning();
+    const created = await db.transaction(async (tx) => {
+      const [report] = await tx
+        .insert(reportsTable)
+        .values({
+          ...input,
+          anonymous,
+          reporterContact: anonymous ? null : reporterContact,
+          publicationStatus: "pending",
+        })
+        .returning();
+
+      await tx.insert(moderationEventsTable).values({
+        reportId: report.id,
+        eventType: "report_submitted",
+        actorLabel: "System",
+        note: "Report submitted and queued for private moderation review.",
+        newValue: "pending",
+        metadata: {
+          publicId: report.publicId,
+          anonymous: report.anonymous,
+        },
+      });
+
+      return report;
+    });
 
     res.status(201).json({
       receipt: {

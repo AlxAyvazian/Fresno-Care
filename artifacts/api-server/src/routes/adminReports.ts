@@ -2,16 +2,15 @@ import { Router, type IRouter } from "express";
 import { desc, eq } from "drizzle-orm";
 import {
   db,
-  PUBLICATION_STATUSES,
-  REPORT_STATUSES,
+  moderationEventsTable,
+  moderationNoteSchema,
+  moderationPublicationChangeSchema,
+  moderationStatusChangeSchema,
   reportsTable,
 } from "@workspace/db";
 import { requireAdmin } from "../middleware/adminAuth";
 
 const adminReportsRouter: IRouter = Router();
-
-type ReportStatus = (typeof REPORT_STATUSES)[number];
-type PublicationStatus = (typeof PUBLICATION_STATUSES)[number];
 
 function toAdminReport(report: typeof reportsTable.$inferSelect) {
   return {
@@ -39,6 +38,19 @@ function toAdminReport(report: typeof reportsTable.$inferSelect) {
   };
 }
 
+function toModerationEvent(event: typeof moderationEventsTable.$inferSelect) {
+  return {
+    id: event.id,
+    createdAt: event.createdAt,
+    eventType: event.eventType,
+    actorLabel: event.actorLabel,
+    note: event.note,
+    previousValue: event.previousValue,
+    newValue: event.newValue,
+    metadata: event.metadata,
+  };
+}
+
 adminReportsRouter.use(requireAdmin);
 
 adminReportsRouter.get("/admin/reports", async (req, res, next) => {
@@ -60,34 +72,123 @@ adminReportsRouter.get("/admin/reports", async (req, res, next) => {
   }
 });
 
-adminReportsRouter.patch("/admin/reports/:publicId/status", async (req, res, next) => {
+adminReportsRouter.get("/admin/reports/:publicId/events", async (req, res, next) => {
   try {
-    const requestedStatus = req.body?.status;
-
-    if (
-      typeof requestedStatus !== "string" ||
-      !(REPORT_STATUSES as readonly string[]).includes(requestedStatus)
-    ) {
-      res.status(400).json({
-        error: "Invalid status",
-        allowedStatuses: REPORT_STATUSES,
-      });
-      return;
-    }
-
-    const status = requestedStatus as ReportStatus;
-    const [updated] = await db
-      .update(reportsTable)
-      .set({ status, updatedAt: new Date() })
+    const [report] = await db
+      .select({ id: reportsTable.id })
+      .from(reportsTable)
       .where(eq(reportsTable.publicId, req.params.publicId))
-      .returning();
+      .limit(1);
 
-    if (!updated) {
+    if (!report) {
       res.status(404).json({ error: "Report not found" });
       return;
     }
 
-    res.json({ report: toAdminReport(updated) });
+    const events = await db
+      .select()
+      .from(moderationEventsTable)
+      .where(eq(moderationEventsTable.reportId, report.id))
+      .orderBy(desc(moderationEventsTable.createdAt));
+
+    res.json({ events: events.map(toModerationEvent) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminReportsRouter.post("/admin/reports/:publicId/notes", async (req, res, next) => {
+  try {
+    const parsed = moderationNoteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "Invalid moderation note",
+        details: parsed.error.flatten(),
+      });
+      return;
+    }
+
+    const event = await db.transaction(async (tx) => {
+      const [report] = await tx
+        .select({ id: reportsTable.id, publicId: reportsTable.publicId })
+        .from(reportsTable)
+        .where(eq(reportsTable.publicId, req.params.publicId))
+        .limit(1);
+
+      if (!report) return null;
+
+      const [created] = await tx
+        .insert(moderationEventsTable)
+        .values({
+          reportId: report.id,
+          eventType: "note_added",
+          actorLabel: parsed.data.actorLabel,
+          note: parsed.data.note,
+          metadata: { publicId: report.publicId },
+        })
+        .returning();
+
+      return created;
+    });
+
+    if (!event) {
+      res.status(404).json({ error: "Report not found" });
+      return;
+    }
+
+    res.status(201).json({ event: toModerationEvent(event) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminReportsRouter.patch("/admin/reports/:publicId/status", async (req, res, next) => {
+  try {
+    const parsed = moderationStatusChangeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "Invalid status change",
+        details: parsed.error.flatten(),
+      });
+      return;
+    }
+
+    const result = await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select()
+        .from(reportsTable)
+        .where(eq(reportsTable.publicId, req.params.publicId))
+        .limit(1);
+
+      if (!current) return null;
+      if (current.status === parsed.data.status) return current;
+
+      const now = new Date();
+      const [updated] = await tx
+        .update(reportsTable)
+        .set({ status: parsed.data.status, updatedAt: now })
+        .where(eq(reportsTable.id, current.id))
+        .returning();
+
+      await tx.insert(moderationEventsTable).values({
+        reportId: current.id,
+        eventType: "case_status_changed",
+        actorLabel: parsed.data.actorLabel,
+        note: parsed.data.note?.trim() || null,
+        previousValue: current.status,
+        newValue: parsed.data.status,
+        metadata: { publicId: current.publicId },
+      });
+
+      return updated;
+    });
+
+    if (!result) {
+      res.status(404).json({ error: "Report not found" });
+      return;
+    }
+
+    res.json({ report: toAdminReport(result) });
   } catch (error) {
     next(error);
   }
@@ -95,37 +196,55 @@ adminReportsRouter.patch("/admin/reports/:publicId/status", async (req, res, nex
 
 adminReportsRouter.patch("/admin/reports/:publicId/publication", async (req, res, next) => {
   try {
-    const requestedStatus = req.body?.publicationStatus;
-
-    if (
-      typeof requestedStatus !== "string" ||
-      !(PUBLICATION_STATUSES as readonly string[]).includes(requestedStatus)
-    ) {
+    const parsed = moderationPublicationChangeSchema.safeParse(req.body);
+    if (!parsed.success) {
       res.status(400).json({
-        error: "Invalid publication status",
-        allowedPublicationStatuses: PUBLICATION_STATUSES,
+        error: "Invalid publication change",
+        details: parsed.error.flatten(),
       });
       return;
     }
 
-    const publicationStatus = requestedStatus as PublicationStatus;
-    const now = new Date();
-    const [updated] = await db
-      .update(reportsTable)
-      .set({
-        publicationStatus,
-        publishedAt: publicationStatus === "approved" ? now : null,
-        updatedAt: now,
-      })
-      .where(eq(reportsTable.publicId, req.params.publicId))
-      .returning();
+    const result = await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select()
+        .from(reportsTable)
+        .where(eq(reportsTable.publicId, req.params.publicId))
+        .limit(1);
 
-    if (!updated) {
+      if (!current) return null;
+      if (current.publicationStatus === parsed.data.publicationStatus) return current;
+
+      const now = new Date();
+      const [updated] = await tx
+        .update(reportsTable)
+        .set({
+          publicationStatus: parsed.data.publicationStatus,
+          publishedAt: parsed.data.publicationStatus === "approved" ? now : null,
+          updatedAt: now,
+        })
+        .where(eq(reportsTable.id, current.id))
+        .returning();
+
+      await tx.insert(moderationEventsTable).values({
+        reportId: current.id,
+        eventType: "publication_status_changed",
+        actorLabel: parsed.data.actorLabel,
+        note: parsed.data.note?.trim() || null,
+        previousValue: current.publicationStatus,
+        newValue: parsed.data.publicationStatus,
+        metadata: { publicId: current.publicId },
+      });
+
+      return updated;
+    });
+
+    if (!result) {
       res.status(404).json({ error: "Report not found" });
       return;
     }
 
-    res.json({ report: toAdminReport(updated) });
+    res.json({ report: toAdminReport(result) });
   } catch (error) {
     next(error);
   }

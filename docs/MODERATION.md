@@ -51,6 +51,35 @@ Publication status controls public visibility:
 
 Changing a case to `routed` or `resolved` does not publish it. A moderator must separately approve publication.
 
+## Audit history
+
+Each new report starts with a `report_submitted` event created in the same database transaction as the report.
+
+The application appends a moderation event whenever a reviewer:
+
+- changes case status
+- changes publication status
+- adds a standalone reviewer note
+
+Each event records:
+
+- timestamp
+- event type
+- reviewer label
+- optional rationale or note
+- previous and new values when applicable
+- the report public UUID in private event metadata
+
+Report changes and their matching audit events are committed in one database transaction. If either operation fails, neither is committed.
+
+The API exposes no update or delete route for moderation events. They are append-only at the application layer. Direct database administrators still retain database-level power, so production database access must remain tightly controlled and logged.
+
+## Reviewer identity limitation
+
+The current reviewer label is entered by the reviewer and used with a shared `ADMIN_API_KEY`. It improves accountability within a small trusted group, but it is not verified individual identity.
+
+Before wider organizational use, replace the shared key with named accounts, individual authentication, role-based permissions, session revocation, and server-derived actor identity.
+
 ## Protected endpoints
 
 All moderation endpoints require:
@@ -63,6 +92,8 @@ Available endpoints:
 
 ```text
 GET   /api/admin/reports
+GET   /api/admin/reports/:publicId/events
+POST  /api/admin/reports/:publicId/notes
 PATCH /api/admin/reports/:publicId/status
 PATCH /api/admin/reports/:publicId/publication
 ```
@@ -89,8 +120,16 @@ Public responses must not contain:
 - reporter contact information
 - precise address or cross-street description
 - moderator credential
+- reviewer labels or notes
+- moderation event history
 - private review metadata
 
-## Current authentication limitation
+## Database deployment
 
-`ADMIN_API_KEY` is appropriate only for a small, trusted review group during the initial deployment. Before broad organizational use, replace the shared key with named administrator accounts, role-based permissions, revocation, and immutable audit events.
+This lifecycle requires the `moderation_events` table and `moderation_event_type` enum. After setting the production `DATABASE_URL`, update the Neon schema with:
+
+```bash
+pnpm --filter @workspace/db push
+```
+
+New reports receive an initial submission event automatically. Reports created before this schema is deployed will not have a synthetic historical submission event unless a deliberate, reviewed backfill is performed.

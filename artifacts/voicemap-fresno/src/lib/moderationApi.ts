@@ -15,8 +15,16 @@ export const PUBLICATION_STATUSES = [
   "rejected",
 ] as const;
 
+export const MODERATION_EVENT_TYPES = [
+  "report_submitted",
+  "case_status_changed",
+  "publication_status_changed",
+  "note_added",
+] as const;
+
 export type ModerationStatus = (typeof MODERATION_STATUSES)[number];
 export type PublicationStatus = (typeof PUBLICATION_STATUSES)[number];
+export type ModerationEventType = (typeof MODERATION_EVENT_TYPES)[number];
 
 export type AdminReport = Omit<Report, "contactInfo" | "publicId" | "status"> & {
   publicId: string;
@@ -25,6 +33,22 @@ export type AdminReport = Omit<Report, "contactInfo" | "publicId" | "status"> & 
   reporterContact: string | null;
   status: ModerationStatus;
   publicationStatus: PublicationStatus;
+};
+
+export type ModerationEvent = {
+  id: string;
+  createdAt: string;
+  eventType: ModerationEventType;
+  actorLabel: string;
+  note: string | null;
+  previousValue: string | null;
+  newValue: string | null;
+  metadata: Record<string, string | number | boolean | null>;
+};
+
+type ChangeContext = {
+  actorLabel: string;
+  note?: string;
 };
 
 function apiUrl(path: string): string {
@@ -62,17 +86,46 @@ export async function getAdminReports(adminKey: string, limit = 100): Promise<Ad
   return payload.reports;
 }
 
+export async function getModerationEvents(
+  adminKey: string,
+  publicId: string,
+): Promise<ModerationEvent[]> {
+  const payload = await request<{ events: ModerationEvent[] }>(
+    `/admin/reports/${encodeURIComponent(publicId)}/events`,
+    adminKey,
+  );
+  return payload.events;
+}
+
+export async function addModerationNote(
+  adminKey: string,
+  publicId: string,
+  actorLabel: string,
+  note: string,
+): Promise<ModerationEvent> {
+  const payload = await request<{ event: ModerationEvent }>(
+    `/admin/reports/${encodeURIComponent(publicId)}/notes`,
+    adminKey,
+    {
+      method: "POST",
+      body: JSON.stringify({ actorLabel, note }),
+    },
+  );
+  return payload.event;
+}
+
 export async function updateAdminReportStatus(
   adminKey: string,
   publicId: string,
   status: ModerationStatus,
+  context: ChangeContext,
 ): Promise<AdminReport> {
   const payload = await request<{ report: AdminReport }>(
     `/admin/reports/${encodeURIComponent(publicId)}/status`,
     adminKey,
     {
       method: "PATCH",
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, ...context }),
     },
   );
   return payload.report;
@@ -82,13 +135,14 @@ export async function updateAdminPublicationStatus(
   adminKey: string,
   publicId: string,
   publicationStatus: PublicationStatus,
+  context: ChangeContext,
 ): Promise<AdminReport> {
   const payload = await request<{ report: AdminReport }>(
     `/admin/reports/${encodeURIComponent(publicId)}/publication`,
     adminKey,
     {
       method: "PATCH",
-      body: JSON.stringify({ publicationStatus }),
+      body: JSON.stringify({ publicationStatus, ...context }),
     },
   );
   return payload.report;
