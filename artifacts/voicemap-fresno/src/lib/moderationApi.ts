@@ -9,13 +9,22 @@ export const MODERATION_STATUSES = [
   "resolved",
 ] as const;
 
+export const PUBLICATION_STATUSES = [
+  "pending",
+  "approved",
+  "rejected",
+] as const;
+
 export type ModerationStatus = (typeof MODERATION_STATUSES)[number];
+export type PublicationStatus = (typeof PUBLICATION_STATUSES)[number];
 
 export type AdminReport = Omit<Report, "contactInfo" | "publicId" | "status"> & {
   publicId: string;
   updatedAt: string;
+  publishedAt: string | null;
   reporterContact: string | null;
   status: ModerationStatus;
+  publicationStatus: PublicationStatus;
 };
 
 function apiUrl(path: string): string {
@@ -64,6 +73,22 @@ export async function updateAdminReportStatus(
     {
       method: "PATCH",
       body: JSON.stringify({ status }),
+    },
+  );
+  return payload.report;
+}
+
+export async function updateAdminPublicationStatus(
+  adminKey: string,
+  publicId: string,
+  publicationStatus: PublicationStatus,
+): Promise<AdminReport> {
+  const payload = await request<{ report: AdminReport }>(
+    `/admin/reports/${encodeURIComponent(publicId)}/publication`,
+    adminKey,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ publicationStatus }),
     },
   );
   return payload.report;
