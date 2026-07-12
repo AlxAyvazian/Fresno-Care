@@ -27,11 +27,11 @@ function ActionButton({
 }) {
   const styles = {
     primary:
-      "border-white/45 bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.35),0_12px_30px_rgba(0,151,162,.25),0_0_28px_rgba(37,218,222,.12)] hover:brightness-105",
+      "border-white/55 bg-[#6E9FCB] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.4),0_12px_28px_rgba(83,126,165,.26)] hover:bg-[#5F91BE]",
     glass:
-      "border-white/75 bg-white/35 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.8),0_10px_26px_rgba(24,75,110,.09)] hover:bg-white/48 dark:bg-white/5 dark:hover:bg-white/10",
+      "border-white/80 bg-[#FDFAE0]/55 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.85),0_10px_24px_rgba(84,112,139,.09)] hover:bg-[#FDFAE0]/75 dark:bg-white/5 dark:hover:bg-white/10",
     outline:
-      "border-primary/30 bg-primary/5 text-primary shadow-[inset_0_1px_0_rgba(255,255,255,.55),0_8px_22px_rgba(24,75,110,.06)] hover:bg-primary/10",
+      "border-[#8FBAE1]/55 bg-[#CAE7FF]/35 text-[#4F7699] shadow-[inset_0_1px_0_rgba(255,255,255,.62),0_8px_20px_rgba(84,112,139,.06)] hover:bg-[#CAE7FF]/55",
   };
 
   return (
@@ -105,23 +105,23 @@ export default function LandingPage() {
       <div className="liquid-orb liquid-orb--one" aria-hidden="true" />
       <div className="liquid-orb liquid-orb--two" aria-hidden="true" />
 
-      <div className="relative z-10 mx-auto max-w-7xl space-y-6">
+      <div className="relative z-10 mx-auto max-w-7xl space-y-8">
         <section className="glass-card glass-card--hero luminous-edge rounded-[2.2rem] p-5 sm:p-7 lg:p-9">
-          <div className="grid items-stretch gap-8 lg:grid-cols-[.9fr_1.1fr]">
-            <div className="flex flex-col justify-center px-2 py-4 sm:px-4 lg:py-10">
-              <div className="liquid-badge mb-6">
+          <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,.82fr)_minmax(430px,1.18fr)]">
+            <div className="px-2 py-4 sm:px-4 lg:py-8">
+              <div className="liquid-badge mb-5">
                 <Shield size={14} /> Independent public-interest tool
               </div>
 
-              <h1 className="max-w-2xl font-heading text-5xl font-bold leading-[.98] tracking-[-0.055em] sm:text-6xl lg:text-7xl">
+              <h1 className="max-w-2xl font-heading text-4xl font-extrabold leading-[1.02] sm:text-5xl lg:text-6xl">
                 Give Fresno’s stray animals a visible record.
               </h1>
 
-              <p className="mt-6 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
+              <p className="mt-5 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
                 Document animal-welfare concerns, preserve evidence, and reveal neighborhood patterns without publishing precise locations.
               </p>
 
-              <div className="mt-8 flex flex-wrap gap-3">
+              <div className="mt-7 flex flex-wrap gap-3">
                 <ActionButton href="/submit" variant="primary" dataTestId="button-document-concern">
                   Document a concern <ArrowRight size={16} />
                 </ActionButton>
@@ -133,21 +133,21 @@ export default function LandingPage() {
                 </ActionButton>
               </div>
 
-              <div className="mt-10 grid grid-cols-3 gap-3">
+              <div className="mt-8 grid max-w-lg grid-cols-3 gap-3">
                 {[
                   ["Approved", summary.reports],
                   ["Urgent", summary.urgent],
                   ["Areas", summary.neighborhoods],
                 ].map(([label, value]) => (
-                  <div key={label} className="rounded-2xl border border-white/55 bg-white/24 p-3 backdrop-blur-xl dark:bg-white/5">
-                    <p className="font-heading text-2xl font-bold tracking-[-0.04em]">{value}</p>
-                    <p className="mt-1 text-[10px] font-semibold uppercase tracking-[.14em] text-muted-foreground">{label}</p>
+                  <div key={label} className="rounded-2xl border border-white/70 bg-[#FDFAE0]/42 p-3 backdrop-blur-xl">
+                    <p className="font-heading text-2xl font-extrabold">{value}</p>
+                    <p className="mt-1 text-[10px] font-bold uppercase tracking-[.14em] text-muted-foreground">{label}</p>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="glass-card glass-card--map rounded-[1.8rem] p-3">
+            <div className="glass-card glass-card--map self-start rounded-[1.8rem] p-3">
               <div className="flex items-center justify-between gap-4 px-3 pb-3 pt-1">
                 <div>
                   <div className="flex items-center gap-2 text-sm font-semibold">
@@ -165,19 +165,31 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-3">
-          {featureCards.map(({ icon: Icon, title, description }, index) => (
-            <article key={title} className="glass-card rounded-3xl p-6">
-              <div className="flex items-start justify-between gap-5">
-                <span className="empty-glass__icon h-12 w-12 rounded-2xl">
-                  <Icon size={21} />
-                </span>
-                <span className="text-xs font-semibold tracking-[.16em] text-muted-foreground">0{index + 1}</span>
-              </div>
-              <h2 className="mt-6 font-heading text-xl font-bold tracking-[-0.03em]">{title}</h2>
-              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{description}</p>
-            </article>
-          ))}
+        <section>
+          <div className="mb-5 flex flex-col gap-2 px-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-xs font-extrabold uppercase tracking-[.16em] text-primary">How it works</p>
+              <h2 className="mt-2 font-heading text-3xl font-extrabold">One clear workflow from observation to action.</h2>
+            </div>
+            <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
+              Each step is separated so residents can document, organize, and share information without confusing private and public data.
+            </p>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            {featureCards.map(({ icon: Icon, title, description }, index) => (
+              <article key={title} className="glass-card rounded-3xl p-6">
+                <div className="flex items-start justify-between gap-5">
+                  <span className="empty-glass__icon h-12 w-12 rounded-2xl">
+                    <Icon size={21} />
+                  </span>
+                  <span className="text-xs font-extrabold tracking-[.16em] text-muted-foreground">0{index + 1}</span>
+                </div>
+                <h3 className="mt-6 font-heading text-xl font-extrabold">{title}</h3>
+                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{description}</p>
+              </article>
+            ))}
+          </div>
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[1.15fr_.85fr]">
@@ -185,7 +197,7 @@ export default function LandingPage() {
             <div className="liquid-badge">
               <Radio size={14} /> Fast action
             </div>
-            <h2 className="mt-5 font-heading text-3xl font-bold tracking-[-0.04em]">Turn one observation into an organized record.</h2>
+            <h2 className="mt-5 font-heading text-3xl font-extrabold">Turn one observation into an organized record.</h2>
             <div className="mt-6 grid gap-3 sm:grid-cols-3">
               {[
                 ["Nearby alerts", "Follow neighborhoods and see matching approved reports.", "/watch"],
@@ -193,7 +205,7 @@ export default function LandingPage() {
                 ["Evidence checklist", "Confirm that dates, details, and contact attempts are captured.", "/tools"],
               ].map(([title, description, href]) => (
                 <Link key={title} href={href}>
-                  <span className="block h-full cursor-pointer rounded-2xl border border-white/60 bg-white/25 p-4 backdrop-blur-xl transition-all hover:-translate-y-0.5 hover:bg-white/42 dark:bg-white/5 dark:hover:bg-white/10">
+                  <span className="block h-full cursor-pointer rounded-2xl border border-white/65 bg-[#FDFAE0]/36 p-4 backdrop-blur-xl transition-all hover:-translate-y-0.5 hover:bg-[#FDFAE0]/56 dark:bg-white/5 dark:hover:bg-white/10">
                     <strong className="text-sm">{title}</strong>
                     <span className="mt-2 block text-xs leading-relaxed text-muted-foreground">{description}</span>
                   </span>
@@ -204,7 +216,7 @@ export default function LandingPage() {
 
           <article className="glass-card luminous-edge rounded-[2rem] p-7 sm:p-9">
             <Sparkles size={22} className="text-primary" />
-            <h2 className="mt-5 font-heading text-2xl font-bold tracking-[-0.035em]">Responsible by design</h2>
+            <h2 className="mt-5 font-heading text-2xl font-extrabold">Responsible by design</h2>
             <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
               Reports remain private until reviewed. Public views use neighborhood-level placement, exclude reporter contact details, and never present allegations as established facts.
             </p>

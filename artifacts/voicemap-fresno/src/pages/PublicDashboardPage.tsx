@@ -77,62 +77,77 @@ export default function PublicDashboardPage() {
       <div className="liquid-orb liquid-orb--two" aria-hidden="true" />
 
       <div className="relative z-10 mx-auto max-w-7xl space-y-6">
-        <section className="glass-card glass-card--hero luminous-edge rounded-[2rem] p-7 sm:p-10">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <div className="liquid-badge mb-4">
+        <section className="glass-card glass-card--hero luminous-edge rounded-[2.1rem] p-4 sm:p-5">
+          <div className="grid items-start gap-5 lg:grid-cols-[minmax(300px,.7fr)_minmax(0,1.3fr)]">
+            <div className="rounded-[1.7rem] border border-white/65 bg-[#FDFAE0]/34 p-6 sm:p-8">
+              <div className="liquid-badge mb-5">
                 <ShieldCheck size={14} /> Public neighborhood intelligence
               </div>
-              <h1 className="max-w-4xl font-heading text-4xl font-bold tracking-[-0.04em] sm:text-5xl">
-                Fresno animal concerns, visible on the map.
+
+              <h1 className="font-heading text-4xl font-extrabold leading-[1.04] sm:text-5xl">
+                Fresno animal concerns, organized on one map.
               </h1>
-              <p className="mt-4 max-w-3xl text-sm leading-relaxed text-muted-foreground sm:text-base">
-                Approved reports appear at neighborhood level only. Pins show documented concerns, not legal findings or confirmed wrongdoing.
+
+              <p className="mt-5 text-sm leading-relaxed text-muted-foreground sm:text-base">
+                Approved reports appear at neighborhood level only. Pins show documented concerns—not legal findings or confirmed wrongdoing.
               </p>
-            </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="liquid-status">
-                <span className={`liquid-status__dot ${source === "public-api" ? "is-live" : ""}`} />
-                {source === "public-api"
-                  ? "Public database connected"
-                  : source === "device"
-                    ? "Device-only fallback"
-                    : "Awaiting approved reports"}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void loadReports()}
-                disabled={loading}
-                className="liquid-button shrink-0 rounded-2xl gap-2"
-              >
-                <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh
-              </Button>
-            </div>
-          </div>
-        </section>
+              <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:flex-wrap lg:flex-col lg:items-start">
+                <span className="liquid-status">
+                  <span className={`liquid-status__dot ${source === "public-api" ? "is-live" : ""}`} />
+                  {source === "public-api"
+                    ? "Public database connected"
+                    : source === "device"
+                      ? "Device-only fallback"
+                      : "Awaiting approved reports"}
+                </span>
 
-        <section className="glass-card glass-card--map rounded-[2rem] p-3 sm:p-4">
-          <div className="flex items-center justify-between gap-4 px-3 pb-3 pt-1 sm:px-4">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <Map size={17} className="text-primary" /> Community map
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void loadReports()}
+                  disabled={loading}
+                  className="liquid-button rounded-2xl gap-2"
+                >
+                  <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh map
+                </Button>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Stable neighborhood-level placement protects precise locations.
-              </p>
+
+              <div className="mt-8 grid grid-cols-2 gap-3">
+                {[
+                  ["Approved", stats.reports],
+                  ["Neighborhoods", stats.neighborhoods],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-2xl border border-white/70 bg-[#FAEDCD]/42 p-4">
+                    <p className="font-heading text-3xl font-extrabold">{value}</p>
+                    <p className="mt-1 text-[10px] font-extrabold uppercase tracking-[.14em] text-muted-foreground">{label}</p>
+                  </div>
+                ))}
+              </div>
             </div>
-            <span className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
-              <Sparkles size={14} className="text-primary" /> Live approved data
-            </span>
+
+            <div className="glass-card glass-card--map self-start rounded-[1.75rem] p-3 sm:p-4">
+              <div className="flex flex-col gap-3 px-3 pb-3 pt-1 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <Map size={17} className="text-primary" /> Community map
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Colored neighborhood context with privacy-safe report placement.
+                  </p>
+                </div>
+                <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Sparkles size={14} className="text-primary" /> Live approved data
+                </span>
+              </div>
+              <PublicFresnoMap reports={reports} />
+            </div>
           </div>
-          <PublicFresnoMap reports={reports} />
         </section>
 
         {error && (
           <section className="glass-alert flex items-start gap-3 rounded-2xl p-4 text-sm">
-            <AlertCircle size={18} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-300" />
+            <AlertCircle size={18} className="mt-0.5 shrink-0 text-amber-700 dark:text-amber-300" />
             <div>
               <p className="font-semibold">The frontend cannot reach the public API.</p>
               <p className="mt-1 text-muted-foreground">{error}</p>
@@ -140,31 +155,40 @@ export default function PublicDashboardPage() {
           </section>
         )}
 
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            ["Approved reports", stats.reports],
-            ["Animals observed", stats.animals],
-            ["Immediate concerns", stats.urgent],
-            ["Neighborhoods", stats.neighborhoods],
-          ].map(([label, value], index) => (
-            <div key={label} className="glass-card stat-glass rounded-3xl p-5">
-              <div className="stat-glass__glow" aria-hidden="true" />
-              <p className="relative text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                {label}
-              </p>
-              <p className="relative mt-3 font-heading text-4xl font-bold tracking-[-0.05em]">{value}</p>
-              <span className="relative mt-4 block text-[11px] text-muted-foreground">
-                0{index + 1} / live summary
-              </span>
+        <section>
+          <div className="mb-4 flex items-end justify-between gap-4 px-1">
+            <div>
+              <p className="text-xs font-extrabold uppercase tracking-[.16em] text-primary">Live summary</p>
+              <h2 className="mt-1 font-heading text-2xl font-extrabold">What the approved data currently shows</h2>
             </div>
-          ))}
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              ["Approved reports", stats.reports],
+              ["Animals observed", stats.animals],
+              ["Immediate concerns", stats.urgent],
+              ["Neighborhoods", stats.neighborhoods],
+            ].map(([label, value], index) => (
+              <div key={label} className="glass-card stat-glass rounded-3xl p-5">
+                <div className="stat-glass__glow" aria-hidden="true" />
+                <p className="relative text-xs font-extrabold uppercase tracking-[0.16em] text-muted-foreground">
+                  {label}
+                </p>
+                <p className="relative mt-3 font-heading text-4xl font-extrabold">{value}</p>
+                <span className="relative mt-4 block text-[11px] text-muted-foreground">
+                  0{index + 1} / live summary
+                </span>
+              </div>
+            ))}
+          </div>
         </section>
 
         <section className="space-y-4">
           <div className="flex items-end justify-between gap-4 px-1">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Approved reports</p>
-              <h2 className="mt-1 font-heading text-2xl font-bold tracking-[-0.03em]">Community record</h2>
+              <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-primary">Approved reports</p>
+              <h2 className="mt-1 font-heading text-2xl font-extrabold">Community record</h2>
             </div>
             <span className="text-xs text-muted-foreground">Precise addresses remain private</span>
           </div>
@@ -178,9 +202,9 @@ export default function PublicDashboardPage() {
               <div className="empty-glass__icon">
                 <PawPrint size={30} />
               </div>
-              <h3 className="mt-5 font-heading text-2xl font-bold">No approved reports yet</h3>
+              <h3 className="mt-5 font-heading text-2xl font-extrabold">No approved reports yet</h3>
               <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
-                The map is active. Reports will illuminate after private moderation approves neighborhood-level publication.
+                The map is active. Reports will appear after private moderation approves neighborhood-level publication.
               </p>
             </div>
           ) : (
@@ -200,7 +224,7 @@ export default function PublicDashboardPage() {
                           <span className="liquid-chip liquid-chip--danger">Immediate concern</span>
                         )}
                       </div>
-                      <h3 className="mt-5 font-heading text-xl font-bold">{report.neighborhood}</h3>
+                      <h3 className="mt-5 font-heading text-xl font-extrabold">{report.neighborhood}</h3>
                       <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
                         <MapPin size={14} /> Neighborhood-level location
                       </div>

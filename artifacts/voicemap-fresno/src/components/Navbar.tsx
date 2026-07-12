@@ -41,16 +41,16 @@ export function Navbar() {
       <nav className="liquid-nav relative flex min-h-16 items-center justify-between px-4 sm:px-5">
         <Link href="/">
           <span className="flex cursor-pointer items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/50 bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.35),0_7px_22px_rgba(2,147,158,.28),0_0_20px_rgba(44,221,224,.12)]">
+            <span className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/55 bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.4),0_7px_22px_rgba(83,126,165,.28),0_0_18px_rgba(143,186,225,.2)]">
               <PawPrint size={17} />
             </span>
-            <span className="font-heading text-[16px] font-bold tracking-[-0.02em] sm:text-[17px]">
+            <span className="font-heading text-[16px] font-extrabold sm:text-[17px]">
               VoiceMap <span className="text-primary">Fresno</span>
             </span>
           </span>
         </Link>
 
-        <div className="hidden items-center gap-1 text-sm font-medium md:flex">
+        <div className="hidden items-center gap-1 text-sm font-semibold md:flex">
           {PRIMARY_LINKS.map(({ href, label }) => (
             <Link key={href} href={href}>
               <span className={`nav-pill cursor-pointer whitespace-nowrap ${location === href ? "is-active" : ""}`}>
@@ -78,10 +78,10 @@ export function Navbar() {
                 {MORE_LINKS.map(({ href, label, icon }) => (
                   <Link key={href} href={href}>
                     <span
-                      className={`flex cursor-pointer items-center gap-2.5 rounded-2xl px-4 py-3 text-sm font-medium transition-colors ${
+                      className={`flex cursor-pointer items-center gap-2.5 rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
                         location === href
                           ? "bg-primary text-primary-foreground"
-                          : "text-muted-foreground hover:bg-white/30 hover:text-foreground dark:hover:bg-white/5"
+                          : "text-muted-foreground hover:bg-[#FDFAE0]/45 hover:text-foreground dark:hover:bg-white/5"
                       }`}
                       onClick={() => setMoreOpen(false)}
                     >
@@ -122,10 +122,10 @@ export function Navbar() {
             {ALL_LINKS.map(({ href, label }) => (
               <Link key={href} href={href}>
                 <span
-                  className={`block cursor-pointer rounded-2xl px-4 py-3 text-sm font-medium transition-colors ${
+                  className={`block cursor-pointer rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
                     location === href
                       ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:bg-white/30 hover:text-foreground dark:hover:bg-white/5"
+                      : "text-muted-foreground hover:bg-[#FDFAE0]/45 hover:text-foreground dark:hover:bg-white/5"
                   }`}
                   onClick={() => setMenuOpen(false)}
                 >
