@@ -71,10 +71,6 @@ function toModerationEvent(event: typeof moderationEventsTable.$inferSelect) {
   };
 }
 
-function validationError(res: Parameters<IRouter["use"]>[0] extends never ? never : any, details: unknown) {
-  res.status(400).json({ error: "Invalid moderation request", details });
-}
-
 adminReportsRouter.use(requireAdmin);
 
 adminReportsRouter.get("/admin/reports", async (req, res, next) => {
