@@ -11,7 +11,6 @@ function toPublicReport(report: typeof reportsTable.$inferSelect) {
     createdAt: report.createdAt,
     animalType: report.animalType,
     count: report.count,
-    location: report.location,
     neighborhood: report.neighborhood,
     dateObserved: report.dateObserved,
     timeObserved: report.timeObserved,
