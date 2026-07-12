@@ -43,21 +43,27 @@ const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 const STATUS_STYLE = {
   lost: {
     label: "LOST PET",
-    accent: "#B24F4B",
-    pale: "#F7E4DE",
+    shortLabel: "Lost",
+    accent: "#B85F55",
+    soft: "#F8E2AA",
     message: "Please help bring this pet home",
+    locationLabel: "Last seen",
   },
   found: {
     label: "FOUND PET",
-    accent: "#326F8E",
-    pale: "#DDECF2",
+    shortLabel: "Found",
+    accent: "#426F9D",
+    soft: "#CAE7FF",
     message: "Help identify this pet's family",
+    locationLabel: "Found near",
   },
   reunited: {
     label: "REUNITED",
-    accent: "#39775F",
-    pale: "#DDECE4",
+    shortLabel: "Reunited",
+    accent: "#4D8066",
+    soft: "#E9F2E8",
     message: "This pet has returned home",
+    locationLabel: "Location",
   },
 } as const;
 
@@ -71,8 +77,17 @@ function formatDate(value: string) {
   });
 }
 
-function makeTearStrips(phone: string, name: string, count = 8) {
+function makeTearStrips(phone: string, name: string, count = 9) {
   return Array.from({ length: count }, (_, index) => ({ id: index, phone, name }));
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "118px 1fr", gap: 12, borderBottom: "1px solid #DCE7EE", padding: "8px 0", fontSize: 13 }}>
+      <strong style={{ color: "#48647E" }}>{label}</strong>
+      <span style={{ color: "#1F3650", fontWeight: 650 }}>{value}</span>
+    </div>
+  );
 }
 
 function PrintFlyer({ data }: { data: FlyerData }) {
@@ -80,10 +95,11 @@ function PrintFlyer({ data }: { data: FlyerData }) {
   const strips = makeTearStrips(data.contactPhone, data.petName || "Pet");
   const fallbackVariant = artForPet(data.petType, data.status === "found");
   const primaryContact = data.contactPhone || data.contactEmail || "Contact information not provided";
+  const petTitle = data.petName || `${data.petType === "other" ? "Pet" : data.petType} needs help`;
 
   const detailRows = [
     ["Breed", data.breed || "Not specified"],
-    ["Color / markings", data.color || "Not specified"],
+    ["Color", data.color || "Not specified"],
     ["Date", formatDate(data.dateSeen)],
     ["Microchip", data.microchipped ? "Yes — please scan" : "Unknown"],
     ["Collar", data.collarDescription || "Not specified"],
@@ -93,129 +109,93 @@ function PrintFlyer({ data }: { data: FlyerData }) {
     <div
       id="print-flyer"
       style={{
-        width: 680,
+        width: 720,
         overflow: "hidden",
-        border: "2px solid #294866",
-        borderRadius: 18,
-        background: "#FDFAE0",
-        color: "#243A52",
+        border: "1px solid #C9DCE9",
+        borderRadius: 24,
+        background: "linear-gradient(180deg, #FFFFFF 0%, #FDFAE0 100%)",
+        color: "#1F3650",
         fontFamily: "'DM Sans', Arial, sans-serif",
-        boxShadow: "0 18px 50px rgba(24, 44, 67, .18)",
+        boxShadow: "0 18px 48px rgba(31, 54, 80, .14)",
       }}
     >
-      <header
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr auto",
-          alignItems: "center",
-          gap: 20,
-          padding: "24px 28px",
-          color: "#F8FBFF",
-          background: "linear-gradient(135deg, #1F3650 0%, #315F89 72%, #477DAA 100%)",
-          borderBottom: `8px solid ${status.accent}`,
-        }}
-      >
-        <div>
-          <div
-            style={{
-              display: "inline-block",
-              marginBottom: 10,
-              border: "1px solid rgba(255,255,255,.45)",
-              borderRadius: 999,
-              padding: "6px 11px",
-              color: "#1F3650",
-              background: "#F8E2AA",
-              fontSize: 12,
-              fontWeight: 900,
-              letterSpacing: 1.6,
-            }}
-          >
-            {status.label}
+      <header style={{ padding: "28px 32px 20px", background: "linear-gradient(135deg, #FFFFFF 0%, #FDFAE0 52%, #CAE7FF 100%)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20 }}>
+          <div>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                borderRadius: 999,
+                padding: "7px 12px",
+                background: status.soft,
+                color: "#1F3650",
+                fontSize: 12,
+                fontWeight: 900,
+                letterSpacing: 1.8,
+              }}
+            >
+              {status.label}
+            </div>
+            <div style={{ marginTop: 12, fontFamily: "Manrope, Arial, sans-serif", fontSize: 44, fontWeight: 900, lineHeight: 1 }}>
+              {petTitle}
+            </div>
+            <div style={{ marginTop: 9, color: "#55718B", fontSize: 16, fontWeight: 700 }}>{status.message}</div>
           </div>
-          <div style={{ fontFamily: "Manrope, Arial, sans-serif", fontSize: 38, fontWeight: 900, lineHeight: 1.05 }}>
-            {data.petName || `${data.petType === "other" ? "Pet" : data.petType} needs help`}
-          </div>
-          <div style={{ marginTop: 8, color: "#DDEBFA", fontSize: 15, fontWeight: 650 }}>{status.message}</div>
+          {data.reward && (
+            <div
+              style={{
+                minWidth: 128,
+                border: `2px solid ${status.accent}`,
+                borderRadius: 20,
+                padding: "14px 18px",
+                textAlign: "center",
+                background: "#FFFFFF",
+                color: "#1F3650",
+              }}
+            >
+              <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1.6, color: "#5A7084" }}>REWARD</div>
+              <div style={{ marginTop: 3, fontSize: 27, fontWeight: 900 }}>{data.reward}</div>
+            </div>
+          )}
         </div>
-        {data.reward && (
-          <div
-            style={{
-              minWidth: 120,
-              border: "1px solid rgba(255,255,255,.45)",
-              borderRadius: 16,
-              padding: "12px 16px",
-              textAlign: "center",
-              color: "#263A50",
-              background: "#F8E2AA",
-            }}
-          >
-            <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1.5 }}>REWARD</div>
-            <div style={{ marginTop: 2, fontSize: 25, fontWeight: 900 }}>{data.reward}</div>
-          </div>
-        )}
       </header>
 
-      <main style={{ padding: 22 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "270px 1fr", gap: 18 }}>
+      <main style={{ padding: "24px 30px 26px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "290px 1fr", gap: 22, alignItems: "stretch" }}>
           <div
             style={{
-              minHeight: 300,
+              minHeight: 310,
               overflow: "hidden",
-              border: "1px solid #A8C7DF",
-              borderRadius: 16,
-              background: "linear-gradient(145deg, #CAE7FF, #FAEDCD)",
+              border: "1px solid #C6DCEB",
+              borderRadius: 22,
+              background: "linear-gradient(145deg, #F9FCFF, #FDFAE0)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
             }}
           >
             {data.photoBase64 ? (
-              <img src={data.photoBase64} alt="Pet" style={{ width: "100%", height: 300, objectFit: "cover" }} />
+              <img src={data.photoBase64} alt="Pet" style={{ width: "100%", height: 310, objectFit: "cover" }} />
             ) : (
               <div style={{ display: "grid", placeItems: "center", padding: 18, textAlign: "center" }}>
                 <AnimalArt variant={fallbackVariant} size={190} />
-                <div style={{ marginTop: 6, color: "#546D86", fontSize: 11, fontWeight: 700 }}>Add a clear recent photo when possible</div>
+                <div style={{ marginTop: 10, color: "#627A91", fontSize: 12, fontWeight: 800 }}>Add a clear recent photo when possible</div>
               </div>
             )}
           </div>
 
-          <section
-            style={{
-              border: "1px solid #B7CCDD",
-              borderRadius: 16,
-              padding: 18,
-              background: "rgba(255,255,255,.62)",
-            }}
-          >
-            <div style={{ marginBottom: 12, fontFamily: "Manrope, Arial, sans-serif", fontSize: 18, fontWeight: 900 }}>
-              Identifying information
-            </div>
-            <div style={{ display: "grid", gap: 8 }}>
+          <section style={{ border: "1px solid #D8E5ED", borderRadius: 22, padding: "18px 20px", background: "rgba(255,255,255,.74)" }}>
+            <div style={{ marginBottom: 8, fontFamily: "Manrope, Arial, sans-serif", fontSize: 20, fontWeight: 900 }}>Identifying information</div>
+            <div>
               {detailRows.map(([label, value]) => (
-                <div
-                  key={label}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "112px 1fr",
-                    gap: 10,
-                    borderBottom: "1px solid #D8E3EA",
-                    paddingBottom: 7,
-                    fontSize: 12,
-                  }}
-                >
-                  <strong style={{ color: "#36536F" }}>{label}</strong>
-                  <span>{value}</span>
-                </div>
+                <DetailRow key={label} label={label} value={value} />
               ))}
             </div>
-
             {data.tags.length > 0 && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 13 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 14 }}>
                 {data.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    style={{ borderRadius: 999, padding: "4px 8px", background: "#DDEAF4", color: "#36536F", fontSize: 10, fontWeight: 800 }}
-                  >
+                  <span key={tag} style={{ borderRadius: 999, padding: "5px 9px", background: "#E8F2FA", color: "#426F9D", fontSize: 10, fontWeight: 900 }}>
                     {tag}
                   </span>
                 ))}
@@ -224,100 +204,49 @@ function PrintFlyer({ data }: { data: FlyerData }) {
           </section>
         </div>
 
-        <section
-          style={{
-            display: "grid",
-            gridTemplateColumns: "auto 1fr",
-            alignItems: "center",
-            gap: 12,
-            marginTop: 16,
-            borderRadius: 14,
-            padding: "14px 18px",
-            color: "#F7FBFF",
-            background: "#2B557D",
-          }}
-        >
-          <MapPin size={25} />
+        <section style={{ display: "grid", gridTemplateColumns: "auto 1fr", alignItems: "center", gap: 12, marginTop: 20, borderRadius: 18, padding: "16px 20px", color: "#FFFFFF", background: status.accent }}>
+          <MapPin size={26} />
           <div>
-            <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1.5, color: "#BBD8EE" }}>
-              {data.status === "found" ? "FOUND NEAR" : "LAST SEEN"}
-            </div>
-            <div style={{ marginTop: 2, fontSize: 17, fontWeight: 900 }}>
-              {data.lastSeen || data.neighborhood || "Location not provided"}
-            </div>
-            {data.neighborhood && data.lastSeen && <div style={{ marginTop: 2, fontSize: 12, color: "#D4E7F5" }}>{data.neighborhood}, Fresno, California</div>}
+            <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1.6, opacity: .82 }}>{status.locationLabel.toUpperCase()}</div>
+            <div style={{ marginTop: 2, fontSize: 19, fontWeight: 900 }}>{data.lastSeen || data.neighborhood || "Location not provided"}</div>
+            {data.neighborhood && data.lastSeen && <div style={{ marginTop: 3, fontSize: 12, opacity: .88 }}>{data.neighborhood}, Fresno, California</div>}
           </div>
         </section>
 
         {data.description && (
-          <section
-            style={{
-              marginTop: 14,
-              borderLeft: `5px solid ${status.accent}`,
-              borderRadius: 12,
-              padding: "12px 15px",
-              background: status.pale,
-              fontSize: 12,
-              lineHeight: 1.55,
-            }}
-          >
-            <strong style={{ display: "block", marginBottom: 4 }}>Important details</strong>
+          <section style={{ marginTop: 18, border: "1px solid #E7D0CC", borderLeft: `5px solid ${status.accent}`, borderRadius: 16, padding: "14px 17px", background: "#FFF3F0", fontSize: 13, lineHeight: 1.55 }}>
+            <strong style={{ display: "block", marginBottom: 5 }}>Important details</strong>
             {data.description}
           </section>
         )}
 
-        <section
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr auto",
-            alignItems: "center",
-            gap: 16,
-            marginTop: 16,
-            border: "2px solid #294866",
-            borderRadius: 15,
-            padding: "15px 18px",
-            background: "#F8E2AA",
-          }}
-        >
+        <section style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 16, marginTop: 18, border: "2px solid #426F9D", borderRadius: 18, padding: "17px 20px", background: "#FDFAE0" }}>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 7, color: "#294866", fontSize: 11, fontWeight: 900, letterSpacing: 1.2 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, color: "#426F9D", fontSize: 11, fontWeight: 900, letterSpacing: 1.25 }}>
               <Phone size={14} /> CONTACT WITH INFORMATION
             </div>
-            <div style={{ marginTop: 4, fontSize: 20, fontWeight: 900 }}>{primaryContact}</div>
-            {data.contactName && <div style={{ marginTop: 2, fontSize: 12 }}>{data.contactName}</div>}
-            {data.contactPhone && data.contactEmail && <div style={{ marginTop: 2, fontSize: 11 }}>{data.contactEmail}</div>}
+            <div style={{ marginTop: 4, fontSize: 23, fontWeight: 900 }}>{primaryContact}</div>
+            {data.contactName && <div style={{ marginTop: 3, fontSize: 13 }}>{data.contactName}</div>}
+            {data.contactPhone && data.contactEmail && <div style={{ marginTop: 3, fontSize: 11 }}>{data.contactEmail}</div>}
           </div>
           <div style={{ color: "#5B7187", fontSize: 10, textAlign: "right" }}>Please do not chase.<br />Photograph and report direction of travel.</div>
         </section>
       </main>
 
       {data.contactPhone && (
-        <div style={{ borderTop: "2px dashed #7993AA", padding: "9px 10px 11px", background: "#F6F0D7" }}>
-          <div style={{ marginBottom: 6, textAlign: "center", color: "#587087", fontSize: 9, fontWeight: 800, letterSpacing: 1.2 }}>TEAR-OFF CONTACT STRIPS</div>
+        <div style={{ borderTop: "2px dashed #9BB5C8", padding: "10px 12px 12px", background: "#FAEDCD" }}>
+          <div style={{ marginBottom: 7, textAlign: "center", color: "#587087", fontSize: 9, fontWeight: 900, letterSpacing: 1.2 }}>TEAR-OFF CONTACT STRIPS</div>
           <div style={{ display: "flex", justifyContent: "center", gap: 4 }}>
             {strips.map((strip) => (
-              <div
-                key={strip.id}
-                style={{
-                  minHeight: 80,
-                  border: "1px solid #52789B",
-                  borderRadius: 5,
-                  padding: "7px 4px",
-                  color: "#294866",
-                  fontSize: 9,
-                  fontWeight: 800,
-                  writingMode: "vertical-rl",
-                  transform: "rotate(180deg)",
-                }}
-              >
-                {status.label} · {strip.name} · {strip.phone}
+              <div key={strip.id} style={{ minHeight: 82, border: "1px solid #426F9D", borderRadius: 6, padding: "7px 4px", color: "#294866", fontSize: 9, fontWeight: 800, writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+                {status.shortLabel} · {strip.name} · {strip.phone}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      <footer style={{ borderTop: "1px solid #CAD7E1", padding: "8px 20px 10px", textAlign: "center", color: "#6D8294", fontSize: 9 }}>
+      <footer style={{ borderTop: "1px solid #D5E2EA", padding: "9px 20px 11px", textAlign: "center", color: "#6D8294", fontSize: 9 }}>
         Report sightings to Fresno Animal Center: (559) 621-5795 · Generated by VoiceMap Fresno
       </footer>
     </div>
@@ -426,7 +355,7 @@ export default function FlyerGenerator() {
   function handlePrint() {
     const flyer = document.getElementById("print-flyer");
     if (!flyer) return;
-    const printWindow = window.open("", "_blank", "width=800,height=980");
+    const printWindow = window.open("", "_blank", "width=820,height=980");
     if (!printWindow) return;
     printWindow.document.write(`
       <!DOCTYPE html>
@@ -483,11 +412,11 @@ export default function FlyerGenerator() {
           <div>
             <p className="text-xs font-extrabold uppercase tracking-[.16em] text-primary">Printable community notice</p>
             <h1 className="mt-1 font-heading text-4xl font-extrabold">Lost &amp; found flyer studio</h1>
-            <p className="mt-2 text-muted-foreground">Build a clear, professional flyer that prioritizes the animal, location, and contact information.</p>
+            <p className="mt-2 text-muted-foreground">Build a clear flyer that prioritizes the animal, location, and contact information.</p>
           </div>
         </header>
 
-        <div className="grid gap-8 xl:grid-cols-[minmax(420px,.85fr)_minmax(680px,1.15fr)]">
+        <div className="grid gap-8 xl:grid-cols-[minmax(420px,.85fr)_minmax(720px,1.15fr)]">
           <section className="space-y-5">
             {existingPosts.length > 0 && (
               <div className="glass-card rounded-3xl p-5">
@@ -569,18 +498,8 @@ export default function FlyerGenerator() {
                 )}
               </div>
 
-              <input
-                ref={fileRef}
-                id={PHOTO_INPUT_ID}
-                type="file"
-                accept="image/*"
-                className="sr-only"
-                onChange={handlePhoto}
-              />
-              <label
-                htmlFor={PHOTO_INPUT_ID}
-                className="flex w-full cursor-pointer flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-[#789FBE]/55 bg-[#CAE7FF]/25 p-5 text-center transition-colors hover:bg-[#CAE7FF]/45 focus-within:ring-2 focus-within:ring-[#426F9D]"
-              >
+              <input ref={fileRef} id={PHOTO_INPUT_ID} type="file" accept="image/*" className="sr-only" onChange={handlePhoto} />
+              <label htmlFor={PHOTO_INPUT_ID} className="flex w-full cursor-pointer flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-[#789FBE]/55 bg-[#CAE7FF]/25 p-5 text-center transition-colors hover:bg-[#CAE7FF]/45 focus-within:ring-2 focus-within:ring-[#426F9D]">
                 {data.photoBase64 ? (
                   <img src={data.photoBase64} alt="Uploaded pet preview" className="max-h-48 rounded-xl object-contain shadow-lg" />
                 ) : (
@@ -589,9 +508,7 @@ export default function FlyerGenerator() {
                 <span className="inline-flex items-center gap-2 rounded-xl bg-[#426F9D] px-4 py-2 text-sm font-bold text-white shadow-md">
                   <UploadCloud size={16} /> {data.photoBase64 ? "Replace photo" : "Upload photo"}
                 </span>
-                <span className="text-xs leading-relaxed text-muted-foreground">
-                  JPG, PNG, WebP, or HEIC from your device. The preview updates immediately after selection.
-                </span>
+                <span className="text-xs leading-relaxed text-muted-foreground">JPG, PNG, WebP, or HEIC from your device. The preview updates immediately after selection.</span>
               </label>
               {photoError && <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-800 dark:text-red-200">{photoError}</p>}
 
