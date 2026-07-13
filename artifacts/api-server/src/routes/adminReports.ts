@@ -15,6 +15,10 @@ import { requireAdmin, requireAdminCsrf } from "../middleware/adminAuth";
 
 const adminReportsRouter: IRouter = Router();
 
+function routeParam(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
+
 function toAdminReport(report: typeof reportsTable.$inferSelect) {
   return {
     id: report.id,
@@ -110,10 +114,11 @@ adminReportsRouter.get("/admin/reports", async (req, res, next) => {
 
 adminReportsRouter.get("/admin/reports/:publicId/events", async (req, res, next) => {
   try {
+    const publicId = routeParam(req.params.publicId);
     const [report] = await db
       .select({ id: reportsTable.id })
       .from(reportsTable)
-      .where(eq(reportsTable.publicId, req.params.publicId))
+      .where(eq(reportsTable.publicId, publicId))
       .limit(1);
 
     if (!report) {
@@ -135,10 +140,11 @@ adminReportsRouter.get("/admin/reports/:publicId/events", async (req, res, next)
 
 adminReportsRouter.get("/admin/reports/:publicId/evidence", async (req, res, next) => {
   try {
+    const publicId = routeParam(req.params.publicId);
     const [report] = await db
       .select({ id: reportsTable.id })
       .from(reportsTable)
-      .where(eq(reportsTable.publicId, req.params.publicId))
+      .where(eq(reportsTable.publicId, publicId))
       .limit(1);
     if (!report) {
       res.status(404).json({ error: "Report not found" });
@@ -158,10 +164,11 @@ adminReportsRouter.get("/admin/reports/:publicId/evidence", async (req, res, nex
 
 adminReportsRouter.get("/admin/evidence/:evidenceId", async (req, res, next) => {
   try {
+    const evidenceId = routeParam(req.params.evidenceId);
     const [evidence] = await db
       .select()
       .from(reportEvidenceTable)
-      .where(eq(reportEvidenceTable.id, req.params.evidenceId))
+      .where(eq(reportEvidenceTable.id, evidenceId))
       .limit(1);
     if (!evidence) {
       res.status(404).json({ error: "Evidence not found" });
@@ -181,10 +188,11 @@ adminReportsRouter.get("/admin/evidence/:evidenceId", async (req, res, next) => 
 
 adminReportsRouter.get("/admin/reports/:publicId/delivery", async (req, res, next) => {
   try {
+    const publicId = routeParam(req.params.publicId);
     const [report] = await db
       .select({ id: reportsTable.id })
       .from(reportsTable)
-      .where(eq(reportsTable.publicId, req.params.publicId))
+      .where(eq(reportsTable.publicId, publicId))
       .limit(1);
     if (!report) {
       res.status(404).json({ error: "Report not found" });
@@ -208,10 +216,11 @@ adminReportsRouter.post(
   requireAdminCsrf,
   async (req, res, next) => {
     try {
+      const publicId = routeParam(req.params.publicId);
       const [report] = await db
         .select({ id: reportsTable.id })
         .from(reportsTable)
-        .where(eq(reportsTable.publicId, req.params.publicId))
+        .where(eq(reportsTable.publicId, publicId))
         .limit(1);
       if (!report) {
         res.status(404).json({ error: "Report not found" });
@@ -240,11 +249,12 @@ adminReportsRouter.post(
         return;
       }
 
+      const publicId = routeParam(req.params.publicId);
       const event = await db.transaction(async (tx) => {
         const [report] = await tx
           .select({ id: reportsTable.id, publicId: reportsTable.publicId })
           .from(reportsTable)
-          .where(eq(reportsTable.publicId, req.params.publicId))
+          .where(eq(reportsTable.publicId, publicId))
           .limit(1);
 
         if (!report) return null;
@@ -289,11 +299,12 @@ adminReportsRouter.patch(
         return;
       }
 
+      const publicId = routeParam(req.params.publicId);
       const result = await db.transaction(async (tx) => {
         const [current] = await tx
           .select()
           .from(reportsTable)
-          .where(eq(reportsTable.publicId, req.params.publicId))
+          .where(eq(reportsTable.publicId, publicId))
           .limit(1);
 
         if (!current) return null;
@@ -345,11 +356,12 @@ adminReportsRouter.patch(
         return;
       }
 
+      const publicId = routeParam(req.params.publicId);
       const result = await db.transaction(async (tx) => {
         const [current] = await tx
           .select()
           .from(reportsTable)
-          .where(eq(reportsTable.publicId, req.params.publicId))
+          .where(eq(reportsTable.publicId, publicId))
           .limit(1);
 
         if (!current) return null;
