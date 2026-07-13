@@ -39,15 +39,15 @@ const NEIGHBORHOOD_COORDS: Record<string, [number, number]> = {
 
 const DANGER_COLORS: Record<PublicMapReport["inDanger"], string> = {
   yes: "#D94A3D",
-  unsure: "#C9842E",
-  no: "#326F8E",
+  unsure: "#D49C38",
+  no: "#2F6EA5",
 };
 
 const STATUS_RINGS: Record<string, string> = {
-  resolved: "#3D8D6F",
-  routed: "#D49C38",
-  "follow-up": "#C96052",
-  submitted: "#8FBAE1",
+  resolved: "#38A169",
+  routed: "#F6D365",
+  "follow-up": "#F97316",
+  submitted: "#A7D8FF",
 };
 
 function hashString(value: string): number {
@@ -186,12 +186,31 @@ export function PublicFresnoMap({
       map.getContainer().style.cursor = "crosshair";
 
       L.tileLayer(
-        "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         {
-          attribution: "&copy; OpenStreetMap &copy; CARTO",
-          maxZoom: 20,
-          subdomains: "abcd",
-          className: "public-map-neutral-tiles",
+          attribution: "Tiles &copy; Esri",
+          maxZoom: 19,
+          className: "public-map-imagery-tiles",
+        },
+      ).addTo(map);
+
+      L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+        {
+          attribution: "",
+          maxZoom: 19,
+          opacity: 0.95,
+          className: "public-map-label-tiles",
+        },
+      ).addTo(map);
+
+      L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}",
+        {
+          attribution: "",
+          maxZoom: 19,
+          opacity: 0.72,
+          className: "public-map-transport-tiles",
         },
       ).addTo(map);
 
