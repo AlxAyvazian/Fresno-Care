@@ -8,7 +8,7 @@ import { deliverReportToAgencies } from "./reportDelivery";
 import { logger } from "./logger";
 
 const DEFAULT_WORKER_INTERVAL_MS = 60_000;
-const DEFAULT_DELIVERY_GRACE_MS = 2 * 60_000;
+const DEFAULT_DELIVERY_GRACE_MS = 10 * 60_000;
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
