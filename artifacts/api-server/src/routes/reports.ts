@@ -25,6 +25,10 @@ import { intakeRateLimit } from "../middleware/rateLimit";
 
 const reportsRouter: IRouter = Router();
 
+function routeParam(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
+
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -186,8 +190,9 @@ reportsRouter.post(
   express.raw({ type: () => true, limit: MAX_EVIDENCE_FILE_BYTES }),
   async (req, res, next) => {
     try {
+      const publicId = routeParam(req.params.publicId);
       const token = req.header("x-evidence-token") ?? "";
-      if (!verifyReportUploadToken(token, req.params.publicId)) {
+      if (!verifyReportUploadToken(token, publicId)) {
         res.status(401).json({ error: "Evidence upload authorization is invalid or expired" });
         return;
       }
@@ -214,7 +219,7 @@ reportsRouter.post(
       const [report] = await db
         .select({ id: reportsTable.id, publicId: reportsTable.publicId })
         .from(reportsTable)
-        .where(eq(reportsTable.publicId, req.params.publicId))
+        .where(eq(reportsTable.publicId, publicId))
         .limit(1);
       if (!report) {
         res.status(404).json({ error: "Report not found" });
@@ -300,8 +305,9 @@ reportsRouter.post(
 
 reportsRouter.post("/reports/:publicId/finalize", intakeRateLimit, async (req, res, next) => {
   try {
+    const publicId = routeParam(req.params.publicId);
     const token = req.header("x-evidence-token") ?? "";
-    if (!verifyReportUploadToken(token, req.params.publicId)) {
+    if (!verifyReportUploadToken(token, publicId)) {
       res.status(401).json({ error: "Submission authorization is invalid or expired" });
       return;
     }
@@ -309,7 +315,7 @@ reportsRouter.post("/reports/:publicId/finalize", intakeRateLimit, async (req, r
     const [report] = await db
       .select()
       .from(reportsTable)
-      .where(eq(reportsTable.publicId, req.params.publicId))
+      .where(eq(reportsTable.publicId, publicId))
       .limit(1);
     if (!report) {
       res.status(404).json({ error: "Report not found" });
@@ -365,12 +371,13 @@ reportsRouter.get("/reports", async (req, res, next) => {
 
 reportsRouter.get("/reports/:publicId", async (req, res, next) => {
   try {
+    const publicId = routeParam(req.params.publicId);
     const [report] = await db
       .select()
       .from(reportsTable)
       .where(
         and(
-          eq(reportsTable.publicId, req.params.publicId),
+          eq(reportsTable.publicId, publicId),
           eq(reportsTable.publicationStatus, "approved"),
         ),
       )
