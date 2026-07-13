@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, lte } from "drizzle-orm";
 import {
   db,
   moderationEventsTable,
@@ -6,8 +6,11 @@ import {
   reportEvidenceTable,
   reportsTable,
 } from "@workspace/db";
+import { logger } from "./logger";
 
 const DEFAULT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const DEFAULT_WORKER_INTERVAL_MS = 60_000;
+const DEFAULT_DELIVERY_GRACE_MS = 2 * 60_000;
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
@@ -32,6 +35,11 @@ export function configuredReportRecipients(): string[] {
   return [...new Set(values)];
 }
 
+export function buildReportDeliverySubject(publicId: string, inDanger: string): string {
+  const urgency = inDanger === "yes" ? "URGENT " : "";
+  return `${urgency}Resident animal-welfare report ${publicId}`;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -39,11 +47,6 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
-}
-
-function reportSubject(publicId: string, inDanger: string): string {
-  const urgency = inDanger === "yes" ? "URGENT " : "";
-  return `${urgency}Resident animal-welfare report ${publicId}`;
 }
 
 function reportText(report: typeof reportsTable.$inferSelect, attachmentNote: string): string {
@@ -134,7 +137,7 @@ export async function deliverReportToAgencies(reportId: string): Promise<Deliver
   }
 
   const recipients = configuredReportRecipients();
-  const subject = reportSubject(String(report.publicId), report.inDanger);
+  const subject = buildReportDeliverySubject(String(report.publicId), report.inDanger);
   const now = new Date();
   const [delivery] = existing
     ? await db
@@ -286,4 +289,52 @@ export async function deliverReportToAgencies(reportId: string): Promise<Deliver
     });
     return { status: "failed", recipients, providerMessageId: null, error };
   }
+}
+
+let workerRunning = false;
+
+async function processPendingDeliveries(): Promise<void> {
+  if (workerRunning) return;
+  workerRunning = true;
+  try {
+    const graceMs = positiveInteger(
+      process.env.REPORT_DELIVERY_GRACE_MS,
+      DEFAULT_DELIVERY_GRACE_MS,
+    );
+    const cutoff = new Date(Date.now() - graceMs);
+    const pending = await db
+      .select({ reportId: reportDeliveriesTable.reportId })
+      .from(reportDeliveriesTable)
+      .where(
+        and(
+          eq(reportDeliveriesTable.status, "pending"),
+          lte(reportDeliveriesTable.createdAt, cutoff),
+        ),
+      )
+      .orderBy(reportDeliveriesTable.createdAt)
+      .limit(20);
+
+    for (const item of pending) {
+      try {
+        await deliverReportToAgencies(item.reportId);
+      } catch (error) {
+        logger.error({ err: error, reportId: item.reportId }, "Pending agency delivery failed");
+      }
+    }
+  } finally {
+    workerRunning = false;
+  }
+}
+
+export function startReportDeliveryWorker(): () => void {
+  const intervalMs = positiveInteger(
+    process.env.REPORT_DELIVERY_WORKER_INTERVAL_MS,
+    DEFAULT_WORKER_INTERVAL_MS,
+  );
+  const timer = setInterval(() => {
+    void processPendingDeliveries();
+  }, intervalMs);
+  timer.unref();
+  void processPendingDeliveries();
+  return () => clearInterval(timer);
 }
