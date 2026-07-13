@@ -19,6 +19,9 @@ export const MODERATION_EVENT_TYPES = [
   "case_status_changed",
   "publication_status_changed",
   "note_added",
+  "evidence_uploaded",
+  "notification_sent",
+  "notification_failed",
 ] as const;
 
 export const moderationEventTypeEnum = pgEnum(
@@ -59,18 +62,18 @@ const optionalModerationNoteSchema = z.string().trim().max(2000).optional();
 
 export const moderationStatusChangeSchema = z.object({
   status: z.enum(REPORT_STATUSES),
-  actorLabel: moderationActorSchema,
+  actorLabel: moderationActorSchema.optional(),
   note: optionalModerationNoteSchema,
 });
 
 export const moderationPublicationChangeSchema = z.object({
   publicationStatus: z.enum(PUBLICATION_STATUSES),
-  actorLabel: moderationActorSchema,
+  actorLabel: moderationActorSchema.optional(),
   note: optionalModerationNoteSchema,
 });
 
 export const moderationNoteSchema = z.object({
-  actorLabel: moderationActorSchema,
+  actorLabel: moderationActorSchema.optional(),
   note: z.string().trim().min(1).max(2000),
 });
 
