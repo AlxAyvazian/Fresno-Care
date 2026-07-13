@@ -1,4 +1,4 @@
-/* Focused visual corrections: controlled artwork, readable map color, and no teal controls. */
+/* Focused visual corrections: controlled artwork, readable street-map color, and no teal controls. */
 
 .anim-bounce,
 .anim-bounce-slow,
@@ -61,10 +61,10 @@ a[style*="rgb(2, 131, 145)"],
   min-height: 680px !important;
   overflow: hidden !important;
   border: 1px solid rgba(255,255,255,.72) !important;
-  background: #13293d !important;
+  background: #e7f1f5 !important;
   box-shadow:
-    inset 0 0 0 2px rgba(255,255,255,.12),
-    0 24px 58px rgba(25,48,70,.24) !important;
+    inset 0 0 0 2px rgba(86,127,165,.12),
+    0 24px 58px rgba(25,48,70,.18) !important;
 }
 
 .public-map-shell--compact {
@@ -74,14 +74,12 @@ a[style*="rgb(2, 131, 145)"],
 }
 
 .public-map {
-  background: #13293d !important;
+  background: #e7f1f5 !important;
 }
 
 .public-map .leaflet-tile-pane,
 .public-map .leaflet-overlay-pane,
-.public-map-imagery-tiles,
-.public-map-label-tiles,
-.public-map-transport-tiles,
+.public-map-readable-street-tiles,
 .public-map-neutral-tiles,
 .public-map-street-tiles {
   filter: none !important;
@@ -102,7 +100,7 @@ a[style*="rgb(2, 131, 145)"],
   color: #fff !important;
   border-color: rgba(255,255,255,.24) !important;
   background: rgba(24,48,72,.9) !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 10px 26px rgba(8,24,38,.32) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 10px 26px rgba(8,24,38,.28) !important;
   backdrop-filter: blur(18px) saturate(130%);
 }
 
