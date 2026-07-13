@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
+  Download,
   Eye,
+  FileCheck2,
   History,
   KeyRound,
   LockKeyhole,
   LogOut,
+  MailCheck,
+  MailWarning,
   MapPin,
   MessageSquarePlus,
   RefreshCw,
+  RotateCw,
   ShieldCheck,
   UserRound,
 } from "lucide-react";
@@ -17,21 +22,28 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   addModerationNote,
+  downloadAdminEvidence,
+  getAdminDelivery,
+  getAdminEvidence,
   getAdminReports,
+  getAdminSession,
   getModerationEvents,
+  loginAdmin,
+  logoutAdmin,
   MODERATION_STATUSES,
   PUBLICATION_STATUSES,
+  retryAdminDelivery,
   updateAdminPublicationStatus,
   updateAdminReportStatus,
+  type AdminDelivery,
+  type AdminEvidence,
   type AdminReport,
+  type AdminSession,
   type ModerationEvent,
   type ModerationStatus,
   type PublicationStatus,
 } from "@/lib/moderationApi";
 import { STATUS_LABELS } from "@/lib/storage";
-
-const SESSION_KEY = "fresno_care_admin_key";
-const ACTOR_KEY = "fresno_care_admin_actor";
 
 const PUBLICATION_LABELS: Record<PublicationStatus, string> = {
   pending: "Awaiting review",
@@ -44,6 +56,16 @@ const EVENT_LABELS: Record<ModerationEvent["eventType"], string> = {
   case_status_changed: "Case status changed",
   publication_status_changed: "Publication decision changed",
   note_added: "Reviewer note",
+  evidence_uploaded: "Private evidence uploaded",
+  notification_sent: "Agency notification sent",
+  notification_failed: "Agency notification failed",
+};
+
+const DELIVERY_LABELS: Record<AdminDelivery["status"], string> = {
+  pending: "Delivery pending",
+  sent: "Sent to agencies",
+  failed: "Delivery failed",
+  not_configured: "Delivery not configured",
 };
 
 function formatDate(value: string): string {
@@ -53,36 +75,60 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(Math.round(bytes / 1024), 1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function ModerationReviewPage() {
   const [, navigate] = useLocation();
+  const [actorInput, setActorInput] = useState("");
   const [keyInput, setKeyInput] = useState("");
-  const [actorInput, setActorInput] = useState(() => sessionStorage.getItem(ACTOR_KEY) ?? "");
-  const [adminKey, setAdminKey] = useState(() => sessionStorage.getItem(SESSION_KEY) ?? "");
-  const [actorLabel, setActorLabel] = useState(() => sessionStorage.getItem(ACTOR_KEY) ?? "");
+  const [session, setSession] = useState<AdminSession | null>(null);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [reports, setReports] = useState<AdminReport[]>([]);
   const [eventsByReport, setEventsByReport] = useState<Record<string, ModerationEvent[]>>({});
+  const [evidenceByReport, setEvidenceByReport] = useState<Record<string, AdminEvidence[]>>({});
+  const [deliveryByReport, setDeliveryByReport] = useState<Record<string, AdminDelivery | null>>({});
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
   const [changeNotes, setChangeNotes] = useState<Record<string, string>>({});
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
-  const [loadingEvents, setLoadingEvents] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState<string | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const loadReports = useCallback(async () => {
-    if (!adminKey) return;
+  useEffect(() => {
+    let cancelled = false;
+    void getAdminSession()
+      .then((restored) => {
+        if (!cancelled) setSession(restored);
+      })
+      .catch(() => {
+        if (!cancelled) setSession(null);
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingSession(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
+  const loadReports = useCallback(async () => {
+    if (!session) return;
     setLoading(true);
     setError(null);
     try {
-      setReports(await getAdminReports(adminKey, 250));
+      setReports(await getAdminReports(250));
     } catch (loadError) {
       setReports([]);
       setError(loadError instanceof Error ? loadError.message : "Unable to load moderation reports.");
     } finally {
       setLoading(false);
     }
-  }, [adminKey]);
+  }, [session]);
 
   useEffect(() => {
     void loadReports();
@@ -98,63 +144,83 @@ export default function ModerationReviewPage() {
     );
   }, [reports]);
 
-  function unlock() {
-    const key = keyInput.trim();
+  async function signIn() {
     const actor = actorInput.trim();
-    if (!key || !actor) return;
+    const key = keyInput;
+    if (!actor || !key) return;
 
-    sessionStorage.setItem(SESSION_KEY, key);
-    sessionStorage.setItem(ACTOR_KEY, actor);
-    setAdminKey(key);
-    setActorLabel(actor);
-    setKeyInput("");
+    setLoggingIn(true);
+    setError(null);
+    try {
+      const authenticated = await loginAdmin(actor, key);
+      setSession(authenticated);
+      setKeyInput("");
+    } catch (loginError) {
+      setSession(null);
+      setError(loginError instanceof Error ? loginError.message : "Unable to sign in.");
+    } finally {
+      setLoggingIn(false);
+    }
   }
 
-  function lock() {
-    sessionStorage.removeItem(SESSION_KEY);
-    sessionStorage.removeItem(ACTOR_KEY);
-    setAdminKey("");
-    setActorLabel("");
+  async function signOut() {
+    if (!session) return;
+    try {
+      await logoutAdmin(session.csrfToken);
+    } catch {
+      // Clear the local state even if the server session already expired.
+    }
+    setSession(null);
     setReports([]);
     setEventsByReport({});
+    setEvidenceByReport({});
+    setDeliveryByReport({});
     setExpandedReport(null);
     setError(null);
   }
 
-  async function loadEvents(publicId: string) {
-    setLoadingEvents(publicId);
+  async function loadDetails(publicId: string) {
+    setLoadingDetails(publicId);
     setError(null);
     try {
-      const events = await getModerationEvents(adminKey, publicId);
+      const [events, evidence, delivery] = await Promise.all([
+        getModerationEvents(publicId),
+        getAdminEvidence(publicId),
+        getAdminDelivery(publicId),
+      ]);
       setEventsByReport((current) => ({ ...current, [publicId]: events }));
-    } catch (eventError) {
-      setError(eventError instanceof Error ? eventError.message : "Unable to load the moderation timeline.");
+      setEvidenceByReport((current) => ({ ...current, [publicId]: evidence }));
+      setDeliveryByReport((current) => ({ ...current, [publicId]: delivery }));
+    } catch (detailsError) {
+      setError(detailsError instanceof Error ? detailsError.message : "Unable to load private report details.");
     } finally {
-      setLoadingEvents(null);
+      setLoadingDetails(null);
     }
   }
 
-  async function toggleTimeline(publicId: string) {
+  async function toggleDetails(publicId: string) {
     if (expandedReport === publicId) {
       setExpandedReport(null);
       return;
     }
-
     setExpandedReport(publicId);
-    await loadEvents(publicId);
+    await loadDetails(publicId);
   }
 
   async function changeStatus(report: AdminReport, status: ModerationStatus) {
+    if (!session) return;
     setUpdating(`${report.publicId}:status`);
     setError(null);
     try {
-      const updated = await updateAdminReportStatus(adminKey, report.publicId, status, {
-        actorLabel,
-        note: changeNotes[report.publicId]?.trim() || undefined,
-      });
+      const updated = await updateAdminReportStatus(
+        report.publicId,
+        status,
+        { note: changeNotes[report.publicId]?.trim() || undefined },
+        session.csrfToken,
+      );
       setReports((current) => current.map((item) => item.publicId === updated.publicId ? updated : item));
       setChangeNotes((current) => ({ ...current, [report.publicId]: "" }));
-      if (expandedReport === report.publicId) await loadEvents(report.publicId);
+      if (expandedReport === report.publicId) await loadDetails(report.publicId);
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "Unable to update report status.");
     } finally {
@@ -163,16 +229,19 @@ export default function ModerationReviewPage() {
   }
 
   async function changePublication(report: AdminReport, publicationStatus: PublicationStatus) {
+    if (!session) return;
     setUpdating(`${report.publicId}:publication`);
     setError(null);
     try {
-      const updated = await updateAdminPublicationStatus(adminKey, report.publicId, publicationStatus, {
-        actorLabel,
-        note: changeNotes[report.publicId]?.trim() || undefined,
-      });
+      const updated = await updateAdminPublicationStatus(
+        report.publicId,
+        publicationStatus,
+        { note: changeNotes[report.publicId]?.trim() || undefined },
+        session.csrfToken,
+      );
       setReports((current) => current.map((item) => item.publicId === updated.publicId ? updated : item));
       setChangeNotes((current) => ({ ...current, [report.publicId]: "" }));
-      if (expandedReport === report.publicId) await loadEvents(report.publicId);
+      if (expandedReport === report.publicId) await loadDetails(report.publicId);
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "Unable to update publication status.");
     } finally {
@@ -181,13 +250,14 @@ export default function ModerationReviewPage() {
   }
 
   async function addNote(report: AdminReport) {
+    if (!session) return;
     const note = noteDrafts[report.publicId]?.trim();
     if (!note) return;
 
     setUpdating(`${report.publicId}:note`);
     setError(null);
     try {
-      const event = await addModerationNote(adminKey, report.publicId, actorLabel, note);
+      const event = await addModerationNote(report.publicId, note, session.csrfToken);
       setEventsByReport((current) => ({
         ...current,
         [report.publicId]: [event, ...(current[report.publicId] ?? [])],
@@ -200,7 +270,44 @@ export default function ModerationReviewPage() {
     }
   }
 
-  if (!adminKey) {
+  async function retryDelivery(report: AdminReport) {
+    if (!session) return;
+    setUpdating(`${report.publicId}:delivery`);
+    setError(null);
+    try {
+      await retryAdminDelivery(report.publicId, session.csrfToken);
+      await loadDetails(report.publicId);
+      await loadReports();
+    } catch (deliveryError) {
+      setError(deliveryError instanceof Error ? deliveryError.message : "Unable to retry agency delivery.");
+    } finally {
+      setUpdating(null);
+    }
+  }
+
+  async function downloadEvidence(evidence: AdminEvidence) {
+    setUpdating(`evidence:${evidence.id}`);
+    setError(null);
+    try {
+      await downloadAdminEvidence(evidence);
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : "Unable to download evidence.");
+    } finally {
+      setUpdating(null);
+    }
+  }
+
+  if (checkingSession) {
+    return (
+      <main className="min-h-screen px-4 pb-16 pt-28">
+        <div className="mx-auto max-w-md glass-card rounded-3xl p-10 text-center text-sm text-muted-foreground">
+          Checking secure moderation session…
+        </div>
+      </main>
+    );
+  }
+
+  if (!session) {
     return (
       <main className="min-h-screen px-4 pb-16 pt-28">
         <div className="mx-auto max-w-md">
@@ -210,8 +317,13 @@ export default function ModerationReviewPage() {
             </div>
             <h1 className="mt-5 font-heading text-3xl font-bold">Moderation access</h1>
             <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-              This area contains precise locations and optional reporter contact details. Enter your reviewer name and the server-configured admin key.
+              Sign in to review precise locations, private reporter details, evidence files, and agency-delivery history. The admin credential is exchanged once for a signed HTTP-only session and is not stored in browser storage.
             </p>
+            {error && (
+              <div className="mt-5 rounded-2xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+                {error}
+              </div>
+            )}
             <div className="mt-6 space-y-3">
               <Input
                 value={actorInput}
@@ -225,23 +337,23 @@ export default function ModerationReviewPage() {
                 value={keyInput}
                 onChange={(event) => setKeyInput(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") unlock();
+                  if (event.key === "Enter") void signIn();
                 }}
-                placeholder="Admin API key"
-                autoComplete="off"
+                placeholder="Admin password"
+                autoComplete="current-password"
                 className="rounded-xl"
               />
               <Button
                 type="button"
-                onClick={unlock}
-                disabled={!keyInput.trim() || !actorInput.trim()}
+                onClick={() => void signIn()}
+                disabled={loggingIn || !keyInput || !actorInput.trim()}
                 className="w-full rounded-xl gap-2"
               >
-                <KeyRound size={16} /> Open moderation
+                <KeyRound size={16} /> {loggingIn ? "Signing in…" : "Open moderation"}
               </Button>
             </div>
             <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-              Both values are kept only for this browser session. The reviewer name is written to the audit history for future actions.
+              Login attempts are rate-limited. Reviewer actions are attributed to the authenticated session in the audit history.
             </p>
           </section>
         </div>
@@ -260,17 +372,17 @@ export default function ModerationReviewPage() {
               </div>
               <h1 className="font-heading text-3xl font-bold sm:text-4xl">Report review queue</h1>
               <p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted-foreground">
-                Every submission, status change, publication decision, and reviewer note is appended to an immutable moderation timeline.
+                Review private reports, download validated evidence, verify agency delivery, and control public publication from one protected workspace.
               </p>
               <div className="mt-4 inline-flex items-center gap-2 rounded-xl bg-muted/50 px-3 py-2 text-xs font-medium">
-                <UserRound size={14} /> Reviewing as {actorLabel}
+                <UserRound size={14} /> Reviewing as {session.actorLabel}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button type="button" variant="outline" onClick={() => void loadReports()} disabled={loading} className="rounded-xl gap-2">
                 <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh
               </Button>
-              <Button type="button" variant="outline" onClick={lock} className="rounded-xl gap-2">
+              <Button type="button" variant="outline" onClick={() => void signOut()} className="rounded-xl gap-2">
                 <LogOut size={15} /> Sign out
               </Button>
             </div>
@@ -303,12 +415,14 @@ export default function ModerationReviewPage() {
             <div className="glass-card rounded-3xl p-10 text-center text-sm text-muted-foreground">Loading review queue…</div>
           ) : reports.length === 0 ? (
             <div className="glass-card rounded-3xl p-10 text-center text-sm text-muted-foreground">
-              No reports are available, or the supplied credential was not accepted.
+              No reports are available.
             </div>
           ) : (
             reports.map((report) => {
               const busy = updating?.startsWith(report.publicId) ?? false;
               const events = eventsByReport[report.publicId] ?? [];
+              const evidence = evidenceByReport[report.publicId] ?? [];
+              const delivery = deliveryByReport[report.publicId];
               const expanded = expandedReport === report.publicId;
 
               return (
@@ -424,16 +538,84 @@ export default function ModerationReviewPage() {
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={loadingEvents === report.publicId}
-                      onClick={() => void toggleTimeline(report.publicId)}
+                      disabled={loadingDetails === report.publicId}
+                      onClick={() => void toggleDetails(report.publicId)}
                       className="rounded-xl gap-2"
                     >
-                      <History size={15} className={loadingEvents === report.publicId ? "animate-spin" : ""} />
-                      {expanded ? "Hide audit timeline" : "Open audit timeline"}
+                      <History size={15} className={loadingDetails === report.publicId ? "animate-spin" : ""} />
+                      {expanded ? "Hide private details" : "Open evidence, delivery, and audit history"}
                     </Button>
 
                     {expanded && (
-                      <div className="mt-5 space-y-4">
+                      <div className="mt-5 space-y-5">
+                        <div className="grid gap-4 lg:grid-cols-2">
+                          <section className="rounded-2xl border border-border/50 bg-background/55 p-5">
+                            <div className="flex items-center gap-2">
+                              <FileCheck2 size={18} className="text-primary" />
+                              <h3 className="font-heading text-lg font-bold">Private evidence</h3>
+                            </div>
+                            {evidence.length === 0 ? (
+                              <p className="mt-4 text-sm text-muted-foreground">No evidence files were uploaded.</p>
+                            ) : (
+                              <ul className="mt-4 space-y-2">
+                                {evidence.map((file) => (
+                                  <li key={file.id} className="flex items-center justify-between gap-3 rounded-xl bg-muted/40 p-3">
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-semibold">{file.originalName}</p>
+                                      <p className="mt-1 text-xs text-muted-foreground">{file.mimeType} · {formatBytes(file.sizeBytes)}</p>
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      disabled={updating === `evidence:${file.id}`}
+                                      onClick={() => void downloadEvidence(file)}
+                                      className="shrink-0 rounded-lg gap-1"
+                                    >
+                                      <Download size={14} /> Download
+                                    </Button>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </section>
+
+                          <section className="rounded-2xl border border-border/50 bg-background/55 p-5">
+                            <div className="flex items-center gap-2">
+                              {delivery?.status === "sent" ? <MailCheck size={18} className="text-green-600" /> : <MailWarning size={18} className="text-amber-600" />}
+                              <h3 className="font-heading text-lg font-bold">Agency delivery</h3>
+                            </div>
+                            {!delivery ? (
+                              <p className="mt-4 text-sm text-muted-foreground">No delivery attempt has been recorded.</p>
+                            ) : (
+                              <div className="mt-4 space-y-3 text-sm">
+                                <p className="font-semibold">{DELIVERY_LABELS[delivery.status]}</p>
+                                <p className="text-muted-foreground">Attempts: {delivery.attempts}</p>
+                                <div>
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recipients</p>
+                                  <ul className="mt-2 space-y-1 break-all text-xs">
+                                    {delivery.recipients.map((recipient) => <li key={recipient}>{recipient}</li>)}
+                                  </ul>
+                                </div>
+                                {delivery.lastError && (
+                                  <p className="rounded-xl bg-destructive/10 p-3 text-xs text-destructive">{delivery.lastError}</p>
+                                )}
+                                {delivery.status !== "sent" && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    disabled={updating === `${report.publicId}:delivery`}
+                                    onClick={() => void retryDelivery(report)}
+                                    className="rounded-xl gap-2"
+                                  >
+                                    <RotateCw size={14} /> Retry agency delivery
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </section>
+                        </div>
+
                         <div className="rounded-2xl bg-muted/30 p-4">
                           <label className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Add reviewer note</label>
                           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
