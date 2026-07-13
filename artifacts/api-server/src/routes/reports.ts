@@ -1,12 +1,26 @@
 import { createHash } from "node:crypto";
-import { Router, type IRouter } from "express";
+import express, { Router, type IRouter } from "express";
 import { and, desc, eq, gte } from "drizzle-orm";
 import {
   createReportSchema,
   db,
   moderationEventsTable,
+  reportEvidenceTable,
   reportsTable,
 } from "@workspace/db";
+import {
+  ALLOWED_EVIDENCE_TYPES,
+  contentMatchesMime,
+  MAX_EVIDENCE_FILES,
+  MAX_EVIDENCE_FILE_BYTES,
+  MAX_EVIDENCE_TOTAL_BYTES,
+  sanitizeEvidenceFilename,
+} from "../lib/evidence";
+import { deliverReportToAgencies } from "../lib/reportDelivery";
+import {
+  createReportUploadToken,
+  verifyReportUploadToken,
+} from "../lib/reportUploadToken";
 import { intakeRateLimit } from "../middleware/rateLimit";
 
 const reportsRouter: IRouter = Router();
@@ -44,13 +58,24 @@ function submissionFingerprint(input: typeof createReportSchema._output): string
   return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
 }
 
-function toReceipt(report: typeof reportsTable.$inferSelect, deduplicated = false) {
+function toReceipt(
+  report: typeof reportsTable.$inferSelect,
+  options: {
+    deduplicated?: boolean;
+    evidenceUploadToken?: string | null;
+    deliveryStatus?: "pending" | "sent" | "failed" | "not_configured";
+    evidenceUploaded?: number;
+  } = {},
+) {
   return {
     publicId: report.publicId,
     createdAt: report.createdAt,
     status: report.status,
     publicationStatus: report.publicationStatus,
-    deduplicated,
+    deduplicated: options.deduplicated ?? false,
+    evidenceUploadToken: options.evidenceUploadToken ?? null,
+    evidenceUploaded: options.evidenceUploaded ?? 0,
+    deliveryStatus: options.deliveryStatus ?? "pending",
   };
 }
 
@@ -79,14 +104,12 @@ function toPublicReport(report: typeof reportsTable.$inferSelect) {
 
 reportsRouter.post("/reports", intakeRateLimit, async (req, res, next) => {
   try {
-    // Hidden bot field. Human-facing clients always submit an empty value.
     if (typeof req.body?.website === "string" && req.body.website.trim()) {
       res.status(202).json({ accepted: true });
       return;
     }
 
     const parsed = createReportSchema.safeParse(req.body);
-
     if (!parsed.success) {
       res.status(400).json({
         error: "Invalid report",
@@ -111,7 +134,7 @@ reportsRouter.post("/reports", intakeRateLimit, async (req, res, next) => {
       .limit(1);
 
     if (existing) {
-      res.status(200).json({ receipt: toReceipt(existing, true) });
+      res.status(200).json({ receipt: toReceipt(existing, { deduplicated: true }) });
       return;
     }
 
@@ -147,7 +170,174 @@ reportsRouter.post("/reports", intakeRateLimit, async (req, res, next) => {
       return report;
     });
 
-    res.status(201).json({ receipt: toReceipt(created) });
+    res.status(201).json({
+      receipt: toReceipt(created, {
+        evidenceUploadToken: createReportUploadToken(String(created.publicId)),
+      }),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportsRouter.post(
+  "/reports/:publicId/evidence",
+  intakeRateLimit,
+  express.raw({ type: () => true, limit: MAX_EVIDENCE_FILE_BYTES }),
+  async (req, res, next) => {
+    try {
+      const token = req.header("x-evidence-token") ?? "";
+      if (!verifyReportUploadToken(token, req.params.publicId)) {
+        res.status(401).json({ error: "Evidence upload authorization is invalid or expired" });
+        return;
+      }
+
+      const content = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      const mimeType = (req.header("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
+      const originalName = sanitizeEvidenceFilename(
+        decodeURIComponent(req.header("x-file-name") ?? "evidence"),
+      );
+
+      if (!content.length) {
+        res.status(400).json({ error: "Evidence file is empty" });
+        return;
+      }
+      if (!ALLOWED_EVIDENCE_TYPES.has(mimeType)) {
+        res.status(415).json({ error: "Unsupported evidence type. Use JPEG, PNG, WebP, PDF, or MP4." });
+        return;
+      }
+      if (!contentMatchesMime(content, mimeType)) {
+        res.status(400).json({ error: "Evidence file content does not match its declared type" });
+        return;
+      }
+
+      const [report] = await db
+        .select({ id: reportsTable.id, publicId: reportsTable.publicId })
+        .from(reportsTable)
+        .where(eq(reportsTable.publicId, req.params.publicId))
+        .limit(1);
+      if (!report) {
+        res.status(404).json({ error: "Report not found" });
+        return;
+      }
+
+      const existingEvidence = await db
+        .select({
+          id: reportEvidenceTable.id,
+          sha256: reportEvidenceTable.sha256,
+          sizeBytes: reportEvidenceTable.sizeBytes,
+        })
+        .from(reportEvidenceTable)
+        .where(eq(reportEvidenceTable.reportId, report.id));
+      if (existingEvidence.length >= MAX_EVIDENCE_FILES) {
+        res.status(400).json({ error: `A report may contain at most ${MAX_EVIDENCE_FILES} evidence files` });
+        return;
+      }
+      const existingBytes = existingEvidence.reduce((sum, item) => sum + item.sizeBytes, 0);
+      if (existingBytes + content.length > MAX_EVIDENCE_TOTAL_BYTES) {
+        res.status(400).json({ error: "Evidence exceeds the 30 MB total report limit" });
+        return;
+      }
+
+      const sha256 = createHash("sha256").update(content).digest("hex");
+      const duplicate = existingEvidence.find((item) => item.sha256 === sha256);
+      if (duplicate) {
+        res.status(200).json({
+          evidence: {
+            id: duplicate.id,
+            originalName,
+            mimeType,
+            sizeBytes: content.length,
+            deduplicated: true,
+          },
+        });
+        return;
+      }
+
+      const evidence = await db.transaction(async (tx) => {
+        const [created] = await tx
+          .insert(reportEvidenceTable)
+          .values({
+            reportId: report.id,
+            originalName,
+            mimeType,
+            sizeBytes: content.length,
+            sha256,
+            validationStatus: "accepted",
+            content,
+          })
+          .returning();
+        await tx.insert(moderationEventsTable).values({
+          reportId: report.id,
+          eventType: "evidence_uploaded",
+          actorLabel: "Reporter",
+          note: `Private evidence uploaded: ${originalName}`,
+          metadata: {
+            publicId: report.publicId,
+            evidenceId: created.id,
+            mimeType,
+            sizeBytes: content.length,
+          },
+        });
+        return created;
+      });
+
+      res.status(201).json({
+        evidence: {
+          id: evidence.id,
+          originalName: evidence.originalName,
+          mimeType: evidence.mimeType,
+          sizeBytes: evidence.sizeBytes,
+          createdAt: evidence.createdAt,
+          deduplicated: false,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+reportsRouter.post("/reports/:publicId/finalize", intakeRateLimit, async (req, res, next) => {
+  try {
+    const token = req.header("x-evidence-token") ?? "";
+    if (!verifyReportUploadToken(token, req.params.publicId)) {
+      res.status(401).json({ error: "Submission authorization is invalid or expired" });
+      return;
+    }
+
+    const [report] = await db
+      .select()
+      .from(reportsTable)
+      .where(eq(reportsTable.publicId, req.params.publicId))
+      .limit(1);
+    if (!report) {
+      res.status(404).json({ error: "Report not found" });
+      return;
+    }
+
+    const evidence = await db
+      .select({ id: reportEvidenceTable.id })
+      .from(reportEvidenceTable)
+      .where(eq(reportEvidenceTable.reportId, report.id));
+    const delivery = await deliverReportToAgencies(report.id);
+    const [updated] = await db
+      .select()
+      .from(reportsTable)
+      .where(eq(reportsTable.id, report.id))
+      .limit(1);
+
+    res.json({
+      receipt: toReceipt(updated ?? report, {
+        deliveryStatus: delivery.status,
+        evidenceUploaded: evidence.length,
+      }),
+      delivery: {
+        status: delivery.status,
+        recipientCount: delivery.recipients.length,
+        error: delivery.error,
+      },
+    });
   } catch (error) {
     next(error);
   }
