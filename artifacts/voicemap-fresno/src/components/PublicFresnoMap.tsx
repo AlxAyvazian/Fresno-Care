@@ -186,31 +186,12 @@ export function PublicFresnoMap({
       map.getContainer().style.cursor = "crosshair";
 
       L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
         {
-          attribution: "Tiles &copy; Esri",
+          attribution: "&copy; OpenStreetMap contributors",
           maxZoom: 19,
-          className: "public-map-imagery-tiles",
-        },
-      ).addTo(map);
-
-      L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-        {
-          attribution: "",
-          maxZoom: 19,
-          opacity: 0.95,
-          className: "public-map-label-tiles",
-        },
-      ).addTo(map);
-
-      L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}",
-        {
-          attribution: "",
-          maxZoom: 19,
-          opacity: 0.72,
-          className: "public-map-transport-tiles",
+          subdomains: "abc",
+          className: "public-map-readable-street-tiles",
         },
       ).addTo(map);
 
