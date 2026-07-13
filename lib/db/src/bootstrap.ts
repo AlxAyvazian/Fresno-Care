@@ -11,6 +11,8 @@ $$;
 `;
 
 export async function ensureDatabaseSchema(): Promise<void> {
+  await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
+
   await pool.query(createEnumIfMissing("report_status", [
     "submitted",
     "routed",
