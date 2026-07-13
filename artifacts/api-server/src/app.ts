@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import express, {
   type ErrorRequestHandler,
   type Express,
@@ -12,6 +14,17 @@ const allowedOrigins = (process.env.CORS_ORIGINS ?? "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
+
+function resolveFrontendDistDir(): string | null {
+  const configured = process.env.FRONTEND_DIST_DIR?.trim();
+  const candidates = [
+    configured,
+    path.resolve(process.cwd(), "../voicemap-fresno/dist/public"),
+    path.resolve(process.cwd(), "artifacts/voicemap-fresno/dist/public"),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  return candidates.find((candidate) => fs.existsSync(path.join(candidate, "index.html"))) ?? null;
+}
 
 if (process.env.NODE_ENV === "production") {
   // Render and similar platforms place the app behind one trusted proxy hop.
@@ -45,7 +58,7 @@ app.use((req, res, next) => {
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || process.env.NODE_ENV !== "production") {
+      if (!origin || process.env.NODE_ENV !== "production" || allowedOrigins.length === 0) {
         callback(null, true);
         return;
       }
@@ -58,6 +71,36 @@ app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
 app.use("/api", router);
+
+const frontendDistDir = resolveFrontendDistDir();
+
+if (frontendDistDir) {
+  logger.info({ frontendDistDir }, "Serving frontend from API web service");
+
+  app.use(
+    express.static(frontendDistDir, {
+      index: false,
+      maxAge: "1h",
+      setHeaders(res, filePath) {
+        if (path.basename(filePath) === "index.html") {
+          res.setHeader("Cache-Control", "no-store");
+        }
+      },
+    }),
+  );
+
+  app.get(/^(?!\/api(?:\/|$)).*/, (req, res, next) => {
+    if (!req.accepts("html")) {
+      next();
+      return;
+    }
+
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(path.join(frontendDistDir, "index.html"));
+  });
+} else {
+  logger.warn("Frontend build output not found; API-only mode is active");
+}
 
 const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
   logger.error({ err: error, requestId: req.id }, "Unhandled API error");

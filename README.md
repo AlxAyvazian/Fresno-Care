@@ -12,6 +12,8 @@ Fresno Care is not operated by the City of Fresno and does not make legal findin
 - Package manager: pnpm 10
 - Runtime: Node.js 24
 
+The preferred Render deployment is now **one Web Service**. The API serves `/api/*`, and the same service serves the built React application for every other route. This avoids the static-site split, `VITE_API_URL` drift, CORS mismatch, and separate frontend cache/deploy confusion.
+
 The primary reporting flow is API-first. When the API is unavailable, the frontend preserves a device-only browser copy and tells the user that the report is not public.
 
 ## Implemented reporting flow
@@ -39,12 +41,6 @@ The primary reporting flow is API-first. When the API is unavailable, the fronte
 ## Install
 
 ```bash
-pnpm install --frozen-lockfile
-```
-
-When intentionally regenerating or repairing the lockfile, use:
-
-```bash
 pnpm install --no-frozen-lockfile
 ```
 
@@ -61,18 +57,19 @@ CI runs both checks for pull requests and pushes to `main`.
 
 Copy `.env.example` for local configuration. Never commit real secrets.
 
-### API
+### API / single Web Service
 
-- `PORT`: listening port; required by the API process
+- `PORT`: listening port; Render supplies this automatically
 - `DATABASE_URL`: PostgreSQL/Neon connection string
 - `ADMIN_API_KEY`: long random secret used by protected moderation endpoints
-- `CORS_ORIGINS`: comma-separated frontend origins allowed in production
 - `NODE_ENV`: use `production` in deployment
+- `CORS_ORIGINS`: optional for same-origin deployment; only needed if another domain calls the API from a browser
+- `FRONTEND_DIST_DIR`: optional override for the built frontend directory
 
 ### Frontend
 
-- `VITE_API_URL`: full deployed API origin, such as `https://fresno-care-api.onrender.com`
 - `BASE_PATH`: normally `/`
+- `VITE_API_URL`: optional; leave unset for single-service same-origin deployment so the frontend uses relative `/api` requests
 - `PORT`: optional local Vite port; defaults to `5173`
 
 ## Local development
@@ -120,6 +117,7 @@ The following routes require `Authorization: Bearer <ADMIN_API_KEY>`:
 ```text
 GET   /api/admin/reports?limit=100
 PATCH /api/admin/reports/:publicId/status
+PATCH /api/admin/reports/:publicId/publication
 ```
 
 The moderation frontend is available at `/admin`. The credential is stored only in browser session storage and is removed when the moderator signs out or closes the session.
@@ -129,29 +127,25 @@ The moderation frontend is available at `/admin`. The credential is stored only 
 1. Create a Neon PostgreSQL project and database.
 2. Copy the pooled connection string.
 3. Set it locally as `DATABASE_URL` and run `pnpm --filter @workspace/db push`.
-4. Add the same connection string to the Render API service as a secret environment variable.
+4. Add the same connection string to the Render Web Service as a secret environment variable.
 5. Do not commit the connection string or place it in frontend variables.
 
 ## Manual Render deployment
 
-No Render Blueprint is required.
-
-### API web service
-
-Create a normal Render Web Service connected to this repository.
+Use **one Render Web Service** connected to this repository.
 
 - Runtime: Node
 - Root directory: repository root
 - Build command:
 
 ```bash
-corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server build
+pnpm install --no-frozen-lockfile && pnpm run build:render-web
 ```
 
 - Start command:
 
 ```bash
-pnpm --filter @workspace/api-server start
+pnpm run start:render-web
 ```
 
 - Health check path: `/api/healthz`
@@ -159,31 +153,19 @@ pnpm --filter @workspace/api-server start
   - `NODE_ENV=production`
   - `DATABASE_URL=<Neon connection string>`
   - `ADMIN_API_KEY=<long random secret>`
-  - `CORS_ORIGINS=<deployed frontend origin>`
+  - `BASE_PATH=/`
   - Render supplies `PORT`
 
-### Frontend static site
+Do not create a separate Render Static Site for this deployment. Do not set `VITE_API_URL` unless deliberately hosting the frontend on a different origin.
 
-Create a normal Render Static Site connected to this repository.
-
-- Root directory: repository root
-- Build command:
-
-```bash
-corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/voicemap-fresno build
-```
-
-- Publish directory:
+After deployment, use one public URL for everything:
 
 ```text
-artifacts/voicemap-fresno/dist/public
+https://your-service.onrender.com/
+https://your-service.onrender.com/dashboard
+https://your-service.onrender.com/admin
+https://your-service.onrender.com/api/healthz
 ```
-
-- Environment variables:
-  - `VITE_API_URL=<deployed API origin>`
-  - `BASE_PATH=/`
-
-Add a rewrite from `/*` to `/index.html` with status `200` so direct navigation to `/share/:publicId`, `/dashboard`, and `/admin` works.
 
 ## Remaining work
 
