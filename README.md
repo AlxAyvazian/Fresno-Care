@@ -12,9 +12,7 @@ Fresno Care is not operated by the City of Fresno and does not make legal findin
 - Package manager: pnpm 10
 - Runtime: Node.js 24
 
-The preferred Render deployment is now **one Web Service**. The API serves `/api/*`, and the same service serves the built React application for every other route. This avoids the static-site split, `VITE_API_URL` drift, CORS mismatch, and separate frontend cache/deploy confusion.
-
-The primary reporting flow is API-first. When the API is unavailable, the frontend preserves a device-only browser copy and tells the user that the report is not public.
+The deployed Render configuration is a single Web Service. The Express API serves both `/api/*` and the built React application from the same origin.
 
 ## Implemented reporting flow
 
@@ -41,6 +39,12 @@ The primary reporting flow is API-first. When the API is unavailable, the fronte
 ## Install
 
 ```bash
+pnpm install --frozen-lockfile
+```
+
+When intentionally regenerating or repairing the lockfile, use:
+
+```bash
 pnpm install --no-frozen-lockfile
 ```
 
@@ -57,20 +61,22 @@ CI runs both checks for pull requests and pushes to `main`.
 
 Copy `.env.example` for local configuration. Never commit real secrets.
 
-### API / single Web Service
+### Single Render Web Service
 
-- `PORT`: listening port; Render supplies this automatically
+- `NODE_ENV`: use `production` in deployment
+- `PORT`: supplied by Render at runtime
 - `DATABASE_URL`: PostgreSQL/Neon connection string
 - `ADMIN_API_KEY`: long random secret used by protected moderation endpoints
-- `NODE_ENV`: use `production` in deployment
-- `CORS_ORIGINS`: optional for same-origin deployment; only needed if another domain calls the API from a browser
-- `FRONTEND_DIST_DIR`: optional override for the built frontend directory
-
-### Frontend
-
 - `BASE_PATH`: normally `/`
-- `VITE_API_URL`: optional; leave unset for single-service same-origin deployment so the frontend uses relative `/api` requests
-- `PORT`: optional local Vite port; defaults to `5173`
+
+Do not set `VITE_API_URL` for the single-service Render deployment. The browser calls `/api` on the same origin.
+
+### Split deployment only
+
+Only set these if deliberately hosting the frontend and API on different origins:
+
+- `CORS_ORIGINS`: comma-separated frontend origins allowed in production
+- `VITE_API_URL`: full deployed API origin, such as `https://fresno-care-api.onrender.com`
 
 ## Local development
 
@@ -126,9 +132,10 @@ The moderation frontend is available at `/admin`. The credential is stored only 
 
 1. Create a Neon PostgreSQL project and database.
 2. Copy the pooled connection string.
-3. Set it locally as `DATABASE_URL` and run `pnpm --filter @workspace/db push`.
-4. Add the same connection string to the Render Web Service as a secret environment variable.
-5. Do not commit the connection string or place it in frontend variables.
+3. Add the connection string to the Render Web Service as `DATABASE_URL`.
+4. Do not commit the connection string or place it in frontend variables.
+
+The Render build command runs `pnpm --filter @workspace/db push` through `pnpm run build:render-web`, so a fresh database receives the required `reports` table during deployment.
 
 ## Manual Render deployment
 
@@ -141,6 +148,8 @@ Use **one Render Web Service** connected to this repository.
 ```bash
 pnpm install --no-frozen-lockfile && pnpm run build:render-web
 ```
+
+This builds the frontend, builds the API, and pushes the database schema.
 
 - Start command:
 
