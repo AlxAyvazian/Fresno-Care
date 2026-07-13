@@ -4,6 +4,7 @@ import express, {
   type ErrorRequestHandler,
   type Express,
 } from "express";
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
@@ -53,6 +54,7 @@ app.use(
 app.use((req, res, next) => {
   res.setHeader("X-Request-Id", String(req.id));
   res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "same-origin");
   next();
 });
 app.use(
@@ -65,8 +67,10 @@ app.use(
 
       callback(null, allowedOrigins.includes(origin));
     },
+    credentials: true,
   }),
 );
+app.use(cookieParser());
 app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
