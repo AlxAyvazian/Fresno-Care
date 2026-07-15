@@ -34,6 +34,7 @@
   --paw-color: rgba(68, 137, 194, 0.34);
   --paw-glow: rgba(100, 175, 232, 0.42);
   --peak-opacity: 0.38;
+  --mid-opacity: 0.27;
 
   position: absolute;
   left: var(--left);
@@ -55,6 +56,7 @@
   --paw-color: rgba(195, 145, 48, 0.29);
   --paw-glow: rgba(244, 205, 119, 0.42);
   --peak-opacity: 0.32;
+  --mid-opacity: 0.23;
 }
 
 .paw-print svg {
@@ -69,12 +71,14 @@
   --paw-color: rgba(137, 198, 244, 0.31);
   --paw-glow: rgba(97, 180, 242, 0.55);
   --peak-opacity: 0.42;
+  --mid-opacity: 0.3;
 }
 
 .dark .paw-print--warm {
   --paw-color: rgba(244, 211, 137, 0.27);
   --paw-glow: rgba(244, 211, 137, 0.46);
   --peak-opacity: 0.34;
+  --mid-opacity: 0.24;
 }
 
 @keyframes paw-appear {
@@ -83,7 +87,7 @@
   100% {
     opacity: 0;
     transform:
-      translate3d(calc(var(--drift-x) * -0.35), calc(var(--drift-y) * -0.35), 0)
+      translate3d(var(--drift-start-x), var(--drift-start-y), 0)
       rotate(var(--rotation))
       scale(0.68);
     filter:
@@ -105,10 +109,10 @@
   }
 
   48% {
-    opacity: calc(var(--peak-opacity) * 0.72);
+    opacity: var(--mid-opacity);
     transform:
-      translate3d(calc(var(--drift-x) * 0.45), calc(var(--drift-y) * 0.45), 0)
-      rotate(calc(var(--rotation) + 2deg))
+      translate3d(var(--drift-mid-x), var(--drift-mid-y), 0)
+      rotate(var(--rotation-mid))
       scale(1.05);
   }
 
@@ -116,7 +120,7 @@
     opacity: 0;
     transform:
       translate3d(var(--drift-x), var(--drift-y), 0)
-      rotate(calc(var(--rotation) + 5deg))
+      rotate(var(--rotation-end))
       scale(0.82);
     filter:
       blur(1.4px)
@@ -143,6 +147,7 @@
 
   .paw-print {
     --peak-opacity: 0.28;
+    --mid-opacity: 0.2;
   }
 }
 
