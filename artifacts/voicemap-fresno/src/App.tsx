@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
 import { Navbar } from "@/components/Navbar";
+import { PawPrintBackground } from "@/components/PawPrintBackground";
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/LandingPage";
 import SubmitReport from "@/pages/ModeratedSubmitPage";
@@ -53,7 +54,12 @@ function App() {
       <TooltipProvider>
         <ThemeProvider>
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-            <Router />
+            <div className="app-shell">
+              <PawPrintBackground />
+              <div className="app-content">
+                <Router />
+              </div>
+            </div>
           </WouterRouter>
         </ThemeProvider>
         <Toaster />
