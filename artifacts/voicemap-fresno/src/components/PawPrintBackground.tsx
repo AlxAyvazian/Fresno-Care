@@ -6,13 +6,16 @@ type PawStyle = CSSProperties & Record<`--${string}`, string>;
 type Paw = {
   id: number;
   warm: boolean;
+  luminous: boolean;
   style: PawStyle;
 };
 
 const PAWS: Paw[] = Array.from({ length: 34 }, (_, index) => {
   const left = (index * 37 + 4) % 96;
   const top = (index * 53 + 7) % 94;
-  const size = 26 + ((index * 11) % 30);
+  const luminous = index % 5 === 0 || index % 11 === 3;
+  const sizeBoost = luminous ? 10 + ((index * 3) % 7) : 0;
+  const size = 26 + ((index * 11) % 30) + sizeBoost;
   const duration = 12 + ((index * 7) % 10);
   const delay = -((index * 1.73) % 20);
   const rotation = -38 + ((index * 29) % 76);
@@ -22,6 +25,7 @@ const PAWS: Paw[] = Array.from({ length: 34 }, (_, index) => {
   return {
     id: index,
     warm: index % 4 === 1 || index % 7 === 0,
+    luminous,
     style: {
       "--left": `${left}%`,
       "--top": `${top}%`,
@@ -59,7 +63,7 @@ export function PawPrintBackground() {
       {PAWS.map((paw) => (
         <span
           key={paw.id}
-          className={`paw-print${paw.warm ? " paw-print--warm" : ""}`}
+          className={`paw-print${paw.warm ? " paw-print--warm" : ""}${paw.luminous ? " paw-print--luminous" : ""}`}
           style={paw.style}
         >
           <PawIcon />
