@@ -1,6 +1,7 @@
 import { ensureDatabaseSchema } from "@workspace/db/bootstrap";
 import app from "./app";
 import { logger } from "./lib/logger";
+import { startReportDeliveryRecoveryWorker } from "./lib/reportDeliveryWorker";
 
 const rawPort = process.env["PORT"];
 
@@ -26,6 +27,7 @@ async function startServer() {
       process.exit(1);
     }
 
+    startReportDeliveryRecoveryWorker();
     logger.info({ port }, "Server listening");
   });
 }

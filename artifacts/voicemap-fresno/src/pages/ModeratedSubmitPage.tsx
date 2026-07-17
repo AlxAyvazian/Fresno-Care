@@ -8,9 +8,11 @@ import {
   ArrowRight,
   CheckCircle2,
   Clock3,
+  FileUp,
   MapPin,
   PawPrint,
   ShieldCheck,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -24,8 +26,24 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { createReport } from "@/lib/reportsApi";
+import {
+  createReport,
+  finalizeReport,
+  uploadReportEvidence,
+  type DeliveryStatus,
+} from "@/lib/reportsApi";
 import { CONCERN_TYPES, generateId, saveReport, type Report } from "@/lib/storage";
+
+const MAX_EVIDENCE_FILES = 5;
+const MAX_EVIDENCE_FILE_BYTES = 20 * 1024 * 1024;
+const MAX_EVIDENCE_TOTAL_BYTES = 30 * 1024 * 1024;
+const ALLOWED_EVIDENCE_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "application/pdf",
+  "video/mp4",
+]);
 
 const schema = z.object({
   animalType: z.enum(["cat", "dog", "other"]),
@@ -52,6 +70,10 @@ type SubmissionResult = {
   localId: string;
   publicId?: string;
   error?: string;
+  deliveryStatus?: DeliveryStatus;
+  deliveryError?: string | null;
+  evidenceUploaded?: number;
+  evidenceErrors?: string[];
 };
 
 type MapPrefill = {
@@ -70,10 +92,17 @@ function Section({ title, icon, children }: { title: string; icon: ReactNode; ch
   );
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(Math.round(bytes / 1024), 1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function ModeratedSubmitPage() {
   const [, navigate] = useLocation();
   const [result, setResult] = useState<SubmissionResult | null>(null);
   const [mapPrefill, setMapPrefill] = useState<MapPrefill | null>(null);
+  const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -121,6 +150,35 @@ export default function ModeratedSubmitPage() {
     }
   }, [anonymous, form]);
 
+  function selectEvidence(files: FileList | null) {
+    if (!files) return;
+    const next = Array.from(files);
+    const combined = [...evidenceFiles, ...next];
+    const invalid = next.find((file) => !ALLOWED_EVIDENCE_TYPES.has(file.type));
+    const tooLarge = next.find((file) => file.size > MAX_EVIDENCE_FILE_BYTES);
+    const totalBytes = combined.reduce((sum, file) => sum + file.size, 0);
+
+    if (combined.length > MAX_EVIDENCE_FILES) {
+      setEvidenceError(`Add no more than ${MAX_EVIDENCE_FILES} files.`);
+      return;
+    }
+    if (invalid) {
+      setEvidenceError(`${invalid.name} is not a supported JPEG, PNG, WebP, PDF, or MP4 file.`);
+      return;
+    }
+    if (tooLarge) {
+      setEvidenceError(`${tooLarge.name} exceeds the 20 MB per-file limit.`);
+      return;
+    }
+    if (totalBytes > MAX_EVIDENCE_TOTAL_BYTES) {
+      setEvidenceError("Evidence exceeds the 30 MB total limit.");
+      return;
+    }
+
+    setEvidenceError(null);
+    setEvidenceFiles(combined);
+  }
+
   async function onSubmit(values: FormValues) {
     const localId = generateId();
     const report: Report = {
@@ -143,15 +201,9 @@ export default function ModeratedSubmitPage() {
       status: "submitted",
     };
 
+    let receipt;
     try {
-      const receipt = await createReport(report);
-      saveReport({
-        ...report,
-        publicId: receipt.publicId,
-        createdAt: receipt.createdAt,
-        status: receipt.status,
-      });
-      setResult({ mode: "review", localId, publicId: receipt.publicId });
+      receipt = await createReport(report);
     } catch (error) {
       saveReport(report);
       setResult({
@@ -159,37 +211,106 @@ export default function ModeratedSubmitPage() {
         localId,
         error: error instanceof Error ? error.message : "The reporting service was unavailable.",
       });
+      sessionStorage.removeItem("voicemap_prefill");
+      return;
     }
 
+    const evidenceErrors: string[] = [];
+    let evidenceUploaded = 0;
+    let deliveryStatus = receipt.deliveryStatus;
+    let deliveryError: string | null = null;
+    let finalStatus = receipt.status;
+
+    if (!receipt.deduplicated && receipt.evidenceUploadToken) {
+      for (const file of evidenceFiles) {
+        try {
+          await uploadReportEvidence(receipt.publicId, receipt.evidenceUploadToken, file);
+          evidenceUploaded += 1;
+        } catch (uploadError) {
+          evidenceErrors.push(`${file.name}: ${uploadError instanceof Error ? uploadError.message : "upload failed"}`);
+        }
+      }
+
+      try {
+        const finalized = await finalizeReport(receipt.publicId, receipt.evidenceUploadToken);
+        deliveryStatus = finalized.delivery.status;
+        deliveryError = finalized.delivery.error;
+        evidenceUploaded = finalized.receipt.evidenceUploaded;
+        finalStatus = finalized.receipt.status;
+      } catch (finalizeError) {
+        deliveryStatus = "failed";
+        deliveryError = finalizeError instanceof Error
+          ? finalizeError.message
+          : "The agency delivery request could not be completed.";
+      }
+    }
+
+    saveReport({
+      ...report,
+      publicId: receipt.publicId,
+      createdAt: receipt.createdAt,
+      status: finalStatus,
+    });
+    setResult({
+      mode: "review",
+      localId,
+      publicId: receipt.publicId,
+      deliveryStatus,
+      deliveryError,
+      evidenceUploaded,
+      evidenceErrors,
+    });
     sessionStorage.removeItem("voicemap_prefill");
   }
 
   if (result) {
     const submittedForReview = result.mode === "review";
+    const delivered = result.deliveryStatus === "sent";
 
     return (
       <main className="min-h-screen px-4 pb-16 pt-28">
         <div className="mx-auto max-w-xl">
           <section className="glass-card rounded-3xl p-8 text-center sm:p-10">
             {submittedForReview ? (
-              <Clock3 size={52} className="mx-auto text-primary" />
+              delivered
+                ? <CheckCircle2 size={52} className="mx-auto text-green-600" />
+                : <Clock3 size={52} className="mx-auto text-primary" />
             ) : (
               <AlertCircle size={52} className="mx-auto text-amber-600" />
             )}
 
             <h1 className="mt-5 font-heading text-3xl font-bold">
-              {submittedForReview ? "Submitted for review" : "Saved on this device"}
+              {submittedForReview ? "Report received" : "Saved on this device"}
             </h1>
             <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-              {submittedForReview
-                ? "The report was received and remains private while an authorized reviewer evaluates it. It will not appear on the public dashboard or at a share link unless publication is explicitly approved."
-                : "The reporting service was unavailable. This report exists only in this browser and has not entered the moderation queue."}
+              {!submittedForReview
+                ? "The reporting service was unavailable. This report exists only in this browser and has not entered the moderation queue."
+                : delivered
+                  ? "The private report was received and sent to the configured city and agency recipients. Public display still requires an authorized moderation decision."
+                  : "The private report was received. Agency delivery is pending or needs moderator attention, and the report remains available in the review queue for retry and follow-up."}
             </p>
 
             {result.error && (
               <p className="mt-5 rounded-2xl bg-amber-500/10 p-4 text-left text-sm text-amber-900 dark:text-amber-200">
                 Service response: {result.error}
               </p>
+            )}
+
+            {submittedForReview && (
+              <div className="mt-5 space-y-3 text-left text-sm">
+                <div className={`rounded-2xl p-4 ${delivered ? "bg-green-500/10 text-green-900 dark:text-green-200" : "bg-amber-500/10 text-amber-900 dark:text-amber-200"}`}>
+                  <p className="font-semibold">Agency delivery: {result.deliveryStatus ?? "pending"}</p>
+                  {result.deliveryError && <p className="mt-1 text-xs opacity-90">{result.deliveryError}</p>}
+                </div>
+                <div className="rounded-2xl bg-muted/50 p-4">
+                  <p className="font-semibold">Private evidence stored: {result.evidenceUploaded ?? 0} file(s)</p>
+                  {(result.evidenceErrors?.length ?? 0) > 0 && (
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-800 dark:text-amber-200">
+                      {result.evidenceErrors?.map((message) => <li key={message}>{message}</li>)}
+                    </ul>
+                  )}
+                </div>
+              </div>
             )}
 
             <div className="mt-6 rounded-2xl bg-muted/50 p-4 text-left text-xs text-muted-foreground">
@@ -212,6 +333,8 @@ export default function ModeratedSubmitPage() {
                   setResult(null);
                   form.reset();
                   setMapPrefill(null);
+                  setEvidenceFiles([]);
+                  setEvidenceError(null);
                 }}
                 className="rounded-xl"
               >
@@ -366,6 +489,50 @@ export default function ModeratedSubmitPage() {
                     <FormMessage />
                   </FormItem>
                 )} />
+
+                <div className="rounded-2xl border border-dashed border-primary/35 bg-primary/5 p-5">
+                  <div className="flex items-start gap-3">
+                    <FileUp size={22} className="mt-0.5 text-primary" />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold">Private evidence files</p>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        Add up to five JPEG, PNG, WebP, PDF, or MP4 files. Files are stored privately and attached to the automatic agency notification when email size permits.
+                      </p>
+                      <label className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">
+                        <FileUp size={15} /> Choose evidence
+                        <input
+                          type="file"
+                          multiple
+                          accept="image/jpeg,image/png,image/webp,application/pdf,video/mp4"
+                          onChange={(event) => {
+                            selectEvidence(event.target.files);
+                            event.target.value = "";
+                          }}
+                          className="sr-only"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  {evidenceError && <p className="mt-3 text-sm text-destructive">{evidenceError}</p>}
+                  {evidenceFiles.length > 0 && (
+                    <ul className="mt-4 space-y-2">
+                      {evidenceFiles.map((file, index) => (
+                        <li key={`${file.name}-${file.size}-${index}`} className="flex items-center justify-between gap-3 rounded-xl bg-background/70 px-3 py-2 text-sm">
+                          <span className="min-w-0 truncate">{file.name} <span className="text-xs text-muted-foreground">({formatBytes(file.size)})</span></span>
+                          <button
+                            type="button"
+                            onClick={() => setEvidenceFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                            className="rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                            aria-label={`Remove ${file.name}`}
+                          >
+                            <X size={16} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </div>
             </Section>
 
@@ -409,7 +576,7 @@ export default function ModeratedSubmitPage() {
                   <div className="flex items-start gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4">
                     <FormControl><Checkbox checked={field.value} onCheckedChange={(value) => field.onChange(value === true)} /></FormControl>
                     <FormLabel className="cursor-pointer text-sm font-normal leading-relaxed">
-                      I am submitting direct observations responsibly and understand that this report does not make a legal finding.
+                      I am submitting direct observations responsibly and understand that this report does not make a legal finding. I authorize VoiceMap Fresno to send this report and its evidence to the configured public agencies for review.
                     </FormLabel>
                   </div>
                   <FormMessage />
@@ -417,12 +584,12 @@ export default function ModeratedSubmitPage() {
               )} />
             </Section>
 
-            <Button type="submit" disabled={form.formState.isSubmitting} className="h-[52px] w-full rounded-2xl text-base font-bold gap-2">
-              {form.formState.isSubmitting ? "Submitting…" : "Submit for review"}
+            <Button type="submit" disabled={form.formState.isSubmitting || Boolean(evidenceError)} className="h-[52px] w-full rounded-2xl text-base font-bold gap-2">
+              {form.formState.isSubmitting ? "Submitting and notifying agencies…" : "Submit report and notify agencies"}
               {!form.formState.isSubmitting && <ArrowRight size={18} />}
             </Button>
             <p className="text-center text-xs leading-relaxed text-muted-foreground">
-              Accepted reports enter a private moderation queue. Only approved reports appear publicly. If the service is unavailable, the report is saved on this device only.
+              Successful submissions enter the private moderation queue and are automatically sent to the configured city and agency recipients. Only approved reports appear publicly.
             </p>
           </form>
         </Form>

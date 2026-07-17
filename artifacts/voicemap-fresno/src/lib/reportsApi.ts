@@ -2,6 +2,8 @@ import type { Report } from "./storage";
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
 
+export type DeliveryStatus = "pending" | "sent" | "failed" | "not_configured";
+
 type ApiReport = Omit<Report, "id" | "contactInfo"> & {
   id: string;
   publicId: string;
@@ -14,10 +16,31 @@ type CreateReportReceipt = {
   status: Report["status"];
   publicationStatus: "pending";
   deduplicated: boolean;
+  evidenceUploadToken: string | null;
+  evidenceUploaded: number;
+  deliveryStatus: DeliveryStatus;
 };
 
 type CreateReportResponse = {
   receipt: CreateReportReceipt;
+};
+
+export type EvidenceUploadResult = {
+  id: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt?: string;
+  deduplicated: boolean;
+};
+
+export type FinalizeReportResponse = {
+  receipt: CreateReportReceipt;
+  delivery: {
+    status: DeliveryStatus;
+    recipientCount: number;
+    error: string | null;
+  };
 };
 
 function apiUrl(path: string): string {
@@ -62,6 +85,39 @@ export async function createReport(report: Report): Promise<CreateReportReceipt>
 
   const payload = await parseJson<CreateReportResponse>(response);
   return payload.receipt;
+}
+
+export async function uploadReportEvidence(
+  publicId: string,
+  evidenceUploadToken: string,
+  file: File,
+): Promise<EvidenceUploadResult> {
+  const response = await fetch(apiUrl(`/reports/${encodeURIComponent(publicId)}/evidence`), {
+    method: "POST",
+    headers: {
+      "Content-Type": file.type,
+      "X-Evidence-Token": evidenceUploadToken,
+      "X-File-Name": encodeURIComponent(file.name),
+    },
+    body: file,
+  });
+  const payload = await parseJson<{ evidence: EvidenceUploadResult }>(response);
+  return payload.evidence;
+}
+
+export async function finalizeReport(
+  publicId: string,
+  evidenceUploadToken: string,
+): Promise<FinalizeReportResponse> {
+  const response = await fetch(apiUrl(`/reports/${encodeURIComponent(publicId)}/finalize`), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Evidence-Token": evidenceUploadToken,
+    },
+    body: "{}",
+  });
+  return parseJson<FinalizeReportResponse>(response);
 }
 
 export async function getPublicReports(limit = 100): Promise<ApiReport[]> {

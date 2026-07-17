@@ -22,39 +22,62 @@ export const intakeRateLimitOptions: RateLimitOptions = {
   maxRequests: positiveInteger(process.env.INTAKE_RATE_LIMIT_MAX, 8),
 };
 
+export const adminLoginRateLimitOptions: RateLimitOptions = {
+  windowMs: positiveInteger(process.env.ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
+  maxRequests: positiveInteger(process.env.ADMIN_LOGIN_RATE_LIMIT_MAX, 6),
+};
+
 function clientKey(ip: string | undefined): string {
   return ip?.trim() || "unknown";
 }
 
-export const intakeRateLimit: RequestHandler = (req, res, next) => {
-  const now = Date.now();
-  const key = clientKey(req.ip);
-  const current = buckets.get(key);
-  const bucket = !current || current.resetAt <= now
-    ? { count: 0, resetAt: now + intakeRateLimitOptions.windowMs }
-    : current;
+function createRateLimit(
+  name: string,
+  options: RateLimitOptions,
+  errorMessage: string,
+): RequestHandler {
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = `${name}:${clientKey(req.ip)}`;
+    const current = buckets.get(key);
+    const bucket = !current || current.resetAt <= now
+      ? { count: 0, resetAt: now + options.windowMs }
+      : current;
 
-  bucket.count += 1;
-  buckets.set(key, bucket);
+    bucket.count += 1;
+    buckets.set(key, bucket);
 
-  const remaining = Math.max(intakeRateLimitOptions.maxRequests - bucket.count, 0);
-  const retryAfterSeconds = Math.max(Math.ceil((bucket.resetAt - now) / 1000), 1);
+    const remaining = Math.max(options.maxRequests - bucket.count, 0);
+    const retryAfterSeconds = Math.max(Math.ceil((bucket.resetAt - now) / 1000), 1);
 
-  res.setHeader("RateLimit-Limit", String(intakeRateLimitOptions.maxRequests));
-  res.setHeader("RateLimit-Remaining", String(remaining));
-  res.setHeader("RateLimit-Reset", String(Math.ceil(bucket.resetAt / 1000)));
+    res.setHeader("RateLimit-Limit", String(options.maxRequests));
+    res.setHeader("RateLimit-Remaining", String(remaining));
+    res.setHeader("RateLimit-Reset", String(Math.ceil(bucket.resetAt / 1000)));
 
-  if (bucket.count > intakeRateLimitOptions.maxRequests) {
-    res.setHeader("Retry-After", String(retryAfterSeconds));
-    res.status(429).json({
-      error: "Too many report submissions. Please try again later.",
-      retryAfterSeconds,
-    });
-    return;
-  }
+    if (bucket.count > options.maxRequests) {
+      res.setHeader("Retry-After", String(retryAfterSeconds));
+      res.status(429).json({
+        error: errorMessage,
+        retryAfterSeconds,
+      });
+      return;
+    }
 
-  next();
-};
+    next();
+  };
+}
+
+export const intakeRateLimit = createRateLimit(
+  "intake",
+  intakeRateLimitOptions,
+  "Too many report submissions. Please try again later.",
+);
+
+export const adminLoginRateLimit = createRateLimit(
+  "admin-login",
+  adminLoginRateLimitOptions,
+  "Too many sign-in attempts. Please wait and try again.",
+);
 
 const cleanup = setInterval(() => {
   const now = Date.now();
